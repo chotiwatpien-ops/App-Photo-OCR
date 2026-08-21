@@ -1,0 +1,9 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Segoe UI", "Leelawadee UI", Tahoma, sans-serif;
+}
+
+body {
+  @apply bg-slate-100 text-slate-800 antialiased;
+}

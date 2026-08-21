@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+python-multipart
+openpyxl
+google-genai
+sqlalchemy>=2.0
+psycopg[binary]
+itsdangerous

@@ -1,0 +1,92 @@
+# Rider Photo OCR
+
+แอปอ่านข้อมูลงานไรเดอร์จาก screenshot แอป Grab Driver แล้วบันทึกลง Excel
+ไฟล์ **`Rider Trips.xlsx`** (ชีทเดียว แอปสร้างเองอัตโนมัติถ้ายังไม่มี) — ใช้ Gemini 3.7 Flash อ่านรูป (thinking ต่ำ)
+
+คอลัมน์ (A–S): Driver, Date, Time, Service, Payment, Pick-up/Drop-off, Distance, Duration,
+Net (สูตร =K+M+N), Base, Intl Fee, Bonus, Turbo, Tolls, Passenger Fare,
+Grab Service Fee (สูตร =P-K), Week (สูตร), Booking Code
+
+คอลัมน์ analysis (T–AC): เขตรับ/เขตส่ง (ไทยเสมอ), ที่อยู่รับ/ส่งเต็ม, Surge (Y/ว่าง),
+Queue Type (เช่น ไฮบริด), จำนวนจุดแวะ, App Fee, Other Adjustments, Fare Refund
+— ไฟล์เก่าที่มีแค่ A–S จะถูกเติมหัวคอลัมน์ใหม่ให้อัตโนมัติตอน commit ครั้งถัดไป
+
+เปลี่ยนตำแหน่งไฟล์ได้ด้วย env var `PHOTO_OCR_EXCEL`
+
+## วิธีใช้
+
+1. ดับเบิลคลิก `start_app.bat` (เบราว์เซอร์เปิด http://127.0.0.1:8600 อัตโนมัติ)
+2. กรอกชื่อไรเดอร์ + ช่วงวันที่ของสัปดาห์
+3. ลากรูปทั้งโฟลเดอร์มาวาง → กด "เริ่มอ่านข้อมูล"
+4. รอ AI อ่าน (~2 วินาที/รูป) แล้วตรวจในตาราง Review:
+   - คอลัมน์ **ตรวจ**: ✓ เขียว = เลขในรูปตรวจทานกันเองแล้วตรงกัน (ข้ามได้)
+     · ✗ แดง = เลขขัดแย้งกัน ต้องดู · ? เหลือง = ข้อมูลไม่พอตรวจ ดูด้วยตา
+     · "ซ้ำ" = booking code ซ้ำกับรูปอื่นใน job ให้ลบออก
+   - **วันที่ต้องเลือกเอง** (ไม่มีในรูป) — ใช้แถบ "ใส่วันที่ทีเดียว" เติมหลายแถวพร้อมกันได้
+     ตารางเรียงตามเวลาบนจอมือถือ รูปวันเดียวกันจะเกาะกลุ่มกัน
+   - คลิกรูปเพื่อขยายเทียบกับข้อมูล แก้ตัวเลขได้ทุกช่อง
+5. กด "บันทึกลง Excel" — เขียนต่อท้าย `Rider Trips.xlsx` เรียงตามวันที่+เวลา
+   (**ต้องปิดไฟล์ใน Excel ก่อน** ไม่งั้นระบบจะเตือน)
+   - กันบันทึกซ้ำ 3 ชั้น: รูปซ้ำใน job / booking code ที่เคยบันทึกแล้ว / ไรเดอร์+วันที่ซ้ำในไฟล์
+
+## โครงสร้าง
+
+```
+backend/          FastAPI (Python) — API + Gemini + เขียน Excel
+  main.py         endpoints
+  extractor.py    Gemini vision + JSON schema + validation/retry
+  excel_writer.py build_workbook (export) + append (local mode)
+  db.py           SQLAlchemy — SQLite ในเครื่อง / Postgres บน cloud
+  config.py       env vars + photo_ocr_config.json
+render.yaml       Render Blueprint (free web service)
+frontend/         React + Vite + Tailwind → build เป็น frontend/dist
+%LOCALAPPDATA%\photo-ocr-data\   รูปที่อัปโหลด + ฐานข้อมูล (นอก OneDrive กัน corruption)
+start_app.bat     เปิดแอป
+```
+
+## API key
+
+ลำดับการหา key: env `GEMINI_API_KEY` → `photo_ocr_config.json` (`{"api_key": "..."}`) → key ของ Voice QA app
+
+## Deploy ขึ้น Render (ฟรี) + Neon (ฟรี)
+
+โค้ดตัวเดียวรันได้ทั้งเครื่องตัวเอง (SQLite + เขียน Excel ต่อท้ายไฟล์) และ cloud
+(Postgres + login + Export) โดยสลับด้วย env var:
+
+| env var | ค่า | ความหมาย |
+|---|---|---|
+| `DATABASE_URL` | `postgresql://...` จาก Neon | ใช้ Postgres แทน SQLite (และถือว่าเป็น cloud mode) |
+| `GEMINI_API_KEY` | key | |
+| `APP_PASSWORD` | รหัสผ่านทีม | เปิดหน้า login (ไม่ตั้ง = ไม่ต้อง login ใช้เฉพาะในเครื่อง) |
+| `SECRET_KEY` | สุ่มยาวๆ | เซ็น cookie (Render สร้างให้เองใน render.yaml) |
+| `GEMINI_MODEL` | `gemini-3.7-flash` | |
+
+ขั้นตอน:
+1. push โค้ดขึ้น GitHub (repo private) — `frontend/dist` ถูก commit ไว้แล้ว Render ไม่ต้องมี Node
+2. Neon → New Project → copy connection string
+3. Render → New → **Blueprint** → เลือก repo → Render อ่าน `render.yaml` เอง → ใส่ `DATABASE_URL`, `GEMINI_API_KEY`, `APP_PASSWORD`
+4. เปิด URL ที่ได้ → หน้า login → ใช้งานได้เหมือนในเครื่อง แต่ปุ่ม "อนุมัติ" จะไม่เขียนไฟล์ ให้กด "⬇ Excel" ดาวน์โหลดแทน
+
+หมายเหตุ cloud mode: รูปเก็บใน DB เฉพาะระหว่าง review และถูกลบทันทีที่อนุมัติ
+(ข้อมูลตัวเลขยังอยู่ครบ) เพื่อให้ DB อยู่ใน free tier ได้ · free web service หลับเมื่อไม่มีคนใช้ 15 นาที เปิดครั้งแรกรอ ~30–50 วิ
+
+## แก้โค้ด frontend
+
+ต้องมี Node (portable อยู่ที่ `%LOCALAPPDATA%\node-portable`):
+
+```
+cd frontend
+npm run build
+```
+
+`node_modules` เป็น junction ชี้ไป `%LOCALAPPDATA%\photo-ocr-app` เพื่อไม่ให้ OneDrive sync
+
+## โมเดลและค่าใช้จ่าย (audit 5 รอบ × 19 รูป ต่อแบบ — แม่น 100% ทั้งสามแบบ)
+
+| ตั้งค่าใน `photo_ocr_config.json` | ฿/รูป | 5,000 รูป/สัปดาห์ | หมายเหตุ |
+|---|---|---|---|
+| `{"model": "gemini-3.7-flash"}` (default) | ~0.09 | ~฿450 | เร็วสุด เขตนิ่งสุด · ราคาแนะนำตัวถึง 31 ธ.ค. 2026 |
+| `{"model": "gemini-2.5-flash"}` (thinking ปิดอัตโนมัติ) | ~0.03 | ~฿145 | ถูกสุด |
+| 2.5 Flash ปล่อย thinking (`"thinking_budget": null`) | ~0.13 | ~฿640 | อย่าใช้ — เผา thinking ~1,000 tokens/รูป |
+
+ทุก trip เก็บ `model`, `tok_in`, `tok_out`, `tok_think` ไว้ใน DB เพื่อดูต้นทุนจริงย้อนหลังได้

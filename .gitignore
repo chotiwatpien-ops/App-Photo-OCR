@@ -1,0 +1,23 @@
+# secrets & local config
+photo_ocr_config.json
+.env
+
+# local data (never push rider PII)
+data/
+*.xlsx
+*.jpg
+*.jpeg
+*.png
+poc/poc_results.json
+01 */
+
+# python
+__pycache__/
+*.pyc
+
+# node — frontend/dist IS committed (Render has no Node build step)
+frontend/node_modules/
+
+# scratch
+*.backup*
+.claude/
