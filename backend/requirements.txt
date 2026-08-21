@@ -6,3 +6,5 @@ google-genai
 sqlalchemy>=2.0
 psycopg[binary]
 itsdangerous
+google-api-python-client
+google-auth

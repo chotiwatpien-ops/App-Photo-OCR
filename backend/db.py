@@ -74,6 +74,32 @@ trips = Table(
     Column("check_status", String(8)),     # pass | fail | no_data
     Column("duplicate_of", Integer),
     Column("committed", Integer, nullable=False, default=0),
+    Column("auto_approved", Integer, nullable=False, default=0),  # 1 = committed by ingest, not a person
+    Column("source_url", Text),                                   # Drive link to the original image
+)
+
+# Drive files already pulled in — makes every ingest run idempotent
+ingested_files = Table(
+    "ingested_files", meta,
+    Column("drive_id", String(128), primary_key=True),
+    Column("name", Text),
+    Column("job_id", Integer),
+    Column("trip_id", Integer),
+    Column("ingested_at", String(19), nullable=False),
+)
+
+ingest_runs = Table(
+    "ingest_runs", meta,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("started_at", String(19), nullable=False),
+    Column("finished_at", String(19)),
+    Column("files_new", Integer, default=0),
+    Column("files_skipped", Integer, default=0),
+    Column("jobs_created", Integer, default=0),
+    Column("auto_approved", Integer, default=0),
+    Column("flagged", Integer, default=0),
+    Column("errors", Integer, default=0),
+    Column("notes", Text),
 )
 
 TRIP_EDITABLE = [
@@ -163,12 +189,78 @@ def mark_committed(job_id):
 
 # ---------- trips ----------
 
-def create_trip(job_id, file_name, image_bytes: bytes, mime: str) -> int:
+def create_trip(job_id, file_name, image_bytes: bytes, mime: str, source_url: str = None) -> int:
     with engine.begin() as c:
         r = c.execute(insert(trips).values(
             job_id=job_id, file_name=file_name, image_blob=image_bytes, image_mime=mime,
-            status="pending", committed=0))
+            status="pending", committed=0, auto_approved=0, source_url=source_url))
         return r.inserted_primary_key[0]
+
+
+# ---------- ingest support ----------
+
+def already_ingested(drive_ids):
+    ids = list(drive_ids)
+    if not ids:
+        return set()
+    with engine.begin() as c:
+        return {r[0] for r in c.execute(select(ingested_files.c.drive_id)
+                                        .where(ingested_files.c.drive_id.in_(ids))).all()}
+
+
+def record_ingested(drive_id, name, job_id, trip_id):
+    with engine.begin() as c:
+        c.execute(insert(ingested_files).values(
+            drive_id=drive_id, name=name, job_id=job_id, trip_id=trip_id, ingested_at=_now()))
+
+
+def auto_approve_job(job_id) -> dict:
+    """Commit rows that passed every check (✓, not a duplicate, booking code unseen);
+    leave the rest for a person. Returns {approved, flagged}."""
+    with engine.begin() as c:
+        rows = c.execute(select(trips.c.id, trips.c.check_status, trips.c.duplicate_of,
+                                trips.c.booking_code, trips.c.trip_date)
+                         .where(trips.c.job_id == job_id, trips.c.status == "done",
+                                trips.c.committed == 0)).mappings().all()
+        codes = [r["booking_code"] for r in rows if r["booking_code"]]
+        seen = set()
+        if codes:
+            seen = {r[0] for r in c.execute(select(trips.c.booking_code)
+                                            .where(trips.c.committed == 1,
+                                                   trips.c.booking_code.in_(codes))).all()}
+        ok_ids = [r["id"] for r in rows
+                  if r["check_status"] == "pass" and not r["duplicate_of"] and r["trip_date"]
+                  and (not r["booking_code"] or r["booking_code"] not in seen)]
+        if ok_ids:
+            c.execute(update(trips).where(trips.c.id.in_(ok_ids))
+                      .values(committed=1, auto_approved=1, image_blob=None))
+        remaining = c.execute(select(func.count()).select_from(trips)
+                              .where(trips.c.job_id == job_id, trips.c.status == "done",
+                                     trips.c.committed == 0)).scalar()
+        c.execute(update(jobs).where(jobs.c.id == job_id)
+                  .values(status="committed" if remaining == 0 else "review"))
+        return {"approved": len(ok_ids), "flagged": len(rows) - len(ok_ids)}
+
+
+def start_ingest_run() -> int:
+    with engine.begin() as c:
+        return c.execute(insert(ingest_runs).values(started_at=_now())).inserted_primary_key[0]
+
+
+def finish_ingest_run(run_id, **stats):
+    with engine.begin() as c:
+        c.execute(update(ingest_runs).where(ingest_runs.c.id == run_id)
+                  .values(finished_at=_now(), **stats))
+
+
+def find_job(driver_name, date_from, date_to):
+    """Existing job for this rider + week (ingest appends to it across runs)."""
+    with engine.begin() as c:
+        r = c.execute(select(jobs.c.id).where(jobs.c.driver_name == driver_name,
+                                              jobs.c.date_from == date_from,
+                                              jobs.c.date_to == date_to)
+                      .order_by(jobs.c.id.desc()).limit(1)).first()
+        return r[0] if r else None
 
 
 def get_trip(trip_id):

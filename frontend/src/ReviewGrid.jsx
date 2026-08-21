@@ -41,6 +41,9 @@ function TripExtras({ trip }) {
 }
 
 function CheckBadge({ trip }) {
+  if (trip.auto_approved) {
+    return <span title="ผ่านทุกการตรวจ — อนุมัติอัตโนมัติโดยระบบ ingest" className="text-xs rounded-full px-2 py-0.5 bg-emerald-100 text-emerald-700 cursor-help">✓ auto</span>
+  }
   if (trip.duplicate_of) {
     return <span title={trip.note || 'รูปซ้ำ'} className="text-xs rounded-full px-2 py-0.5 bg-red-100 text-red-700 cursor-help">ซ้ำ</span>
   }
@@ -71,13 +74,15 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
     })
   }, [job.trips])
   const done = trips.filter((t) => t.status === 'done')
+  const waiting = done.filter((t) => !t.committed)
   const pending = trips.filter((t) => t.status === 'pending')
   const errors = trips.filter((t) => t.status === 'error')
   const totalNet = done.reduce((s, t) => s + (t.net_earnings || 0), 0)
-  const missingDates = done.filter((t) => !t.trip_date).length
+  const missingDates = waiting.filter((t) => !t.trip_date).length
   const passCount = done.filter((t) => t.check_status === 'pass' && !t.duplicate_of).length
   const attnCount = done.length - passCount
   const isCommitted = job.status === 'committed'
+  const locked = (t) => isCommitted || !!t.committed
 
   const patch = async (tripId, fields) => {
     try {
@@ -125,7 +130,7 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
 
   const bulkAssignDate = async (onlyEmpty) => {
     if (!bulkDate) return
-    const targets = done.filter((t) => (onlyEmpty ? !t.trip_date : true))
+    const targets = waiting.filter((t) => (onlyEmpty ? !t.trip_date : true))
     if (targets.length === 0) return
     try {
       const updated = await Promise.all(targets.map((t) => api.patchTrip(t.id, { trip_date: bulkDate })))
@@ -141,7 +146,7 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
       key={`${t.id}:${field}:${t[field]}`}
       defaultValue={t[field] ?? ''}
       placeholder={placeholder}
-      disabled={isCommitted}
+      disabled={locked(t)}
       onBlur={(e) => e.target.value !== (t[field] ?? '') && patch(t.id, { [field]: e.target.value || null })}
       className={`${w} border border-slate-200 rounded px-2 py-1 text-sm bg-white disabled:bg-slate-50 disabled:text-slate-400`}
     />
@@ -152,7 +157,7 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
       key={`${t.id}:${field}:${t[field]}`}
       type="number" step="any"
       defaultValue={t[field] ?? ''}
-      disabled={isCommitted}
+      disabled={locked(t)}
       onBlur={(e) => {
         const v = e.target.value === '' ? null : Number(e.target.value)
         if (v !== t[field]) patch(t.id, { [field]: v })
@@ -164,7 +169,7 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
   const selCell = (t, field, options, w = 'w-28') => (
     <select
       value={t[field] ?? ''}
-      disabled={isCommitted}
+      disabled={locked(t)}
       onChange={(e) => patch(t.id, { [field]: e.target.value })}
       className={`${w} border border-slate-200 rounded px-1.5 py-1 text-sm bg-white disabled:bg-slate-50 disabled:text-slate-400`}
     >
@@ -202,12 +207,12 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
           >⬇ Excel</a>
           <button
             onClick={() => commit()}
-            disabled={committing || isCommitted || pending.length > 0 || done.length === 0 || missingDates > 0}
+            disabled={committing || isCommitted || pending.length > 0 || waiting.length === 0 || missingDates > 0}
             className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-lg px-5 py-2.5 text-sm font-medium"
           >
             {isCommitted ? 'อนุมัติแล้ว ✓'
               : committing ? 'กำลังบันทึก...'
-              : appendsToFile ? `อนุมัติ + บันทึกลง Excel (${done.length})` : `อนุมัติ (${done.length})`}
+              : appendsToFile ? `อนุมัติ + บันทึกลง Excel (${waiting.length})` : `อนุมัติ (${waiting.length})`}
           </button>
         </div>
       </div>
@@ -322,7 +327,7 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
                     <td className="p-2">
                       <select
                         value={t.trip_date ?? ''}
-                        disabled={isCommitted}
+                        disabled={locked(t)}
                         onChange={(e) => patch(t.id, { trip_date: e.target.value || null })}
                         className={`w-28 border rounded px-1.5 py-1 text-sm bg-white disabled:bg-slate-50 disabled:text-slate-400 ${
                           t.trip_date ? 'border-slate-200' : 'border-amber-400 bg-amber-50'
@@ -336,7 +341,7 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
                       <input
                         defaultValue={t.trip_time ?? ''}
                         placeholder="HH:MM"
-                        disabled={isCommitted}
+                        disabled={locked(t)}
                         onBlur={(e) => e.target.value !== (t.trip_time ?? '') && patch(t.id, { trip_time: e.target.value || null })}
                         className="w-16 border border-slate-200 rounded px-2 py-1 text-sm bg-white disabled:bg-slate-50 disabled:text-slate-400"
                       />
@@ -368,7 +373,7 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
                     {t.note && (
                       <span title={t.note} className="text-amber-500 cursor-help">⚠️</span>
                     )}
-                    {!isCommitted && (
+                    {!locked(t) && (
                       <button
                         onClick={() => removeTrip(t.id)}
                         className="text-slate-300 hover:text-red-500 px-1"
@@ -414,6 +419,9 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
                   <span className="text-slate-400">ส่วนลด/อื่นๆ</span><span>{modalTrip.other_adj ?? '—'}</span>
                   <span className="text-slate-400">เงินคืน</span><span>{modalTrip.fare_refund ?? '—'}</span>
                 </div>
+                {modalTrip.source_url && (
+                  <a href={modalTrip.source_url} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline block">เปิดรูปต้นฉบับใน Drive ↗</a>
+                )}
                 {modalTrip.note && (
                   <p className="text-xs text-amber-700 bg-amber-50 rounded p-2">⚠️ {modalTrip.note}</p>
                 )}

@@ -37,6 +37,10 @@ backend/          FastAPI (Python) — API + Gemini + เขียน Excel
   extractor.py    Gemini vision + JSON schema + validation/retry
   excel_writer.py build_workbook (export) + append (local mode)
   db.py           SQLAlchemy — SQLite ในเครื่อง / Postgres บน cloud
+  pipeline.py     รูป → Gemini → ตรวจ → DB (ใช้ร่วมกันระหว่างเว็บกับ ingest)
+  ingest.py       ดูดรูปจาก Drive รายสัปดาห์ + auto-approve + Excel กลับ Drive
+  drive_client.py Google Drive API (+ โหมดโฟลเดอร์ local ไว้ทดสอบ)
+.github/workflows/ingest.yml   ตั้งเวลาบน GitHub Actions
   config.py       env vars + photo_ocr_config.json
 render.yaml       Render Blueprint (free web service)
 frontend/         React + Vite + Tailwind → build เป็น frontend/dist
@@ -66,6 +70,39 @@ start_app.bat     เปิดแอป
 2. Neon → New Project → copy connection string
 3. Render → New → **Blueprint** → เลือก repo → Render อ่าน `render.yaml` เอง → ใส่ `DATABASE_URL`, `GEMINI_API_KEY`, `APP_PASSWORD`
 4. เปิด URL ที่ได้ → หน้า login → ใช้งานได้เหมือนในเครื่อง แต่ปุ่ม "อนุมัติ" จะไม่เขียนไฟล์ ให้กด "⬇ Excel" ดาวน์โหลดแทน
+
+## Phase B — ดูดรูปจาก Google Drive อัตโนมัติทุกสัปดาห์
+
+`backend/ingest.py` รันบน GitHub Actions (ฟรี) ทุกวันจันทร์ 06:00 หรือกดรันเองที่แท็บ Actions
+
+**โครงโฟลเดอร์ใน Drive** (แชร์โฟลเดอร์ Inbox และ Exports ให้ service account):
+
+```
+RiderPhotos/
+├── Inbox/
+│   └── 2026-W34/                     ← สัปดาห์ ISO → วันที่ = วันจันทร์ของสัปดาห์
+│       └── กิตติพงศ์ สินประเสริฐ/     ← ชื่อไรเดอร์ = ชื่อโฟลเดอร์
+│           ├── IMG_001.jpg
+│           └── 2026-08-04/           ← (ไม่บังคับ) โฟลเดอร์วันที่ → ใช้วันที่นี้แทน
+│               └── IMG_002.jpg
+└── Exports/                          ← ระบบวาง Rider Trips 2026-W34.xlsx ให้เอง
+```
+
+สิ่งที่ ingest ทำ: หาไฟล์ใหม่ (จำด้วย Drive file id — รันซ้ำได้) → Gemini → ตรวจเลข/ซ้ำ →
+แถวที่ผ่านทุกอย่าง **อนุมัติอัตโนมัติ** (badge "✓ auto") · แถวติดธงรอคนในเว็บ →
+เขียน Excel ของสัปดาห์นั้น (ทุกไรเดอร์ เฉพาะที่อนุมัติ) ลง Exports
+
+**ตั้งค่าครั้งเดียว (Google Cloud):**
+1. console.cloud.google.com → New Project → APIs & Services → Enable **Google Drive API**
+2. IAM & Admin → Service Accounts → Create → Keys → Add key (JSON) → ดาวน์โหลด
+3. ใน Drive: แชร์โฟลเดอร์ `Inbox` (Viewer) และ `Exports` (Editor) ให้อีเมล service account
+   (`xxx@yyy.iam.gserviceaccount.com`) · copy folder id จาก URL ของแต่ละโฟลเดอร์
+4. GitHub repo → Settings → Secrets and variables → Actions → เพิ่ม secrets:
+   `DATABASE_URL`, `GEMINI_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON` (วางเนื้อไฟล์ JSON ทั้งก้อน),
+   `DRIVE_INBOX_FOLDER_ID`, `DRIVE_EXPORTS_FOLDER_ID`
+5. แท็บ Actions → "Weekly ingest" → Run workflow → ติ๊ก dry_run ครั้งแรกเพื่อดูว่าเจอไฟล์อะไร
+
+ทดสอบในเครื่องโดยไม่ต้องมี Drive: `python backend/ingest.py --source local:<โฟลเดอร์ที่มีโครงเหมือน Inbox>`
 
 หมายเหตุ cloud mode: รูปเก็บใน DB เฉพาะระหว่าง review และถูกลบทันทีที่อนุมัติ
 (ข้อมูลตัวเลขยังอยู่ครบ) เพื่อให้ DB อยู่ใน free tier ได้ · free web service หลับเมื่อไม่มีคนใช้ 15 นาที เปิดครั้งแรกรอ ~30–50 วิ
