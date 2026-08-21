@@ -3,13 +3,13 @@
 แอปอ่านข้อมูลงานไรเดอร์จาก screenshot แอป Grab Driver แล้วบันทึกลง Excel
 ไฟล์ **`Rider Trips.xlsx`** (ชีทเดียว แอปสร้างเองอัตโนมัติถ้ายังไม่มี) — ใช้ Gemini 3.7 Flash อ่านรูป (thinking ต่ำ)
 
-คอลัมน์ (A–S): Driver, Date, Time, Service, Payment, Pick-up/Drop-off, Distance, Duration,
-Net (สูตร =K+M+N), Base, Intl Fee, Bonus, Turbo, Tolls, Passenger Fare,
-Grab Service Fee (สูตร =P-K), Week (สูตร), Booking Code
+**ฟอร์แมต Excel = Template ของทีม** (`Template Riders Project 2026.xlsx`) ทุกที่ที่ออกไฟล์ (Export / ไฟล์รายสัปดาห์บน Drive / ไฟล์ในเครื่อง):
 
-คอลัมน์ analysis (T–AC): เขตรับ/เขตส่ง (ไทยเสมอ), ที่อยู่รับ/ส่งเต็ม, Surge (Y/ว่าง),
-Queue Type (เช่น ไฮบริด), จำนวนจุดแวะ, App Fee, Other Adjustments, Fare Refund
-— ไฟล์เก่าที่มีแค่ A–S จะถูกเติมหัวคอลัมน์ใหม่ให้อัตโนมัติตอน commit ครั้งถัดไป
+- **Sheet1** — 17 คอลัมน์ A–Q ตาม template เป๊ะ (หัวน้ำเงิน Calibri 9, วันที่ `d-mmm-yy`, สูตร J `=K+M+N`, Q `=P-J`)
+  Pick-up/Drop-off Location เป็น**โซน**: Downtown · North-DMK · East-SVB · West-Nont · South-Rama2
+  (แปลงจากเขต/จังหวัดที่ AI อ่านได้ — ตารางโซนแก้ได้ใน `backend/zones.py`)
+- **Analysis** — ชีทที่ 2 เก็บข้อมูลเสริมต่อเที่ยว: booking code, สัปดาห์, โซน+เขต+จังหวัด+ที่อยู่เต็ม,
+  surge, ประเภทคิว, จุดแวะ, ค่าธรรมเนียม, เงินคืน, ผลตรวจ, ใครอนุมัติ (auto/person), ชื่อไฟล์ต้นฉบับ
 
 เปลี่ยนตำแหน่งไฟล์ได้ด้วย env var `PHOTO_OCR_EXCEL`
 
