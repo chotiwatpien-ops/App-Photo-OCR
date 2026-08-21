@@ -340,3 +340,137 @@ def list_drivers():
     with engine.begin() as c:
         return [r[0] for r in c.execute(select(jobs.c.driver_name).distinct()
                                         .order_by(jobs.c.driver_name)).all()]
+
+
+# ---------- Phase C: dashboard / data view / review queue ----------
+
+def _trip_join(where_committed=None):
+    q = (select(*TRIP_COLS, jobs.c.driver_name)
+         .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+         .where(trips.c.status == "done"))
+    if where_committed is not None:
+        q = q.where(trips.c.committed == where_committed)
+    return q
+
+
+def summary(date_from=None, date_to=None):
+    """Aggregates for the dashboard — computed in Python; a few tens of thousands of rows is fine."""
+    q = (select(trips.c.trip_date, trips.c.committed, trips.c.net_earnings, trips.c.distance_km,
+                trips.c.check_status, trips.c.duplicate_of, trips.c.surge, trips.c.payment_method,
+                jobs.c.driver_name)
+         .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+         .where(trips.c.status == "done"))
+    if date_from:
+        q = q.where(trips.c.trip_date >= date_from)
+    if date_to:
+        q = q.where(trips.c.trip_date <= date_to)
+    with engine.begin() as c:
+        rows = c.execute(q).mappings().all()
+
+    weeks, riders = {}, {}
+    tot = {"trips": 0, "approved": 0, "waiting": 0, "net": 0.0, "km": 0.0, "surge": 0, "cash": 0}
+    for r in rows:
+        if r["trip_date"]:
+            y, w, _ = datetime.strptime(r["trip_date"], "%Y-%m-%d").isocalendar()
+            wk = f"{y}-W{w:02d}"
+        else:
+            wk = "ไม่ระบุ"
+        for bucket, key in ((weeks, wk), (riders, r["driver_name"])):
+            b = bucket.setdefault(key, {"trips": 0, "approved": 0, "waiting": 0, "net": 0.0,
+                                        "km": 0.0, "surge": 0, "riders": set()})
+            b["trips"] += 1
+            b["riders"].add(r["driver_name"])
+            if r["committed"]:
+                b["approved"] += 1
+                b["net"] += r["net_earnings"] or 0
+                b["km"] += r["distance_km"] or 0
+            else:
+                b["waiting"] += 1
+            b["surge"] += 1 if r["surge"] else 0
+        tot["trips"] += 1
+        if r["committed"]:
+            tot["approved"] += 1
+            tot["net"] += r["net_earnings"] or 0
+            tot["km"] += r["distance_km"] or 0
+        else:
+            tot["waiting"] += 1
+        tot["surge"] += 1 if r["surge"] else 0
+        tot["cash"] += 1 if r["payment_method"] == "CASH" else 0
+
+    def pack(d, key_name):
+        out = []
+        for k, b in d.items():
+            out.append({key_name: k, **{x: b[x] for x in ("trips", "approved", "waiting", "surge")},
+                        "net": round(b["net"], 2), "km": round(b["km"], 2), "riders": len(b["riders"])})
+        return out
+
+    by_week = sorted(pack(weeks, "week"), key=lambda x: x["week"], reverse=True)
+    by_rider = sorted(pack(riders, "driver_name"), key=lambda x: -x["net"])
+    tot["net"] = round(tot["net"], 2)
+    tot["km"] = round(tot["km"], 2)
+    return {"totals": tot, "by_week": by_week, "by_rider": by_rider}
+
+
+def search_trips(date_from=None, date_to=None, driver=None, status="all", q=None,
+                 limit=50, offset=0):
+    """Paginated rows for the data view. status: all | approved | waiting."""
+    base = _trip_join({"approved": 1, "waiting": 0}.get(status))
+    if date_from:
+        base = base.where(trips.c.trip_date >= date_from)
+    if date_to:
+        base = base.where(trips.c.trip_date <= date_to)
+    if driver:
+        base = base.where(jobs.c.driver_name == driver)
+    if q:
+        like = f"%{q.strip()}%"
+        base = base.where(trips.c.booking_code.ilike(like) | trips.c.file_name.ilike(like)
+                          | trips.c.pickup_text.ilike(like) | trips.c.dropoff_text.ilike(like))
+    with engine.begin() as c:
+        total = c.execute(select(func.count()).select_from(base.subquery())).scalar()
+        rows = c.execute(base.order_by(trips.c.trip_date.desc(), trips.c.trip_time.desc(), trips.c.id.desc())
+                         .limit(limit).offset(offset)).mappings().all()
+        return [dict(r) for r in rows], total
+
+
+def review_queue():
+    """Every done-but-unapproved row across all jobs, oldest job first.
+    Adds seen_in_job: the job that already approved the same booking code (why auto-approve held it)."""
+    q = _trip_join(0).order_by(trips.c.job_id, trips.c.id)
+    with engine.begin() as c:
+        rows = [dict(r) for r in c.execute(q).mappings().all()]
+        codes = [r["booking_code"] for r in rows if r["booking_code"]]
+        seen = {}
+        if codes:
+            for code, jid in c.execute(select(trips.c.booking_code, trips.c.job_id)
+                                       .where(trips.c.committed == 1, trips.c.booking_code.in_(codes))).all():
+                seen.setdefault(code, jid)
+        for r in rows:
+            r["seen_in_job"] = seen.get(r["booking_code"])
+        return rows
+
+
+def approve_trip(trip_id) -> dict:
+    """Approve a single row (after a person looked at it) and sync its job's status."""
+    with engine.begin() as c:
+        t = c.execute(select(trips.c.job_id, trips.c.status, trips.c.trip_date)
+                      .where(trips.c.id == trip_id)).mappings().first()
+        if not t:
+            return {"error": "not found"}
+        if t["status"] != "done":
+            return {"error": "ยังอ่านไม่เสร็จ"}
+        if not t["trip_date"]:
+            return {"error": "ยังไม่ได้ระบุวันที่"}
+        c.execute(update(trips).where(trips.c.id == trip_id)
+                  .values(committed=1, auto_approved=0, image_blob=None))
+        remaining = c.execute(select(func.count()).select_from(trips)
+                              .where(trips.c.job_id == t["job_id"], trips.c.status == "done",
+                                     trips.c.committed == 0)).scalar()
+        c.execute(update(jobs).where(jobs.c.id == t["job_id"])
+                  .values(status="committed" if remaining == 0 else "review"))
+        return {"ok": True, "job_id": t["job_id"], "job_done": remaining == 0}
+
+
+def list_ingest_runs(limit=10):
+    with engine.begin() as c:
+        return [dict(r) for r in c.execute(select(ingest_runs).order_by(ingest_runs.c.id.desc())
+                                           .limit(limit)).mappings().all()]

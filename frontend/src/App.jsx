@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, exportUrl } from './api.js'
+import Dashboard from './Dashboard.jsx'
+import DataView from './DataView.jsx'
 import Login from './Login.jsx'
 import NewJobForm from './NewJobForm.jsx'
 import ReviewGrid from './ReviewGrid.jsx'
+import ReviewQueue from './ReviewQueue.jsx'
 
 const STATUS_TH = {
   running: { label: 'กำลังอ่านรูป', cls: 'bg-amber-100 text-amber-700' },
@@ -53,6 +56,8 @@ export default function App() {
   const [health, setHealth] = useState(null)
   const [jobList, setJobList] = useState([])
   const [activeJob, setActiveJob] = useState(null)
+  const [view, setView] = useState('jobs') // jobs | dashboard | data | queue
+  const [queueCount, setQueueCount] = useState(0)
 
   const refreshJobs = useCallback(() => {
     api.jobs().then((r) => setJobList(r.jobs)).catch(() => {})
@@ -76,7 +81,8 @@ export default function App() {
     if (!loggedIn) return
     api.health().then(setHealth).catch(() => setHealth({ ok: false }))
     refreshJobs()
-  }, [loggedIn, refreshJobs])
+    api.reviewQueue().then((r) => setQueueCount(r.rows.length)).catch(() => {})
+  }, [loggedIn, refreshJobs, view, activeJob])
 
   // poll active job while extraction is running
   useEffect(() => {
@@ -91,6 +97,10 @@ export default function App() {
   if (!loggedIn) return <Login onLoggedIn={boot} />
 
   const openJob = (id) => api.job(id).then(setActiveJob)
+  const NAV = [
+    ['jobs', 'งาน'], ['queue', `คิวตรวจ${queueCount ? ` (${queueCount})` : ''}`],
+    ['data', 'ข้อมูลทั้งหมด'], ['dashboard', 'Dashboard'],
+  ]
   const logout = () => api.logout().then(() => { setActiveJob(null); boot() })
 
   return (
@@ -105,6 +115,14 @@ export default function App() {
             </p>
           </div>
         </div>
+        <nav className="hidden md:flex items-center gap-1 text-sm">
+          {NAV.map(([k, label]) => (
+            <button key={k} onClick={() => { setActiveJob(null); setView(k) }}
+              className={`px-3 py-1.5 rounded-lg ${view === k && !activeJob ? 'bg-white/15 text-white' : 'text-slate-300 hover:text-white hover:bg-white/10'}`}>
+              {label}
+            </button>
+          ))}
+        </nav>
         <div className="flex items-center gap-3">
           {health?.excel_append && health.excel_locked && (
             <span className="text-xs bg-red-500/20 text-red-300 border border-red-500/40 rounded px-3 py-1">
@@ -125,6 +143,12 @@ export default function App() {
             onBack={() => { setActiveJob(null); refreshJobs() }}
             onJobUpdate={setActiveJob}
           />
+        ) : view === 'dashboard' ? (
+          <Dashboard />
+        ) : view === 'data' ? (
+          <DataView onOpenJob={openJob} />
+        ) : view === 'queue' ? (
+          <ReviewQueue onOpenJob={openJob} />
         ) : (
           <div className="grid gap-6 lg:grid-cols-[420px_1fr]">
             <NewJobForm onCreated={(job) => { setActiveJob(job); refreshJobs() }} />

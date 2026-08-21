@@ -236,6 +236,34 @@ def export(date_from: str = None, date_to: str = None, driver: str = None,
     )
 
 
+# ---------- Phase C: dashboard / data view / review queue ----------
+
+@app.get("/api/summary")
+def summary(date_from: str = None, date_to: str = None):
+    return {**db.summary(date_from, date_to), "ingest_runs": db.list_ingest_runs(8)}
+
+
+@app.get("/api/trips")
+def trips_view(date_from: str = None, date_to: str = None, driver: str = None,
+               status: str = "all", q: str = None, page: int = 1, size: int = 50):
+    size = max(1, min(size, 200))
+    rows, total = db.search_trips(date_from, date_to, driver, status, q, size, (max(page, 1) - 1) * size)
+    return {"rows": rows, "total": total, "page": page, "size": size}
+
+
+@app.get("/api/review-queue")
+def review_queue():
+    return {"rows": db.review_queue()}
+
+
+@app.post("/api/trips/{trip_id}/approve")
+def approve_trip(trip_id: int):
+    r = db.approve_trip(trip_id)
+    if "error" in r:
+        raise HTTPException(400, r["error"])
+    return r
+
+
 # ---------- frontend ----------
 
 if config.FRONTEND_DIST.exists():
