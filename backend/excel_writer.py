@@ -17,6 +17,7 @@ from pathlib import Path
 
 import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.worksheet.datavalidation import DataValidation
 from openpyxl.utils import get_column_letter
 
 import config
@@ -53,6 +54,26 @@ _THIN = Side(style="thin", color="BFBFBF")
 _THIN_BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 
 
+TIME_BANDS = ["00:01-05:59", "06:00-11:59", "12:00-17:59", "18:00-23:59", "N/A"]
+
+
+def time_band(hhmm) -> str:
+    """Team's Time column is a 6-hour band, not a clock time. Unknown (or disabled) -> 'N/A'."""
+    if config.TIME_BAND_SOURCE != "screen_clock":
+        return "N/A"
+    t = _parse_time(hhmm)
+    if t is None:
+        return "N/A"
+    return TIME_BANDS[t.hour // 6]
+
+
+def _add_time_dropdown(ws):
+    dv = DataValidation(type="list", formula1='"' + ",".join(TIME_BANDS) + '"', allow_blank=True)
+    dv.error, dv.errorTitle = "เลือกช่วงเวลาจากรายการ", "Time"
+    ws.add_data_validation(dv)
+    dv.add("C2:C10000")
+
+
 class ExcelLockedError(Exception):
     pass
 
@@ -84,7 +105,7 @@ def _write_main_row(ws, row, driver_name, t):
     values = [
         driver_name,                                            # A
         d,                                                      # B Date & Time
-        _parse_time(t.get("trip_time")),                        # C
+        time_band(t.get("trip_time")),                          # C  6-hour band (team format)
         t.get("service_type"),                                  # D
         t.get("payment_method"),                                # E
         zone_for(t.get("pickup_district"), t.get("pickup_code"), t.get("pickup_text")),    # F
@@ -107,8 +128,8 @@ def _write_main_row(ws, row, driver_name, t):
         cell.border = _BORDER
         if col == 2:
             cell.number_format = "d-mmm-yy"
-        elif col == 3 and v is not None:
-            cell.number_format = "HH:MM"
+        elif col == 3:
+            cell.alignment = Alignment(horizontal="center")
 
 
 def _write_analysis_row(ws, row, driver_name, t):
@@ -143,6 +164,7 @@ def _new_workbook():
     ws = wb.active
     ws.title = SHEET
     _style_header(ws, HEADERS, COL_WIDTHS, medium=True)
+    _add_time_dropdown(ws)
     wa = wb.create_sheet(ANALYSIS_SHEET)
     _style_header(wa, ANALYSIS_HEADERS, ANALYSIS_WIDTHS, medium=False)
     wa.freeze_panes = "A2"
@@ -190,6 +212,8 @@ def _load_for_write():
     ws = wb[SHEET]
     if any(ws.cell(row=1, column=c).value != h for c, h in enumerate(HEADERS, start=1)):
         _style_header(ws, HEADERS, COL_WIDTHS, medium=True)
+    if not ws.data_validations.dataValidation:
+        _add_time_dropdown(ws)
     if ANALYSIS_SHEET not in wb.sheetnames:
         wa = wb.create_sheet(ANALYSIS_SHEET)
         _style_header(wa, ANALYSIS_HEADERS, ANALYSIS_WIDTHS, medium=False)

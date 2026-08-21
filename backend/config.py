@@ -80,6 +80,10 @@ _tb = _setting("GEMINI_THINKING_BUDGET", "thinking_budget", 0)
 GEMINI_THINKING_BUDGET = int(_tb) if _tb not in (None, "") else None
 MAX_PARALLEL_EXTRACTIONS = int(_setting("MAX_PARALLEL", "max_parallel", 4))
 
+# Sheet1 "Time" band source. The Grab trip screen has NO trip time — only the phone clock at
+# capture time (riders screenshot in the evening). "screen_clock" bands that clock; "na" writes N/A.
+TIME_BAND_SOURCE = _setting("TIME_BAND_SOURCE", "time_band_source", "screen_clock")
+
 
 def load_api_key() -> str:
     v = os.environ.get("GEMINI_API_KEY")
