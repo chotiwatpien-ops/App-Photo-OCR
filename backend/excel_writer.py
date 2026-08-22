@@ -40,9 +40,9 @@ ANALYSIS_HEADERS = [
     "Pick-up District", "Drop-off District", "Pick-up Province", "Drop-off Province",
     "Pick-up Address", "Drop-off Address", "Surge", "Queue Type", "Stops",
     "Passenger Paid (THB)", "Passenger Total (THB)", "App Fee (THB)", "Other Adjustments (THB)", "Fare Refund (THB)",
-    "Check", "Approved By", "Source File",
+    "Tip (THB)", "Check", "Approved By", "Source File",
 ]
-ANALYSIS_WIDTHS = [24, 11, 7, 16, 6, 12, 12, 14, 14, 9, 9, 36, 36, 6, 11, 6, 12, 12, 10, 12, 12, 8, 11, 22]
+ANALYSIS_WIDTHS = [24, 11, 7, 16, 6, 12, 12, 14, 14, 9, 9, 36, 36, 6, 11, 6, 12, 12, 10, 12, 12, 8, 8, 11, 22]
 
 # --- template styling (copied from the team's file) ---
 _MED = Side(style="medium", color="000000")
@@ -154,6 +154,7 @@ def _write_analysis_row(ws, row, driver_name, t):
         "Y" if t.get("surge") else None, t.get("queue_type"), t.get("num_stops"),
         t.get("passenger_paid"), t.get("passenger_total"),
         t.get("app_fee"), t.get("other_adj"), t.get("fare_refund"),
+        t.get("tip") or 0,
         t.get("check_status"),
         "auto" if t.get("auto_approved") else ("person" if t.get("committed") else "pending"),
         t.get("file_name"),

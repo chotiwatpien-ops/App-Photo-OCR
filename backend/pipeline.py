@@ -6,7 +6,7 @@ import db
 import extractor
 
 # fields that only the bottom half can show — copied onto the top half when pairing
-BOTTOM_FIELDS = ["passenger_total", "passenger_paid", "grab_commission", "app_fee", "other_adj", "fare_refund"]
+BOTTOM_FIELDS = ["passenger_total", "passenger_paid", "grab_commission", "app_fee", "other_adj", "fare_refund", "tip", "intl_fee"]
 # incentives appear on the bottom half too; take them when the top half has none
 BOTTOM_IF_MISSING = ["bonus", "turbo", "tolls"]
 
@@ -161,6 +161,7 @@ def process_trip(trip_id: int, job_id: int) -> str:
         if not img:
             raise RuntimeError("image missing")
         data = extractor.extract_image(img[0], img[1])
+        data["bonus"] = (data.get("bonus") or 0) + (data.get("tip") or 0)  # so the identity check sees the tip
         check = extractor.arithmetic_check(data)
         note = data.get("confidence_note")
         dup = db.find_job_duplicate(job_id, data.get("booking_code"), trip_id)
@@ -191,7 +192,9 @@ def process_trip(trip_id: int, job_id: int) -> str:
             "duration_mins": data.get("duration_mins"),
             "net_earnings": data.get("net_earnings"),
             "base_fare": data.get("base_fare"),
-            "bonus": data.get("bonus") or 0,
+            "bonus": (data.get("bonus") or 0) + (data.get("tip") or 0),  # tip counts as Bonus (M)
+            "tip": data.get("tip") or 0,
+            "intl_fee": abs(data.get("intl_fee") or 0),
             "turbo": data.get("turbo") or 0,
             "tolls": data.get("tolls") or 0,
             "passenger_total": data.get("passenger_total"),

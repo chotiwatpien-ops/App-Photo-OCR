@@ -57,6 +57,7 @@ trips = Table(
     Column("bonus", Float, default=0),
     Column("turbo", Float, default=0),
     Column("tolls", Float, default=0),
+    Column("tip", Float, default=0),          # ค่าทิป — folded into Bonus (M) for the sheet's J=K+M+N
     Column("passenger_total", Float),      # รวมค่าโดยสารของผู้โดยสาร (total incl. fees/discounts)
     Column("passenger_paid", Float),       # ยอดที่ผู้โดยสารชำระ (what the passenger paid) — the team's "Passenger Fare"
     Column("grab_commission", Float),
@@ -111,7 +112,7 @@ TRIP_EDITABLE = [
     "trip_date", "trip_time", "service_type", "payment_method",
     "pickup_code", "dropoff_code", "pickup_text", "dropoff_text",
     "distance_km", "duration_mins", "net_earnings", "base_fare",
-    "intl_fee", "bonus", "turbo", "tolls", "passenger_total", "passenger_paid",
+    "intl_fee", "bonus", "turbo", "tolls", "tip", "passenger_total", "passenger_paid",
     "pickup_district", "dropoff_district", "surge", "queue_type",
     "num_stops", "app_fee", "other_adj", "fare_refund", "note",
 ]

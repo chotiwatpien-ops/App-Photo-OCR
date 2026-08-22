@@ -94,6 +94,8 @@ SCHEMA = types.Schema(
             description="'เงินคืนค่าโดยสาร' amount if shown anywhere on either screen. Null if not shown.",
         ),
         "bonus": types.Schema(type=types.Type.NUMBER, description="โบนัส if shown, else 0."),
+        "tip": types.Schema(type=types.Type.NUMBER, description="'ค่าทิป' inside the 'รายได้เพิ่มเติมที่ไม่หักค่าธรรมเนียม' section (driver's tip income). 0 if not shown. Ignore the negative 'ค่าทิป' line in the passenger section."),
+        "intl_fee": types.Schema(type=types.Type.NUMBER, description="'ค่าธุรกรรมต่างประเทศ' line in the passenger fare breakdown, as an absolute number (e.g. -1 -> 1). 0 if not shown."),
         "turbo": types.Schema(type=types.Type.NUMBER, description="Turbo / เทอร์โบ incentive if shown, else 0."),
         "tolls": types.Schema(type=types.Type.NUMBER, description="ค่าทางด่วน / reimbursements if shown, else 0."),
         "screen_time": types.Schema(type=types.Type.STRING, nullable=True, description="Clock in phone status bar, HH:MM, if readable."),
@@ -129,6 +131,8 @@ Extract the trip data into the JSON schema. Rules:
 - payment_method comes from the chip row under the map — the left-most chip:
   'GrabPay' → GRAB PAY, 'QR payment' → QR PAY, 'Cash'/'เงินสด' → CASH.
   Read the chip text exactly as printed; never guess CASH as a default.
+- 'ค่าทิป' in the driver's extra-income section is income (tip); 'รวมรายได้เพิ่มเติมที่ไม่หักค่าธรรมเนียม'
+  = bonus + turbo + tip. The driver's 'คุณได้รับ' = ค่าโดยสารพื้นฐาน + that extra income.
 - distance_km is printed at the TOP-LEFT of the route panel, above the pickup point
   (e.g. '10.79 km' or '4.73 กม.'). It is never 0 — if you can't see it, look again at
   the very top-left corner of the image.
