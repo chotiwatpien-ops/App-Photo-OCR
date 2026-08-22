@@ -157,10 +157,14 @@ def export_only(drive, exports_id):
     return errors
 
 
-def run(drive, inbox_id, exports_id, dry_run=False, limit=None):
+def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     run_id = None if dry_run else db.start_ingest_run()
     t0 = time.time()
     items, skipped = discover(drive, inbox_id)
+    if only:
+        keys = [k.strip() for k in only.split(",") if k.strip()]
+        items = [i for i in items if any(k in (i.get("folder_name") or i["rider"]) for k in keys)]
+        log(f"--only {keys}: เหลือ {len(items)} รูป")
     seen = db.already_ingested(i["file"]["id"] for i in items)
     new = [i for i in items if i["file"]["id"] not in seen]
     log(f"พบรูป {len(items)} · ใหม่ {len(new)} · เคยอ่านแล้ว {len(items) - len(new)}")
@@ -262,6 +266,7 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--exports-only", action="store_true", help="regenerate Excel + customer images for existing jobs")
+    ap.add_argument("--only", help="comma-separated substrings of rider folder paths to process, e.g. '01 อภิชาติ,01 ปัญญา'")
     a = ap.parse_args()
 
     db.init_db()
@@ -281,7 +286,7 @@ def main():
     if a.exports_only:
         errors = export_only(drive, exports)
     else:
-        errors = run(drive, inbox, exports, dry_run=a.dry_run, limit=a.limit)
+        errors = run(drive, inbox, exports, dry_run=a.dry_run, limit=a.limit, only=a.only)
     sys.exit(1 if errors else 0)
 
 
