@@ -27,6 +27,8 @@ jobs = Table(
     Column("date_to", String(10), nullable=False),
     Column("status", String(16), nullable=False, default="running"),  # running | review | committed
     Column("created_at", String(19), nullable=False),
+    Column("category", String(32)),      # team's vehicle group: 4 W Standard | 4 W Saver | 2 W Standard | 2 W Saver
+    Column("folder_name", Text),         # original rider folder name on Drive (mirrored into Exports)
 )
 
 trips = Table(
@@ -129,21 +131,22 @@ def init_db():
         # older local DBs: add columns that appeared after they were created (safe no-op otherwise)
         with engine.begin() as c:
             c.execute(text("PRAGMA journal_mode=WAL"))
-            existing = {r[1] for r in c.execute(text("PRAGMA table_info(trips)"))}
-            for col in trips.c:
-                if col.name not in existing:
-                    typ = {"INTEGER": "INTEGER", "REAL": "REAL", "BLOB": "BLOB"}.get(
-                        str(col.type).split("(")[0].upper(), "TEXT")
-                    c.execute(text(f"ALTER TABLE trips ADD COLUMN {col.name} {typ}"))
+            for tbl in (trips, jobs):
+                existing = {r[1] for r in c.execute(text(f"PRAGMA table_info({tbl.name})"))}
+                for col in tbl.c:
+                    if col.name not in existing:
+                        typ = {"INTEGER": "INTEGER", "REAL": "REAL", "BLOB": "BLOB", "FLOAT": "REAL"}.get(
+                            str(col.type).split("(")[0].upper(), "TEXT")
+                        c.execute(text(f"ALTER TABLE {tbl.name} ADD COLUMN {col.name} {typ}"))
 
 
 # ---------- jobs ----------
 
-def create_job(driver_name, sheet, date_from, date_to) -> int:
+def create_job(driver_name, sheet, date_from, date_to, category=None, folder_name=None) -> int:
     with engine.begin() as c:
         r = c.execute(insert(jobs).values(
             driver_name=driver_name, sheet=sheet, date_from=date_from, date_to=date_to,
-            status="running", created_at=_now()))
+            status="running", created_at=_now(), category=category, folder_name=folder_name))
         return r.inserted_primary_key[0]
 
 
@@ -531,10 +534,37 @@ def trips_with_images(job_id):
         rows = c.execute(select(trips.c.id, trips.c.file_name, trips.c.trip_date,
                                 trips.c.image_blob)
                          .where(trips.c.job_id == job_id, trips.c.status == "done")).mappings().all()
-        bottoms = {r["merged_into"]: r["image_blob"] for r in c.execute(
-            select(trips.c.merged_into, trips.c.image_blob)
+        bottoms = {r["merged_into"]: (r["id"], r["image_blob"]) for r in c.execute(
+            select(trips.c.id, trips.c.merged_into, trips.c.image_blob)
             .where(trips.c.job_id == job_id, trips.c.status == "merged")).mappings().all()}
-    return [{"id": r["id"], "file_name": r["file_name"], "trip_date": r["trip_date"],
-             "top_blob": bytes(r["image_blob"]) if r["image_blob"] else None,
-             "bottom_blob": bytes(bottoms[r["id"]]) if bottoms.get(r["id"]) else None}
-            for r in rows]
+    out = []
+    for r in rows:
+        b = bottoms.get(r["id"])
+        out.append({"id": r["id"], "file_name": r["file_name"], "trip_date": r["trip_date"],
+                    "top_blob": bytes(r["image_blob"]) if r["image_blob"] else None,
+                    "bottom_id": b[0] if b else None,
+                    "bottom_blob": bytes(b[1]) if b and b[1] else None})
+    return out
+
+
+def get_job_meta(job_id):
+    with engine.begin() as c:
+        r = c.execute(select(jobs).where(jobs.c.id == job_id)).mappings().first()
+        return dict(r) if r else None
+
+
+def drive_ids_for_job(job_id):
+    """trip_id -> Drive file id (for re-downloading originals after blobs were cleared)."""
+    with engine.begin() as c:
+        return {r[1]: r[0] for r in c.execute(select(ingested_files.c.drive_id, ingested_files.c.trip_id)
+                                              .where(ingested_files.c.job_id == job_id)).all()}
+
+
+def jobs_by_week():
+    """{(date_from, date_to): [job meta...]} for every job — used by --exports-only."""
+    with engine.begin() as c:
+        rows = [dict(r) for r in c.execute(select(jobs).order_by(jobs.c.id)).mappings().all()]
+    out = {}
+    for j in rows:
+        out.setdefault((j["date_from"], j["date_to"]), []).append(j)
+    return out

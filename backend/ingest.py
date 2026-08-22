@@ -34,6 +34,11 @@ from drive_client import DriveClient, LocalDrive
 
 WEEK_RE = re.compile(r"(\d{4})-?W(\d{1,2})", re.IGNORECASE)
 DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+# team layout: "01 สายยนต์ 3-9 Aug", "01ธัญณิชา 3-9 Aug", "02 ชื่อ 28 Jul-3 Aug"
+RIDER_RANGE_RE = re.compile(
+    r"^\s*(?:\d{1,3}\s*)?(?P<name>.+?)\s+(?P<d1>\d{1,2})\s*(?P<m1>[A-Za-z]{3,9})?\s*[-–]\s*(?P<d2>\d{1,2})\s*(?P<m2>[A-Za-z]{3,9})\s*(?P<y>\d{4})?\s*$")
+MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+CATEGORIES = {"4 w standard", "4 w saver", "2 w standard", "2 w saver"}
 
 
 def log(msg):
@@ -57,33 +62,99 @@ def clean_name(s):
     return re.sub(r"\s+", " ", s).strip()
 
 
-def discover(drive, inbox_id):
-    """Walk Inbox → weeks → riders (→ optional day folders) → images. Yields work items."""
-    items, skipped = [], []
-    for wk in drive.list_folders(inbox_id):
-        bounds = week_bounds(wk["name"])
-        if not bounds:
-            skipped.append(f"โฟลเดอร์ '{wk['name']}' ไม่ใช่รูปแบบสัปดาห์ (เช่น 2026-W34) — ข้าม")
+def parse_rider_folder(name, default_year=None):
+    """'01 สายยนต์ 3-9 Aug' -> ('สายยนต์', date(2026,8,3), date(2026,8,9)) or None."""
+    m = RIDER_RANGE_RE.match(name)
+    if not m:
+        return None
+    m2 = MONTHS.get((m.group("m2") or "")[:3].lower())
+    m1 = MONTHS.get((m.group("m1") or "")[:3].lower(), m2)
+    if not m2:
+        return None
+    y = int(m.group("y") or default_year or date.today().year)
+    try:
+        d1, d2 = date(y, m1, int(m.group("d1"))), date(y, m2, int(m.group("d2")))
+    except ValueError:
+        return None
+    if d2 < d1:
+        d1 = d1.replace(year=y - 1)
+    return clean_name(m.group("name")), d1, d2
+
+
+def _rider_items(drive, folder, name, week_label_, d_from, d_to, category, skipped, folder_name):
+    items = []
+    for img in drive.list_images(folder["id"]):
+        items.append({"file": img, "rider": name, "week": week_label_, "category": category,
+                      "folder_name": folder_name, "date_from": d_from, "date_to": d_to, "trip_date": None})
+    for day in drive.list_folders(folder["id"]):
+        dm = DATE_RE.match(day["name"].strip())
+        if not dm:
+            skipped.append(f"'{folder_name}/{day['name']}' ไม่ใช่วันที่ YYYY-MM-DD — ข้าม")
             continue
-        monday, sunday = bounds
-        for rider in drive.list_folders(wk["id"]):
-            name = clean_name(rider["name"])
-            if not name:
-                continue
-            for img in drive.list_images(rider["id"]):
-                items.append({"file": img, "rider": name, "week": wk["name"],
-                              "date_from": monday.isoformat(), "date_to": sunday.isoformat(),
-                              "trip_date": None})  # spread over the week after pairing
-            for day in drive.list_folders(rider["id"]):
-                dm = DATE_RE.match(day["name"].strip())
-                if not dm:
-                    skipped.append(f"'{wk['name']}/{name}/{day['name']}' ไม่ใช่วันที่ YYYY-MM-DD — ข้าม")
+        for img in drive.list_images(day["id"]):
+            items.append({"file": img, "rider": name, "week": week_label_, "category": category,
+                          "folder_name": folder_name, "date_from": d_from, "date_to": d_to,
+                          "trip_date": day["name"].strip()})
+    return items
+
+
+def discover(drive, inbox_id):
+    """Walk the Inbox. Two layouts are understood:
+      A) Inbox/<YYYY-Www>/<rider>/[YYYY-MM-DD/]*.jpg
+      B) Inbox/<4 W Standard|4 W Saver|2 W Standard|2 W Saver>/<NN name D-D Mon>/*.jpg   (the team's)
+    Returns (items, skipped-warnings)."""
+    items, skipped = [], []
+    for top in drive.list_folders(inbox_id):
+        bounds = week_bounds(top["name"])
+        if bounds:  # layout A
+            monday, sunday = bounds
+            for rider in drive.list_folders(top["id"]):
+                parsed = parse_rider_folder(rider["name"])
+                name = parsed[0] if parsed else clean_name(rider["name"])
+                items += _rider_items(drive, rider, name, top["name"], monday.isoformat(), sunday.isoformat(),
+                                      None, skipped, f"{top['name']}/{rider['name']}")
+            continue
+        if clean_name(top["name"]).lower() in CATEGORIES:  # layout B
+            category = clean_name(top["name"])
+            for rider in drive.list_folders(top["id"]):
+                parsed = parse_rider_folder(rider["name"])
+                if not parsed:
+                    skipped.append(f"'{category}/{rider['name']}' อ่านชื่อ/ช่วงวันที่ไม่ออก (ต้องเป็น 'NN ชื่อ 3-9 Aug') — ข้าม")
                     continue
-                for img in drive.list_images(day["id"]):
-                    items.append({"file": img, "rider": name, "week": wk["name"],
-                                  "date_from": monday.isoformat(), "date_to": sunday.isoformat(),
-                                  "trip_date": day["name"].strip()})
+                name, d1, d2 = parsed
+                items += _rider_items(drive, rider, name, week_label(d1.isoformat()), d1.isoformat(), d2.isoformat(),
+                                      category, skipped, f"{category}/{rider['name']}")
+            continue
+        skipped.append(f"โฟลเดอร์ '{top['name']}' ไม่ใช่สัปดาห์ (2026-W34) หรือกลุ่มรถ (4 W Standard ...) — ข้าม")
     return items, skipped
+
+
+def export_only(drive, exports_id):
+    """Regenerate Excel + customer images for every job already in the database (no reading)."""
+    errors = 0
+    for (d_from, d_to), js in sorted(db.jobs_by_week().items()):
+        wk = week_label(d_from)
+        for j in js:
+            try:
+                rider_dir = drive.ensure_folder(exports_id, wk)
+                for part in (j.get("folder_name") or j["driver_name"]).split("/"):
+                    rider_dir = drive.ensure_folder(rider_dir, part)
+                n = 0
+                for name, data in pipeline.customer_images(j["id"], j["driver_name"], fetch=drive.download):
+                    drive.upload_file(rider_dir, name, data, "image/jpeg")
+                    n += 1
+                log(f"🖼 {j['driver_name']}: {n} รูป → Exports/{wk}/{j.get('folder_name') or j['driver_name']}/")
+            except Exception as e:  # noqa: BLE001
+                log(f"✗ images {j['driver_name']}: {e}")
+                errors += 1
+        rows = db.query_trips(date_from=d_from, date_to=d_to, committed_only=True)
+        try:
+            drive.upload_xlsx(exports_id, f"Rider Trips {wk}.xlsx", excel_writer.build_workbook(rows))
+            log(f"📄 Rider Trips {wk}.xlsx: {len(rows)} แถว")
+        except Exception as e:  # noqa: BLE001
+            log(f"✗ upload xlsx {wk}: {e}")
+            errors += 1
+    return errors
 
 
 def run(drive, inbox_id, exports_id, dry_run=False, limit=None):
@@ -99,20 +170,23 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None):
         new = new[:limit]
     if dry_run:
         for i in new[:50]:
-            log(f"  would process {i['week']}/{i['rider']}/{i['file']['name']} → {i['trip_date'] or 'กระจายในสัปดาห์'}")
+            log(f"  would process [{i.get('category') or '-'}] {i['rider']} {i['date_from']}..{i['date_to']} / {i['file']['name']}")
         return
 
     # group by rider+week → one job each (reused across runs so a week's photos stay together)
     groups = {}
     for i in new:
         groups.setdefault((i["rider"], i["date_from"], i["date_to"]), []).append(i)
+    by_key = {k: v[0] for k, v in groups.items()}  # category / folder_name for the group
 
     jobs_created = approved = flagged = errors = 0
     touched_weeks = set()
     for (rider, d_from, d_to), group in groups.items():
+        meta = by_key[(rider, d_from, d_to)]
         job_id = db.find_job(rider, d_from, d_to)
         if job_id is None:
-            job_id = db.create_job(rider, excel_writer.SHEET, d_from, d_to)
+            job_id = db.create_job(rider, excel_writer.SHEET, d_from, d_to,
+                                   category=meta.get("category"), folder_name=meta.get("folder_name"))
             jobs_created += 1
         db.set_job_status(job_id, "running")
         log(f"job #{job_id} {rider} {d_from}..{d_to}: {len(group)} รูป")
@@ -144,12 +218,15 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None):
 
         # customer images: Exports/<week>/<rider>/<rider>1.jpg ... (before approval clears the blobs)
         try:
-            rider_dir = drive.ensure_folder(drive.ensure_folder(exports_id, week_label(d_from)), rider)
+            # mirror the team's own folder path under Exports/<week>/ (e.g. "4 W Standard/01 สายยนต์ 3-9 Aug")
+            rider_dir = drive.ensure_folder(exports_id, week_label(d_from))
+            for part in (meta.get("folder_name") or rider).split("/"):
+                rider_dir = drive.ensure_folder(rider_dir, part)
             n_img = 0
-            for name, data in pipeline.customer_images(job_id, rider):
+            for name, data in pipeline.customer_images(job_id, rider, fetch=drive.download):
                 drive.upload_file(rider_dir, name, data, "image/jpeg")
                 n_img += 1
-            log(f"  🖼 รูปส่งลูกค้า {n_img} ไฟล์ → Exports/{week_label(d_from)}/{rider}/")
+            log(f"  🖼 รูปส่งลูกค้า {n_img} ไฟล์ → Exports/{week_label(d_from)}/{meta.get('folder_name') or rider}/")
         except Exception as e:  # noqa: BLE001
             log(f"  ✗ customer images: {e}")
             errors += 1
@@ -184,6 +261,7 @@ def main():
     ap.add_argument("--exports", default=None, help="exports folder id (drive) or path (local)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--limit", type=int)
+    ap.add_argument("--exports-only", action="store_true", help="regenerate Excel + customer images for existing jobs")
     a = ap.parse_args()
 
     db.init_db()
@@ -192,14 +270,18 @@ def main():
         drive = LocalDrive(root)
         inbox, exports = root, a.exports or os.path.join(root, "..", "Exports")
     else:
-        if not config.GOOGLE_SERVICE_ACCOUNT:
-            sys.exit("ไม่พบ service account: วางไฟล์ service_account.json ไว้ในโฟลเดอร์โปรเจกต์ หรือตั้ง GOOGLE_SERVICE_ACCOUNT_JSON")
+        if not (config.GOOGLE_SERVICE_ACCOUNT or config.DRIVE_OAUTH_TOKEN):
+            sys.exit("ไม่พบ credentials: วาง drive_token.json (จาก drive_auth.py) หรือ service_account.json ไว้ในโฟลเดอร์โปรเจกต์")
         if not (config.DRIVE_INBOX_FOLDER_ID and (a.exports or config.DRIVE_EXPORTS_FOLDER_ID)):
             sys.exit("ไม่พบ folder id: ใส่ drive_inbox_folder_id / drive_exports_folder_id ใน photo_ocr_config.json")
-        drive = DriveClient(config.GOOGLE_SERVICE_ACCOUNT)
+        drive = DriveClient(config.GOOGLE_SERVICE_ACCOUNT, config.DRIVE_OAUTH_TOKEN)
+        log(f"Drive auth: {drive.mode}" + ("" if drive.mode == "oauth" else "  (service account = อ่านได้ เขียนไม่ได้ — รัน drive_auth.py เพื่อเขียนกลับ)"))
         inbox = config.DRIVE_INBOX_FOLDER_ID
         exports = a.exports or config.DRIVE_EXPORTS_FOLDER_ID
-    errors = run(drive, inbox, exports, dry_run=a.dry_run, limit=a.limit)
+    if a.exports_only:
+        errors = export_only(drive, exports)
+    else:
+        errors = run(drive, inbox, exports, dry_run=a.dry_run, limit=a.limit)
     sys.exit(1 if errors else 0)
 
 

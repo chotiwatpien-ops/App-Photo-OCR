@@ -94,6 +94,11 @@ _sa_default = BASE_DIR / "service_account.json"
 GOOGLE_SERVICE_ACCOUNT = (os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
                           or _config_value("service_account_file")
                           or (str(_sa_default) if _sa_default.exists() else None))
+# user OAuth token (drive_auth.py) — needed to WRITE into a personal Drive
+_tok_default = BASE_DIR / "drive_token.json"
+DRIVE_OAUTH_TOKEN = (os.environ.get("DRIVE_OAUTH_TOKEN_JSON")
+                     or _config_value("drive_token_file")
+                     or (str(_tok_default) if _tok_default.exists() else None))
 DRIVE_INBOX_FOLDER_ID = _setting("DRIVE_INBOX_FOLDER_ID", "drive_inbox_folder_id")
 DRIVE_EXPORTS_FOLDER_ID = _setting("DRIVE_EXPORTS_FOLDER_ID", "drive_exports_folder_id")
 

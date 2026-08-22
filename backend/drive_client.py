@@ -20,14 +20,26 @@ XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 class DriveClient:
     """Service-account client. Share the Inbox/Exports folders with the service account email."""
 
-    def __init__(self, service_account_json: str = None):
-        from google.oauth2 import service_account
+    SCOPES = ["https://www.googleapis.com/auth/drive"]
+
+    def __init__(self, service_account_json: str = None, oauth_token_json: str = None):
+        """Prefers a user OAuth token (can WRITE to a personal Drive); falls back to a service
+        account (read-only in practice — Google gives service accounts no storage quota)."""
         from googleapiclient.discovery import build
 
-        raw = service_account_json or os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
-        info = json.loads(raw) if raw.strip().startswith("{") else json.loads(Path(raw).read_text(encoding="utf-8"))
-        creds = service_account.Credentials.from_service_account_info(
-            info, scopes=["https://www.googleapis.com/auth/drive"])
+        creds = None
+        tok = oauth_token_json or os.environ.get("DRIVE_OAUTH_TOKEN_JSON")
+        if tok:
+            from google.oauth2.credentials import Credentials
+            info = json.loads(tok) if tok.strip().startswith("{") else json.loads(Path(tok).read_text(encoding="utf-8"))
+            creds = Credentials.from_authorized_user_info(info, self.SCOPES)
+            self.mode = "oauth"
+        else:
+            from google.oauth2 import service_account
+            raw = service_account_json or os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
+            info = json.loads(raw) if raw.strip().startswith("{") else json.loads(Path(raw).read_text(encoding="utf-8"))
+            creds = service_account.Credentials.from_service_account_info(info, scopes=self.SCOPES)
+            self.mode = "service_account"
         self.svc = build("drive", "v3", credentials=creds, cache_discovery=False)
 
     def _list(self, q, fields):

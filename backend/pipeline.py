@@ -15,6 +15,23 @@ def _natural_key(name):
     return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name or "")]
 
 
+def _num(v):
+    try:
+        return float(v) if v is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _halves_match(top, bot) -> bool:
+    """Do an adjacent top half and bottom half belong to the same trip?
+    Both halves print ค่าโดยสารพื้นฐาน, so base fare is the primary key. Fallbacks cover the
+    bottom half reporting base as 'net' (car trips with turbo) or a missing base."""
+    tn, tb = _num(top["net_earnings"]), _num(top["base_fare"])
+    bn, bb = _num(bot["net_earnings"]), _num(bot["base_fare"])
+    def eq(a, c): return a is not None and c is not None and a > 0 and abs(a - c) <= 0.01
+    return eq(tb, bb) or eq(tn, bn) or eq(tb, bn) or eq(tn, bb)
+
+
 def pair_fragments(job_id) -> int:
     """Riders often send one trip as two screenshots (top half with the route, bottom half with
     the fare breakdown). Pair each 'top' with an adjacent 'bottom' (by file order) that shows the
@@ -31,15 +48,19 @@ def pair_fragments(job_id) -> int:
             b = rows[j]
             if b["kind"] != "bottom" or b["id"] in used or b["merged_into"]:
                 continue
-            if r["net_earnings"] is None or b["net_earnings"] is None:
-                continue
-            if abs(float(r["net_earnings"]) - float(b["net_earnings"])) > 0.01:
+            if not _halves_match(r, b):
                 continue
             top, bot = db.get_trip(r["id"]), db.get_trip(b["id"])
             fields = {k: bot.get(k) for k in BOTTOM_FIELDS if bot.get(k) is not None}
             for k in BOTTOM_IF_MISSING:
                 if not top.get(k) and bot.get(k):
                     fields[k] = bot[k]
+            if not top.get("base_fare") and bot.get("base_fare"):
+                fields["base_fare"] = bot["base_fare"]
+            # the driver's net ('คุณได้รับ', incl. turbo) is only reliable on the top half; the bottom
+            # half often starts below it and reports 'รวมรายได้จากรอบขับ' (= base) instead
+            if top.get("net_earnings") is None and bot.get("net_earnings") is not None:
+                fields["net_earnings"] = bot["net_earnings"]
             merged = {**top, **fields}
             fields["check_status"] = extractor.arithmetic_check({
                 "net_earnings": merged.get("net_earnings"), "base_fare": merged.get("base_fare"),
@@ -80,18 +101,51 @@ def spread_dates(job_id, date_from, date_to, only_missing=True) -> int:
     return n
 
 
-def customer_images(job_id, rider):
+def customer_images(job_id, rider, fetch=None):
     """Yield (file_name, jpeg_bytes) for every trip in customer order: '<rider>1.jpg', '<rider>2.jpg', ...
-    Must run while the job's image blobs still exist (i.e. before approval clears them)."""
+    Uses the stored blobs; when they were already cleared (approved rows) and `fetch(drive_id)`
+    is given, re-downloads the originals from Drive."""
     import stitch
     rows = db.trips_with_images(job_id)
     rows.sort(key=lambda r: (r["trip_date"] or "9999", _natural_key(r["file_name"])))
+    drive_ids = db.drive_ids_for_job(job_id) if fetch else {}
     n = 0
     for r in rows:
-        if not r["top_blob"]:
-            continue  # blob already cleared — nothing to deliver
+        top, bot = r["top_blob"], r["bottom_blob"]
+        if top is None and fetch and r["id"] in drive_ids:
+            top = fetch(drive_ids[r["id"]])
+            bid = r.get("bottom_id")
+            if bid and bid in drive_ids:
+                bot = fetch(drive_ids[bid])
+        if not top:
+            continue
         n += 1
-        yield stitch.customer_name(rider, n), stitch.stitch(r["top_blob"], r["bottom_blob"])
+        yield stitch.customer_name(rider, n), stitch.stitch(top, bot)
+
+
+# team's vehicle groups -> template Service Type values
+CATEGORY_SERVICE = {
+    "4 W Standard": "Standard Car", "4 W Saver": "Saver Car",
+    "2 W Standard": "Standard Bike", "2 W Saver": "Saver Bike",
+}
+
+
+def normalize_service(ai_value, category):
+    """Map whatever Grab printed ('Standard (JustGrab)', 'Saver Bike', ...) onto the template's four
+    values, using the rider's vehicle group to settle car-vs-bike. Returns (value, conflict_note)."""
+    raw = (ai_value or "").lower()
+    tier = "Saver" if "saver" in raw else ("Standard" if ("standard" in raw or "justgrab" in raw) else None)
+    wheel = "Bike" if "bike" in raw else ("Car" if ("car" in raw or "justgrab" in raw) else None)
+    cat = CATEGORY_SERVICE.get(category or "")
+    if cat:
+        cat_tier, cat_wheel = cat.split()
+        note = None
+        if wheel and wheel != cat_wheel:
+            note = f"รูปบอก {ai_value} แต่ไรเดอร์อยู่กลุ่ม {category}"
+        return f"{tier or cat_tier} {cat_wheel}", note
+    if tier and wheel:
+        return f"{tier} {wheel}", None
+    return ai_value, None
 
 
 def process_trip(trip_id: int, job_id: int) -> str:
@@ -108,12 +162,20 @@ def process_trip(trip_id: int, job_id: int) -> str:
             dup_msg = f"รูปนี้ซ้ำกับ {dup['file_name']} (booking code เดียวกัน)"
             note = f"{dup_msg} | {note}" if note else dup_msg
         usage = data.get("_usage", {})
+        job = db.get_job_meta(job_id)
+        service, svc_note = normalize_service(data.get("service_type"), job.get("category") if job else None)
+        if data.get("kind") == "bottom":
+            svc_note = None  # no service chip on the bottom half — the model guessed
+        if svc_note:
+            note = f"{svc_note} | {note}" if note else svc_note
+            if check == "pass":
+                check = "fail"  # car/bike contradiction — a person must look
         db.update_trip(trip_id, {
             "status": "done",
             "booking_code": data.get("booking_code"),
             "check_status": check,
             "duplicate_of": dup["id"] if dup else None,
-            "service_type": (data.get("service_type") or "").strip(),
+            "service_type": (service or "").strip(),
             "payment_method": extractor.resolve_payment(data),
             "pickup_code": data.get("pickup_province"),
             "dropoff_code": data.get("dropoff_province"),

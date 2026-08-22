@@ -116,15 +116,27 @@ RiderPhotos/
 แถวที่ผ่านทุกอย่าง **อนุมัติอัตโนมัติ** (badge "✓ auto") · แถวติดธงรอคนในเว็บ →
 เขียน Excel ของสัปดาห์นั้น (ทุกไรเดอร์ เฉพาะที่อนุมัติ) ลง Exports
 
-**ตั้งค่าครั้งเดียว (Google Cloud):**
-1. console.cloud.google.com → New Project → APIs & Services → Enable **Google Drive API**
-2. IAM & Admin → Service Accounts → Create → Keys → Add key (JSON) → ดาวน์โหลด
-3. ใน Drive: แชร์โฟลเดอร์ `Inbox` (Viewer) และ `Exports` (Editor) ให้อีเมล service account
-   (`xxx@yyy.iam.gserviceaccount.com`) · copy folder id จาก URL ของแต่ละโฟลเดอร์
-4. GitHub repo → Settings → Secrets and variables → Actions → เพิ่ม secrets:
-   `DATABASE_URL`, `GEMINI_API_KEY`, `GOOGLE_SERVICE_ACCOUNT_JSON` (วางเนื้อไฟล์ JSON ทั้งก้อน),
-   `DRIVE_INBOX_FOLDER_ID`, `DRIVE_EXPORTS_FOLDER_ID`
-5. แท็บ Actions → "Weekly ingest" → Run workflow → ติ๊ก dry_run ครั้งแรกเพื่อดูว่าเจอไฟล์อะไร
+**โครงจริงของทีมก็อ่านได้** (ไม่ต้องจัดใหม่): `Inbox/<4 W Standard|4 W Saver|2 W Standard|2 W Saver>/<NN ชื่อ 3-9 Aug>/*.jpg`
+— ชื่อไรเดอร์ + ช่วงวันที่อ่านจากชื่อโฟลเดอร์ · กลุ่มรถใช้ยืนยัน Service Type (Standard Car / Saver Bike …)
+· Exports จะใช้ชื่อโฟลเดอร์เดิมของทีม: `Exports/2026-W32/4 W Standard/01 สายยนต์ 3-9 Aug/สายยนต์1.jpg`
+
+**ตั้งค่าครั้งเดียว (Google Cloud) — ต้องมี 2 อย่าง:**
+
+*อ่าน Drive* — Service Account:
+1. console.cloud.google.com → APIs & Services → Enable **Google Drive API**
+2. IAM & Admin → Service Accounts → Create → Keys → Add key (JSON) → save เป็น `service_account.json` ในโฟลเดอร์โปรเจกต์
+3. ใน Drive: แชร์โฟลเดอร์ Inbox + Exports ให้อีเมล service account (Editor)
+
+*เขียนกลับ Drive* — OAuth ในนามคุณ (Google ไม่ให้ service account สร้างไฟล์ใน My Drive):
+4. APIs & Services → OAuth consent screen → External → กรอกชื่อ/อีเมล → **Publish app**
+5. Credentials → Create credentials → **OAuth client ID → Desktop app** → Download JSON → save เป็น `oauth_client.json`
+6. รัน `python backend/drive_auth.py` → เบราว์เซอร์เปิด → ล็อกอินบัญชี Drive → Allow → ได้ `drive_token.json`
+
+7. `photo_ocr_config.json` ใส่ `drive_inbox_folder_id`, `drive_exports_folder_id` (copy จาก URL โฟลเดอร์)
+8. ทดสอบ: `python backend/ingest.py --dry-run` → `--limit 42` → รันจริง
+9. GitHub → Settings → Secrets → Actions: `DATABASE_URL`, `GEMINI_API_KEY`, `DRIVE_OAUTH_TOKEN_JSON` (เนื้อไฟล์ drive_token.json),
+   `DRIVE_INBOX_FOLDER_ID`, `DRIVE_EXPORTS_FOLDER_ID` → Actions → "Weekly ingest" → Run workflow
+10. `python backend/ingest.py --exports-only` = สร้าง Excel + รูปส่งลูกค้าใหม่จากข้อมูลที่มี (ไม่อ่านรูปใหม่)
 
 ทดสอบในเครื่องโดยไม่ต้องมี Drive: `python backend/ingest.py --source local:<โฟลเดอร์ที่มีโครงเหมือน Inbox>`
 

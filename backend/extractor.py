@@ -159,26 +159,21 @@ def arithmetic_check(data: dict) -> str:
     pt = data.get("passenger_total")
     gc = data.get("grab_commission")
     base = data.get("base_fare")
-    passed = failed = False
+    # 1) the identity the team's sheet is built on (J = K + M + N) — decides when available
     if net is not None and base is not None:
         comp = base + (data.get("bonus") or 0) + (data.get("turbo") or 0)
-        if abs(net - comp) <= 1:
-            passed = True
-        else:
-            failed = True
+        if abs(net - comp) > 1:
+            return "fail"
+        if left is not None and abs(left - net) > 0.01:
+            return "fail"  # two screens disagree on the driver's net
+        return "pass"
+    # 2) fallbacks when base is not visible (e.g. a lone bottom half)
     if left is not None and net is not None:
-        if abs(left - net) <= 0.01:
-            passed = True
-        else:
-            failed = True
+        return "pass" if abs(left - net) <= 0.01 else "fail"
     if pt is not None and gc is not None and net is not None:
-        if abs((pt - gc) - net) <= 1:
-            passed = True
-        else:
-            failed = True
-    if failed:
-        return "fail"
-    return "pass" if passed else "no_data"
+        # Grab's cut line is unreliable on car trips (insurance/app fee lines) — advisory only
+        return "pass" if abs((pt - gc) - net) <= 1 else "no_data"
+    return "no_data"
 
 
 def normalize_time(s):
