@@ -38,7 +38,28 @@ export default function ReviewQueue({ onOpenJob }) {
     }
   }
 
+  const approveRest = async (jobId, name, force = false) => {
+    try {
+      const r = await api.commit(jobId, force)
+      setMsg(`อนุมัติ ${r.written} รายการของ ${name} แล้ว ✅`)
+      setRows(rows.filter((x) => x.job_id !== jobId))
+    } catch (e) {
+      if (!force && e.message.includes('บันทึกซ้ำ')) {
+        if (confirm(`⚠️ ${e.message}
+
+ยืนยันอนุมัติทั้งหมดหรือไม่?`)) return approveRest(jobId, name, true)
+      }
+      setMsg(e.message)
+    }
+  }
+
   if (!rows) return <p className="text-slate-400">กำลังโหลด...</p>
+  const groups = []
+  for (const t of rows) {
+    let g = groups.find((x) => x.job_id === t.job_id)
+    if (!g) { g = { job_id: t.job_id, driver_name: t.driver_name, rows: [] }; groups.push(g) }
+    g.rows.push(t)
+  }
 
   return (
     <div className="space-y-4">
@@ -66,7 +87,17 @@ export default function ReviewQueue({ onOpenJob }) {
               <th className="p-2">Booking</th><th className="p-2"></th>
             </tr></thead>
             <tbody>
-              {rows.map((t) => {
+              {groups.flatMap((g) => [
+                <tr key={`g${g.job_id}`} className="bg-slate-50 border-y border-slate-200">
+                  <td colSpan={11} className="px-2 py-1.5 text-sm">
+                    <span className="font-semibold">{g.driver_name}</span>
+                    <span className="text-slate-500 ml-2">job #{g.job_id} · รอ {g.rows.length} แถว</span>
+                    <button onClick={() => onOpenJob(g.job_id)} className="ml-4 text-blue-600 hover:underline text-xs">เปิดแก้ตัวเลข</button>
+                    <button onClick={() => confirm(`อนุมัติทั้ง ${g.rows.length} แถวที่เหลือของ ${g.driver_name}?`) && approveRest(g.job_id, g.driver_name)}
+                      className="ml-3 text-emerald-700 hover:underline text-xs">อนุมัติที่เหลือทั้งหมด</button>
+                  </td>
+                </tr>,
+                ...g.rows.map((t) => {
                 const r = reason(t)
                 return (
                   <tr key={t.id} className="border-b border-slate-100 hover:bg-slate-50">
@@ -97,7 +128,8 @@ export default function ReviewQueue({ onOpenJob }) {
                     </td>
                   </tr>
                 )
-              })}
+                }),
+              ])}
             </tbody>
           </table>
         </div>

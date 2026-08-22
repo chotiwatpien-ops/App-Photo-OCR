@@ -140,9 +140,12 @@ def export_only(drive, exports_id):
         wk = week_label(d_from)
         for j in js:
             try:
-                rider_dir = drive.ensure_folder(exports_id, wk)
+                week_dir = drive.ensure_folder(exports_id, wk)
+                db.record_drive_file(wk, "week_folder", week_dir)
+                rider_dir = week_dir
                 for part in (j.get("folder_name") or j["driver_name"]).split("/"):
                     rider_dir = drive.ensure_folder(rider_dir, part)
+                db.record_drive_file(wk, "rider_folder", rider_dir, j.get("folder_name"), ref=j["id"])
                 imgs = list(pipeline.customer_images(j["id"], j["driver_name"], fetch=drive.download))
                 with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
                     list(ex.map(lambda nd: drive.upload_file(rider_dir, nd[0], nd[1], "image/jpeg"), imgs))
@@ -152,7 +155,8 @@ def export_only(drive, exports_id):
                 errors += 1
         rows = db.query_trips(date_from=d_from, date_to=d_to, committed_only=True)
         try:
-            drive.upload_xlsx(exports_id, f"Rider Trips {wk}.xlsx", excel_writer.build_workbook(rows))
+            fid = drive.upload_xlsx(exports_id, f"Rider Trips {wk}.xlsx", excel_writer.build_workbook(rows))
+            db.record_drive_file(wk, "xlsx", fid, f"Rider Trips {wk}.xlsx")
             log(f"📄 Rider Trips {wk}.xlsx: {len(rows)} แถว")
         except Exception as e:  # noqa: BLE001
             log(f"✗ upload xlsx {wk}: {e}")
@@ -231,9 +235,12 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         # customer images: Exports/<week>/<rider>/<rider>1.jpg ... (before approval clears the blobs)
         try:
             # mirror the team's own folder path under Exports/<week>/ (e.g. "4 W Standard/01 สายยนต์ 3-9 Aug")
-            rider_dir = drive.ensure_folder(exports_id, week_label(d_from))
+            week_dir = drive.ensure_folder(exports_id, week_label(d_from))
+            db.record_drive_file(week_label(d_from), "week_folder", week_dir)
+            rider_dir = week_dir
             for part in (meta.get("folder_name") or rider).split("/"):
                 rider_dir = drive.ensure_folder(rider_dir, part)
+            db.record_drive_file(week_label(d_from), "rider_folder", rider_dir, meta.get("folder_name"), ref=job_id)
             imgs = list(pipeline.customer_images(job_id, rider, fetch=drive.download))
             with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
                 list(ex.map(lambda nd: drive.upload_file(rider_dir, nd[0], nd[1], "image/jpeg"), imgs))
@@ -253,7 +260,8 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         rows = db.query_trips(date_from=d_from, date_to=d_to, committed_only=True)
         name = f"Rider Trips {week_label(d_from)}.xlsx"
         try:
-            drive.upload_xlsx(exports_id, name, excel_writer.build_workbook(rows))
+            fid = drive.upload_xlsx(exports_id, name, excel_writer.build_workbook(rows))
+            db.record_drive_file(week_label(d_from), "xlsx", fid, name)
             log(f"📄 {name}: {len(rows)} แถว")
         except Exception as e:  # noqa: BLE001
             log(f"✗ upload {name}: {e}")

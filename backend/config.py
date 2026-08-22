@@ -69,6 +69,11 @@ def _secret_key() -> str:
 
 SECRET_KEY = _secret_key()
 
+# --- GitHub Actions trigger (button "ดูดรูปจาก Drive ตอนนี้") ---
+GITHUB_TOKEN = _setting("GITHUB_TOKEN", "github_token")          # fine-grained PAT with Actions: write
+GITHUB_REPO = _setting("GITHUB_REPO", "github_repo")             # "owner/repo"
+GITHUB_WORKFLOW = _setting("GITHUB_WORKFLOW", "github_workflow", "ingest.yml")
+
 # --- Gemini ---
 # Audited 2026-08-21 (5 rounds x 19 images each, 100% on money fields for all three):
 #   gemini-3.7-flash  thinking=low   ฿0.09/img  (default — user's plan)

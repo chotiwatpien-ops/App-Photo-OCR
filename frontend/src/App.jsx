@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, exportUrl } from './api.js'
 import Dashboard from './Dashboard.jsx'
+import Home from './Home.jsx'
 import DataView from './DataView.jsx'
 import Login from './Login.jsx'
 import NewJobForm from './NewJobForm.jsx'
@@ -56,7 +57,7 @@ export default function App() {
   const [health, setHealth] = useState(null)
   const [jobList, setJobList] = useState([])
   const [activeJob, setActiveJob] = useState(null)
-  const [view, setView] = useState('jobs') // jobs | dashboard | data | queue
+  const [view, setView] = useState('home') // home | jobs | dashboard | data | queue
   const [queueCount, setQueueCount] = useState(0)
 
   const refreshJobs = useCallback(() => {
@@ -98,7 +99,7 @@ export default function App() {
 
   const openJob = (id) => api.job(id).then(setActiveJob)
   const NAV = [
-    ['jobs', 'งาน'], ['queue', `คิวตรวจ${queueCount ? ` (${queueCount})` : ''}`],
+    ['home', 'หน้าหลัก'], ['queue', `คิวตรวจ${queueCount ? ` (${queueCount})` : ''}`],
     ['data', 'ข้อมูลทั้งหมด'], ['dashboard', 'Dashboard'],
   ]
   const logout = () => api.logout().then(() => { setActiveJob(null); boot() })
@@ -111,7 +112,7 @@ export default function App() {
           <div>
             <h1 className="font-semibold text-lg leading-tight">Rider Photo OCR</h1>
             <p className="text-xs text-slate-400">
-              อ่านข้อมูลงานไรเดอร์จาก screenshot → Excel{health?.model ? ` · ${health.model}` : ''}
+              Google Drive → AI → Excel{health?.model ? ` · ${health.model}` : ''}
             </p>
           </div>
         </div>
@@ -143,6 +144,8 @@ export default function App() {
             onBack={() => { setActiveJob(null); refreshJobs() }}
             onJobUpdate={setActiveJob}
           />
+        ) : view === 'home' ? (
+          <Home onOpenJob={openJob} onJobCreated={(job) => { setActiveJob(job); refreshJobs() }} />
         ) : view === 'dashboard' ? (
           <Dashboard />
         ) : view === 'data' ? (

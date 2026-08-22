@@ -94,6 +94,18 @@ ingested_files = Table(
     Column("ingested_at", String(19), nullable=False),
 )
 
+# where ingest put things on Drive, so the UI can link straight to them
+drive_files = Table(
+    "drive_files", meta,
+    Column("key", String(96), primary_key=True),   # f"{week}|{kind}|{ref}"
+    Column("week", String(12), nullable=False),
+    Column("kind", String(16), nullable=False),    # xlsx | week_folder | rider_folder
+    Column("ref", String(16), nullable=False, default=""),  # job id for rider_folder, else ""
+    Column("drive_id", Text, nullable=False),
+    Column("name", Text),
+    Column("updated_at", String(19), nullable=False),
+)
+
 ingest_runs = Table(
     "ingest_runs", meta,
     Column("id", Integer, primary_key=True, autoincrement=True),
@@ -568,4 +580,69 @@ def jobs_by_week():
     out = {}
     for j in rows:
         out.setdefault((j["date_from"], j["date_to"]), []).append(j)
+    return out
+
+
+# ---------- Drive links + weekly overview (Phase D UI) ----------
+
+def record_drive_file(week, kind, drive_id, name=None, ref=""):
+    key = f"{week}|{kind}|{ref}"
+    with engine.begin() as c:
+        c.execute(delete(drive_files).where(drive_files.c.key == key))
+        c.execute(insert(drive_files).values(key=key, week=week, kind=kind, ref=str(ref),
+                                             drive_id=str(drive_id), name=name, updated_at=_now()))
+
+
+def drive_links():
+    with engine.begin() as c:
+        return [dict(r) for r in c.execute(select(drive_files)).mappings().all()]
+
+
+def latest_ingest_run():
+    with engine.begin() as c:
+        r = c.execute(select(ingest_runs).order_by(ingest_runs.c.id.desc()).limit(1)).mappings().first()
+        return dict(r) if r else None
+
+
+def weeks_overview():
+    """Jobs grouped by week → category → rider, with per-job counts and Drive links."""
+    done = func.sum(case((trips.c.status == "done", 1), else_=0)).label("done")
+    waiting = func.sum(case(((trips.c.status == "done") & (trips.c.committed == 0), 1), else_=0)).label("waiting")
+    approved = func.sum(case(((trips.c.status == "done") & (trips.c.committed == 1), 1), else_=0)).label("approved")
+    auto = func.sum(case(((trips.c.status == "done") & (trips.c.auto_approved == 1), 1), else_=0)).label("auto")
+    errors = func.sum(case((trips.c.status == "error", 1), else_=0)).label("errors")
+    pending = func.sum(case((trips.c.status == "pending", 1), else_=0)).label("pending")
+    images = func.sum(case((trips.c.status != "x", 1), else_=0)).label("images")
+    net = func.sum(case(((trips.c.status == "done") & (trips.c.committed == 1), trips.c.net_earnings), else_=0)).label("net")
+    q = (select(jobs, done, waiting, approved, auto, errors, pending, images, net)
+         .select_from(jobs.outerjoin(trips, trips.c.job_id == jobs.c.id))
+         .group_by(*jobs.c).order_by(jobs.c.date_from.desc(), jobs.c.category, jobs.c.driver_name))
+    with engine.begin() as c:
+        rows = [dict(r) for r in c.execute(q).mappings().all()]
+    links = drive_links()
+    by_week_links = {}
+    for l in links:
+        by_week_links.setdefault(l["week"], {})[(l["kind"], l["ref"])] = l
+    weeks = {}
+    for j in rows:
+        y, w, _ = datetime.strptime(j["date_from"], "%Y-%m-%d").isocalendar()
+        wk = f"{y}-W{w:02d}"
+        W = weeks.setdefault(wk, {"week": wk, "date_from": j["date_from"], "date_to": j["date_to"],
+                                  "riders": 0, "images": 0, "trips": 0, "approved": 0, "auto": 0,
+                                  "waiting": 0, "errors": 0, "pending": 0, "net": 0.0,
+                                  "xlsx": None, "folder": None, "groups": {}})
+        L = by_week_links.get(wk, {})
+        if ("xlsx", "") in L:
+            W["xlsx"] = L[("xlsx", "")]["drive_id"]
+        if ("week_folder", "") in L:
+            W["folder"] = L[("week_folder", "")]["drive_id"]
+        j["rider_folder"] = L.get(("rider_folder", str(j["id"])), {}).get("drive_id")
+        j["net"] = round(j["net"] or 0, 2)
+        for k in ("riders", "images", "trips", "approved", "auto", "waiting", "errors", "pending"):
+            W[k] += 1 if k == "riders" else (j["done"] if k == "trips" else (j[k] or 0))
+        W["net"] = round(W["net"] + (j["net"] or 0), 2)
+        W["groups"].setdefault(j["category"] or "อัปโหลดมือ", []).append(j)
+    out = list(weeks.values())
+    for W in out:
+        W["groups"] = [{"category": k, "jobs": v} for k, v in W["groups"].items()]
     return out

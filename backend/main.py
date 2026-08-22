@@ -4,6 +4,7 @@
 Local:  uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8600
 Cloud:  see render.yaml (DATABASE_URL, GEMINI_API_KEY, APP_PASSWORD, SECRET_KEY)
 """
+import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -254,6 +255,32 @@ def job_images_zip(job_id: int):
     return Response(content=buf.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}",
                              "X-File-Count": str(n)})
+
+
+@app.get("/api/weeks")
+def weeks():
+    return {"weeks": db.weeks_overview(), "last_run": db.latest_ingest_run(),
+            "can_trigger": bool(config.GITHUB_TOKEN and config.GITHUB_REPO),
+            "exports_folder": config.DRIVE_EXPORTS_FOLDER_ID, "inbox_folder": config.DRIVE_INBOX_FOLDER_ID}
+
+
+@app.post("/api/ingest/trigger")
+def trigger_ingest():
+    """Kick the GitHub Actions ingest workflow (workflow_dispatch)."""
+    if not (config.GITHUB_TOKEN and config.GITHUB_REPO):
+        raise HTTPException(501, "ยังไม่ได้ตั้งค่า GITHUB_TOKEN / GITHUB_REPO — ตั้งแล้วปุ่มนี้จะสั่งรันได้")
+    import urllib.request
+    url = f"https://api.github.com/repos/{config.GITHUB_REPO}/actions/workflows/{config.GITHUB_WORKFLOW}/dispatches"
+    body = json.dumps({"ref": "main", "inputs": {}}).encode()
+    req = urllib.request.Request(url, data=body, method="POST", headers={
+        "Authorization": f"Bearer {config.GITHUB_TOKEN}", "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            status = r.status
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"สั่ง GitHub ไม่สำเร็จ: {str(e)[:200]}")
+    return {"ok": status in (200, 204), "url": f"https://github.com/{config.GITHUB_REPO}/actions"}
 
 
 @app.get("/api/drivers")
