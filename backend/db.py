@@ -513,3 +513,12 @@ def merge_bottom_into_top(bottom_id, top_id, fields: dict):
             c.execute(update(trips).where(trips.c.id == top_id).values(**vals))
         c.execute(update(trips).where(trips.c.id == bottom_id, trips.c.status == "done")
                   .values(status="merged", merged_into=top_id))
+
+
+def done_trips_for_dating(job_id, only_missing=True):
+    q = (select(trips.c.id, trips.c.file_name)
+         .where(trips.c.job_id == job_id, trips.c.status == "done", trips.c.committed == 0))
+    if only_missing:
+        q = q.where(trips.c.trip_date.is_(None))
+    with engine.begin() as c:
+        return [dict(r) for r in c.execute(q).mappings().all()]

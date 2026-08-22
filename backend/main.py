@@ -215,6 +215,16 @@ def commit(job_id: int, force: bool = False):
     return {"written": len(done), "file": written_file}
 
 
+@app.post("/api/jobs/{job_id}/spread-dates")
+def spread_dates(job_id: int, all_rows: bool = False):
+    """Spread the job's unapproved trips evenly over its date range (Mon..Sun) in file order."""
+    j = db.get_job(job_id)
+    if not j:
+        raise HTTPException(404, "ไม่พบ job")
+    n = pipeline.spread_dates(job_id, j["date_from"], j["date_to"], only_missing=not all_rows)
+    return {"dated": n}
+
+
 @app.get("/api/drivers")
 def drivers():
     return {"drivers": db.list_drivers()}

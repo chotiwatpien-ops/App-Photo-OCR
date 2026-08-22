@@ -67,7 +67,7 @@ def discover(drive, inbox_id):
             for img in drive.list_images(rider["id"]):
                 items.append({"file": img, "rider": name, "week": wk["name"],
                               "date_from": monday.isoformat(), "date_to": sunday.isoformat(),
-                              "trip_date": monday.isoformat()})
+                              "trip_date": None})  # spread over the week after pairing
             for day in drive.list_folders(rider["id"]):
                 dm = DATE_RE.match(day["name"].strip())
                 if not dm:
@@ -93,7 +93,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None):
         new = new[:limit]
     if dry_run:
         for i in new[:50]:
-            log(f"  would process {i['week']}/{i['rider']}/{i['file']['name']} → {i['trip_date']}")
+            log(f"  would process {i['week']}/{i['rider']}/{i['file']['name']} → {i['trip_date'] or 'กระจายในสัปดาห์'}")
         return
 
     # group by rider+week → one job each (reused across runs so a week's photos stay together)
@@ -121,7 +121,8 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None):
                 errors += 1
                 continue
             tid = db.create_trip(job_id, f["name"], data, f["mime"], source_url=f.get("url"))
-            db.update_trip(tid, {"trip_date": i["trip_date"]})
+            if i["trip_date"]:
+                db.update_trip(tid, {"trip_date": i["trip_date"]})
             db.record_ingested(f["id"], f["name"], job_id, tid)
             trip_ids.append(tid)
 
@@ -131,6 +132,9 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None):
         pairs = pipeline.pair_fragments(job_id)
         if pairs:
             log(f"  ⧉ จับคู่รูปบน/ล่างได้ {pairs} งาน")
+        dated = pipeline.spread_dates(job_id, d_from, d_to, only_missing=True)
+        if dated:
+            log(f"  📅 กระจาย {dated} งานลง จ–อา เท่าๆ กัน")
 
         stats = db.auto_approve_job(job_id)
         approved += stats["approved"]

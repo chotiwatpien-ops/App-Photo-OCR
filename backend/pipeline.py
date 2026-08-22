@@ -59,6 +59,27 @@ def pair_fragments(job_id) -> int:
     return pairs
 
 
+def spread_dates(job_id, date_from, date_to, only_missing=True) -> int:
+    """The screenshots carry no trip date, so spread a job's trips evenly over its week
+    (Mon..Sun) in file order — 21 trips -> 3 per day, 20 -> 3,3,3,3,3,3,2.
+    only_missing=True touches rows without a date (day-subfolder rows keep theirs)."""
+    from datetime import date, timedelta
+    rows = sorted(db.done_trips_for_dating(job_id, only_missing), key=lambda r: _natural_key(r["file_name"]))
+    if not rows:
+        return 0
+    d0, d1 = date.fromisoformat(date_from), date.fromisoformat(date_to)
+    days = [(d0 + timedelta(days=i)).isoformat() for i in range((d1 - d0).days + 1)] or [date_from]
+    n, k = len(rows), len(days)
+    base, extra = divmod(n, k)
+    i = 0
+    for di, day in enumerate(days):
+        take = base + (1 if di < extra else 0)
+        for r in rows[i:i + take]:
+            db.update_trip(r["id"], {"trip_date": day})
+        i += take
+    return n
+
+
 def process_trip(trip_id: int, job_id: int) -> str:
     """Extract one stored image and persist the result. Returns 'done' | 'error'."""
     try:

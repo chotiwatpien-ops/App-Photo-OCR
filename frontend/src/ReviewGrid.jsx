@@ -128,6 +128,17 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
     }
   }
 
+  const spreadDates = async (allRows) => {
+    try {
+      const res = await api.spreadDates(job.id, allRows)
+      const fresh = await api.job(job.id)
+      onJobUpdate(fresh)
+      setMsg({ type: 'ok', text: `กระจาย ${res.dated} งานลง จ–อา เท่าๆ กันตามลำดับรูปแล้ว` })
+    } catch (e) {
+      setMsg({ type: 'err', text: e.message })
+    }
+  }
+
   const bulkAssignDate = async (onlyEmpty) => {
     if (!bulkDate) return
     const targets = waiting.filter((t) => (onlyEmpty ? !t.trip_date : true))
@@ -253,6 +264,13 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
             disabled={!bulkDate}
             className="border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-40 rounded px-3 py-1"
           >ใส่ให้ทุกแถว</button>
+          <span className="text-slate-300">|</span>
+          <button
+            onClick={() => spreadDates(missingDates === 0)}
+            disabled={waiting.length === 0}
+            title="แบ่งงานลงวันจันทร์–อาทิตย์เท่าๆ กันตามลำดับรูป (เช่น 21 งาน = วันละ 3)"
+            className="border border-indigo-300 text-indigo-700 hover:bg-indigo-50 disabled:opacity-40 rounded px-3 py-1"
+          >📆 กระจายทั้งสัปดาห์เท่าๆ กัน</button>
           {missingDates > 0 && (
             <span className="text-amber-700">ยังไม่ได้เลือกวันที่ {missingDates} รายการ (วันที่ไม่มีในรูป ต้องเลือกเอง)</span>
           )}
