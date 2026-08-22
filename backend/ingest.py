@@ -128,6 +128,9 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None):
         with ThreadPoolExecutor(max_workers=MAX_PARALLEL_EXTRACTIONS) as ex:
             results = list(ex.map(lambda tid: pipeline.process_trip(tid, job_id), trip_ids))
         errors += results.count("error")
+        pairs = pipeline.pair_fragments(job_id)
+        if pairs:
+            log(f"  ⧉ จับคู่รูปบน/ล่างได้ {pairs} งาน")
 
         stats = db.auto_approve_job(job_id)
         approved += stats["approved"]

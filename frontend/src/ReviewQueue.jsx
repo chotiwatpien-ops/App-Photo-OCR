@@ -110,7 +110,13 @@ export default function ReviewQueue({ onOpenJob }) {
               <span className="text-sm text-slate-600">{modal.driver_name} · {modal.file_name}{modal.booking_code ? ` · ${modal.booking_code}` : ''}</span>
               <button onClick={() => setModal(null)} className="text-slate-400 hover:text-slate-700 text-xl px-2">✕</button>
             </div>
-            <img src={`/api/trips/${modal.id}/image`} alt="" className="max-w-[80vw] max-h-[78vh] rounded-lg" />
+            <div className="flex gap-3">
+              <img src={`/api/trips/${modal.id}/image`} alt="" className="max-w-[40vw] max-h-[78vh] rounded-lg" />
+              {modal.note && modal.note.startsWith('รวม 2 รูป') && (
+                <img src={`/api/trips/${modal.id}/image?part=2`} alt="" className="max-w-[40vw] max-h-[78vh] rounded-lg"
+                  onError={(e) => { e.currentTarget.style.display = 'none' }} />
+              )}
+            </div>
             {modal.note && <p className="text-xs text-amber-700 bg-amber-50 rounded p-2 mt-2">⚠️ {modal.note}</p>}
           </div>
         </div>

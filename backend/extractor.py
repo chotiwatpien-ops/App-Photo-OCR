@@ -94,14 +94,22 @@ SCHEMA = types.Schema(
         "tolls": types.Schema(type=types.Type.NUMBER, description="ค่าทางด่วน / reimbursements if shown, else 0."),
         "screen_time": types.Schema(type=types.Type.STRING, nullable=True, description="Clock in phone status bar, HH:MM, if readable."),
         "confidence_note": types.Schema(type=types.Type.STRING, nullable=True, description="Anything ambiguous/unreadable, in Thai, else null."),
+        "kind": types.Schema(
+            type=types.Type.STRING, enum=["full", "top", "bottom"],
+            description="Which part of the trip screen this image shows. 'top' = route/map/booking code visible but the 'ค่าโดยสารของผู้โดยสารทั้งหมด' section is NOT; 'bottom' = no route/map/booking code, starts at or below 'คุณได้รับ' and shows the fare breakdown; 'full' = both the route and the passenger-fare section are visible (one long or stitched image).",
+        ),
     },
-    required=["service_type", "payment_method", "distance_km", "net_earnings", "base_fare",
-              "pickup_province", "dropoff_province"],
+    required=["net_earnings", "kind"],
 )
 
 PROMPT = """You are reading a screenshot from the Grab Driver app (Thai UI). The image may contain
 one or two phone screens side by side showing the SAME single trip (left: route/map/payment,
 right: earnings breakdown).
+
+Riders often send ONE trip as TWO separate screenshots (a top half and a bottom half); you may
+be given only one half. Report kind=top/bottom/full and fill ONLY what is visible — leave every
+field you cannot see as null (never guess a route, booking code, payment chip or passenger total
+that is not in the image). net_earnings ('คุณได้รับ') appears on both halves and is always visible.
 
 Extract the trip data into the JSON schema. Rules:
 - Amounts are Thai Baht; strip the ฿ symbol. The ฿ glyph is a CURRENCY SYMBOL, not a
@@ -200,7 +208,8 @@ def resolve_payment(data: dict) -> str:
 def _suspect_fields(data: dict) -> list[str]:
     """Critical numbers that should never be missing/zero on a real trip."""
     bad = []
-    for f in ("distance_km", "net_earnings", "base_fare"):
+    must = ("net_earnings",) if data.get("kind") == "bottom" else ("distance_km", "net_earnings", "base_fare")
+    for f in must:
         v = data.get(f)
         if v is None or v <= 0:
             bad.append(f)

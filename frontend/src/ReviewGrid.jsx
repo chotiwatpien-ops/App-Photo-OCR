@@ -67,7 +67,7 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
   const dates = useMemo(() => dateRange(job.date_from, job.date_to), [job.date_from, job.date_to])
   const trips = useMemo(() => {
     // group same-day trips together: sort by screen time, unknown times last
-    return [...(job.trips || [])].sort((a, b) => {
+    return [...(job.trips || [])].filter((t) => t.status !== 'merged').sort((a, b) => {
       const ta = a.trip_time || '99:99'
       const tb = b.trip_time || '99:99'
       return ta === tb ? a.id - b.id : ta.localeCompare(tb)
@@ -301,13 +301,16 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
                   : t.check_status === 'fail' ? 'bg-red-50/50' : ''
               }`}>
                 <td className="p-2">
-                  <button onClick={() => t.status !== 'pending' && setModalTrip(t)} title={t.file_name + (t.booking_code ? ` · ${t.booking_code}` : '')}>
+                  <button onClick={() => t.status !== 'pending' && setModalTrip(t)} title={t.file_name + (t.booking_code ? ` · ${t.booking_code}` : '')} className="relative">
                     <img
                       src={`/api/trips/${t.id}/image`}
                       alt={t.file_name}
                       className="h-14 w-14 object-cover rounded-lg border border-slate-200 hover:ring-2 hover:ring-blue-400"
                       loading="lazy"
                     />
+                    {t.note && t.note.startsWith('รวม 2 รูป') && (
+                      <span title={t.note} className="absolute -top-1 -right-1 text-[10px] bg-slate-800 text-white rounded px-1">2</span>
+                    )}
                   </button>
                 </td>
                 {t.status === 'pending' ? (
@@ -401,7 +404,11 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
               <button onClick={() => setModalTrip(null)} className="text-slate-400 hover:text-slate-700 text-xl px-2">✕</button>
             </div>
             <div className="flex gap-4 items-start">
-              <img src={`/api/trips/${modalTrip.id}/image`} alt="" className="max-w-[55vw] max-h-[78vh] rounded-lg" />
+              <img src={`/api/trips/${modalTrip.id}/image`} alt="" className="max-w-[40vw] max-h-[78vh] rounded-lg" />
+              {modalTrip.note && modalTrip.note.startsWith('รวม 2 รูป') && (
+                <img src={`/api/trips/${modalTrip.id}/image?part=2`} alt="" className="max-w-[40vw] max-h-[78vh] rounded-lg"
+                  onError={(e) => { e.currentTarget.style.display = 'none' }} />
+              )}
               <div className="text-sm w-64 space-y-2 pt-1">
                 <div>
                   <p className="text-xs text-slate-400">จุดรับ {modalTrip.pickup_district ? `(${modalTrip.pickup_district})` : ''}</p>

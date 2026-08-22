@@ -76,6 +76,8 @@ trips = Table(
     Column("committed", Integer, nullable=False, default=0),
     Column("auto_approved", Integer, nullable=False, default=0),  # 1 = committed by ingest, not a person
     Column("source_url", Text),                                   # Drive link to the original image
+    Column("kind", String(8)),            # full | top | bottom — which part of the trip screen the image shows
+    Column("merged_into", Integer),       # bottom half folded into this trip id (status becomes 'merged')
 )
 
 # Drive files already pulled in — makes every ingest run idempotent
@@ -111,7 +113,7 @@ TRIP_EDITABLE = [
     "num_stops", "app_fee", "other_adj", "fare_refund", "note",
 ]
 _SYSTEM_FIELDS = ["status", "error", "booking_code", "check_status", "duplicate_of",
-                  "grab_commission", "model", "tok_in", "tok_out", "tok_think"]
+                  "grab_commission", "model", "tok_in", "tok_out", "tok_think", "kind", "merged_into"]
 # columns returned to the API (everything except the blob)
 TRIP_COLS = [c for c in trips.c if c.name != "image_blob"]
 
@@ -172,7 +174,8 @@ def refresh_job_status(job_id):
 def list_jobs(limit=30):
     done = func.sum(case((trips.c.status == "done", 1), else_=0)).label("done_count")
     err = func.sum(case((trips.c.status == "error", 1), else_=0)).label("error_count")
-    q = (select(jobs, func.count(trips.c.id).label("trip_count"), done, err)
+    cnt = func.sum(case((trips.c.status != "merged", 1), else_=0)).label("trip_count")
+    q = (select(jobs, cnt, done, err)
          .select_from(jobs.outerjoin(trips, trips.c.job_id == jobs.c.id))
          .group_by(*jobs.c).order_by(jobs.c.id.desc()).limit(limit))
     with engine.begin() as c:
@@ -184,6 +187,8 @@ def mark_committed(job_id):
     with engine.begin() as c:
         c.execute(update(trips).where(trips.c.job_id == job_id, trips.c.status == "done")
                   .values(committed=1, image_blob=None))
+        c.execute(update(trips).where(trips.c.job_id == job_id, trips.c.status == "merged")
+                  .values(image_blob=None))
         c.execute(update(jobs).where(jobs.c.id == job_id).values(status="committed"))
 
 
@@ -234,6 +239,7 @@ def auto_approve_job(job_id) -> dict:
         if ok_ids:
             c.execute(update(trips).where(trips.c.id.in_(ok_ids))
                       .values(committed=1, auto_approved=1, image_blob=None))
+            c.execute(update(trips).where(trips.c.merged_into.in_(ok_ids)).values(image_blob=None))
         remaining = c.execute(select(func.count()).select_from(trips)
                               .where(trips.c.job_id == job_id, trips.c.status == "done",
                                      trips.c.committed == 0)).scalar()
@@ -269,11 +275,15 @@ def get_trip(trip_id):
         return dict(r) if r else None
 
 
-def get_trip_image(trip_id):
-    """(bytes, mime) or None — blobs are cleared after commit."""
+def get_trip_image(trip_id, part=1):
+    """(bytes, mime) or None — blobs are cleared after commit. part=2 -> merged bottom half."""
     with engine.begin() as c:
-        r = c.execute(select(trips.c.image_blob, trips.c.image_mime)
-                      .where(trips.c.id == trip_id)).first()
+        if part == 2:
+            r = c.execute(select(trips.c.image_blob, trips.c.image_mime)
+                          .where(trips.c.merged_into == trip_id).order_by(trips.c.id).limit(1)).first()
+        else:
+            r = c.execute(select(trips.c.image_blob, trips.c.image_mime)
+                          .where(trips.c.id == trip_id)).first()
         if not r or r[0] is None:
             return None
         return bytes(r[0]), r[1] or "image/jpeg"
@@ -462,6 +472,7 @@ def approve_trip(trip_id) -> dict:
             return {"error": "ยังไม่ได้ระบุวันที่"}
         c.execute(update(trips).where(trips.c.id == trip_id)
                   .values(committed=1, auto_approved=0, image_blob=None))
+        c.execute(update(trips).where(trips.c.merged_into == trip_id).values(image_blob=None))
         remaining = c.execute(select(func.count()).select_from(trips)
                               .where(trips.c.job_id == t["job_id"], trips.c.status == "done",
                                      trips.c.committed == 0)).scalar()
@@ -474,3 +485,30 @@ def list_ingest_runs(limit=10):
     with engine.begin() as c:
         return [dict(r) for r in c.execute(select(ingest_runs).order_by(ingest_runs.c.id.desc())
                                            .limit(limit)).mappings().all()]
+
+
+# ---------- half-screenshot pairing ----------
+
+def done_trips_for_pairing(job_id):
+    """Minimal rows needed to pair top/bottom halves (done, not yet merged)."""
+    with engine.begin() as c:
+        rows = c.execute(select(trips.c.id, trips.c.file_name, trips.c.kind, trips.c.net_earnings,
+                                trips.c.base_fare, trips.c.merged_into)
+                         .where(trips.c.job_id == job_id, trips.c.status == "done")).mappings().all()
+        return [dict(r) for r in rows]
+
+
+def has_merged_child(trip_id) -> bool:
+    with engine.begin() as c:
+        return bool(c.execute(select(func.count()).select_from(trips)
+                              .where(trips.c.merged_into == trip_id)).scalar())
+
+
+def merge_bottom_into_top(bottom_id, top_id, fields: dict):
+    """Fold a bottom-half trip into its top half: copy fields, hide the bottom row."""
+    with engine.begin() as c:
+        vals = {k: v for k, v in fields.items() if k in set(TRIP_EDITABLE + _SYSTEM_FIELDS)}
+        if vals:
+            c.execute(update(trips).where(trips.c.id == top_id).values(**vals))
+        c.execute(update(trips).where(trips.c.id == bottom_id, trips.c.status == "done")
+                  .values(status="merged", merged_into=top_id))

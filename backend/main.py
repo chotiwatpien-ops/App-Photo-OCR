@@ -80,6 +80,9 @@ def logout(response: Response):
 
 def _extract_worker(trip_id: int, job_id: int):
     pipeline.process_trip(trip_id, job_id)
+    j = db.get_job(job_id)
+    if j and not any(t["status"] == "pending" for t in j["trips"]):
+        pipeline.pair_fragments(job_id)  # last image in: pair top/bottom halves (idempotent)
 
 
 # ---------- API ----------
@@ -156,8 +159,8 @@ def remove_trip(trip_id: int):
 
 
 @app.get("/api/trips/{trip_id}/image")
-def trip_image(trip_id: int):
-    img = db.get_trip_image(trip_id)
+def trip_image(trip_id: int, part: int = 1):
+    img = db.get_trip_image(trip_id, part)
     if not img:
         raise HTTPException(404, "ไม่มีรูป (รูปถูกลบหลังอนุมัติ)")
     return Response(content=img[0], media_type=img[1],

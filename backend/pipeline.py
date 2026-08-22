@@ -1,7 +1,62 @@
 # -*- coding: utf-8 -*-
 """One trip through Gemini → checks → DB. Shared by the web app (manual upload) and ingest.py."""
+import re
+
 import db
 import extractor
+
+# fields that only the bottom half can show — copied onto the top half when pairing
+BOTTOM_FIELDS = ["passenger_total", "grab_commission", "app_fee", "other_adj", "fare_refund"]
+# incentives appear on the bottom half too; take them when the top half has none
+BOTTOM_IF_MISSING = ["bonus", "turbo", "tolls"]
+
+
+def _natural_key(name):
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", name or "")]
+
+
+def pair_fragments(job_id) -> int:
+    """Riders often send one trip as two screenshots (top half with the route, bottom half with
+    the fare breakdown). Pair each 'top' with an adjacent 'bottom' (by file order) that shows the
+    same 'คุณได้รับ' amount, fold the bottom's fields into the top, and hide the bottom row.
+    Idempotent. Returns number of pairs made."""
+    rows = sorted(db.done_trips_for_pairing(job_id), key=lambda r: _natural_key(r["file_name"]))
+    used, pairs = set(), 0
+    for i, r in enumerate(rows):
+        if r["kind"] != "top" or r["id"] in used or db.has_merged_child(r["id"]):
+            continue
+        for j in (i - 1, i + 1):
+            if j < 0 or j >= len(rows):
+                continue
+            b = rows[j]
+            if b["kind"] != "bottom" or b["id"] in used or b["merged_into"]:
+                continue
+            if r["net_earnings"] is None or b["net_earnings"] is None:
+                continue
+            if abs(float(r["net_earnings"]) - float(b["net_earnings"])) > 0.01:
+                continue
+            top, bot = db.get_trip(r["id"]), db.get_trip(b["id"])
+            fields = {k: bot.get(k) for k in BOTTOM_FIELDS if bot.get(k) is not None}
+            for k in BOTTOM_IF_MISSING:
+                if not top.get(k) and bot.get(k):
+                    fields[k] = bot[k]
+            merged = {**top, **fields}
+            fields["check_status"] = extractor.arithmetic_check({
+                "net_earnings": merged.get("net_earnings"), "base_fare": merged.get("base_fare"),
+                "bonus": merged.get("bonus"), "turbo": merged.get("turbo"),
+                "passenger_total": merged.get("passenger_total"),
+                "grab_commission": merged.get("grab_commission"),
+                "net_earnings_left_panel": None,
+            })
+            fields["kind"] = "full"
+            note = f"รวม 2 รูป: {r['file_name']} + {b['file_name']}"
+            fields["note"] = f"{note} | {top['note']}" if top.get("note") else note
+            db.merge_bottom_into_top(b["id"], r["id"], fields)
+            used.update({r["id"], b["id"]})
+            pairs += 1
+            break
+    db.refresh_job_status(job_id)
+    return pairs
 
 
 def process_trip(trip_id: int, job_id: int) -> str:
@@ -51,6 +106,7 @@ def process_trip(trip_id: int, job_id: int) -> str:
             "tok_out": usage.get("tok_out"),
             "tok_think": usage.get("tok_think"),
             "trip_time": extractor.normalize_time(data.get("screen_time")),
+            "kind": data.get("kind") or "full",
             "note": note,
         })
         return "done"
