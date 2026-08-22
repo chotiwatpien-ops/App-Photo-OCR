@@ -10,6 +10,7 @@ Both expose the same tiny interface:
 import io
 import json
 import os
+import threading
 from pathlib import Path
 
 IMAGE_MIMES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
@@ -27,6 +28,7 @@ class DriveClient:
         account (read-only in practice — Google gives service accounts no storage quota)."""
         from googleapiclient.discovery import build
 
+        self._local = threading.local()  # googleapiclient/httplib2 objects are not thread-safe
         creds = None
         tok = oauth_token_json or os.environ.get("DRIVE_OAUTH_TOKEN_JSON")
         if tok:
@@ -40,7 +42,16 @@ class DriveClient:
             info = json.loads(raw) if raw.strip().startswith("{") else json.loads(Path(raw).read_text(encoding="utf-8"))
             creds = service_account.Credentials.from_service_account_info(info, scopes=self.SCOPES)
             self.mode = "service_account"
-        self.svc = build("drive", "v3", credentials=creds, cache_discovery=False)
+        self._creds = creds
+        self._build = build
+
+    @property
+    def svc(self):
+        """A Drive API client per thread, so uploads/downloads can run in parallel safely."""
+        s = getattr(self._local, "svc", None)
+        if s is None:
+            s = self._local.svc = self._build("drive", "v3", credentials=self._creds, cache_discovery=False)
+        return s
 
     def _list(self, q, fields):
         out, token = [], None

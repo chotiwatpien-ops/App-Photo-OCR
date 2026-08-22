@@ -78,7 +78,9 @@ GEMINI_MODEL = _setting("GEMINI_MODEL", "model", "gemini-3.7-flash")
 GEMINI_THINKING_LEVEL = _setting("GEMINI_THINKING_LEVEL", "thinking_level", "low")
 _tb = _setting("GEMINI_THINKING_BUDGET", "thinking_budget", 0)
 GEMINI_THINKING_BUDGET = int(_tb) if _tb not in (None, "") else None
-MAX_PARALLEL_EXTRACTIONS = int(_setting("MAX_PARALLEL", "max_parallel", 4))
+MAX_PARALLEL_EXTRACTIONS = int(_setting("MAX_PARALLEL", "max_parallel", 4))      # web app
+INGEST_PARALLEL = int(_setting("INGEST_PARALLEL", "ingest_parallel", 12))        # Gemini calls in ingest
+DRIVE_PARALLEL = int(_setting("DRIVE_PARALLEL", "drive_parallel", 8))            # Drive uploads/downloads
 
 # Sheet1 "Time" band source. The Grab trip screen has NO trip time — only the phone clock at
 # capture time (riders screenshot in the evening). "screen_clock" bands that clock; "na" writes N/A.

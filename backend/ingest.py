@@ -29,7 +29,7 @@ import db
 import excel_writer
 import pipeline
 import config
-from config import MAX_PARALLEL_EXTRACTIONS
+from config import DRIVE_PARALLEL, INGEST_PARALLEL
 from drive_client import DriveClient, LocalDrive
 
 WEEK_RE = re.compile(r"(\d{4})-?W(\d{1,2})", re.IGNORECASE)
@@ -116,14 +116,18 @@ def discover(drive, inbox_id):
             continue
         if clean_name(top["name"]).lower() in CATEGORIES:  # layout B
             category = clean_name(top["name"])
+            todo = []
             for rider in drive.list_folders(top["id"]):
                 parsed = parse_rider_folder(rider["name"])
                 if not parsed:
                     skipped.append(f"'{category}/{rider['name']}' อ่านชื่อ/ช่วงวันที่ไม่ออก (ต้องเป็น 'NN ชื่อ 3-9 Aug') — ข้าม")
                     continue
                 name, d1, d2 = parsed
-                items += _rider_items(drive, rider, name, week_label(d1.isoformat()), d1.isoformat(), d2.isoformat(),
-                                      category, skipped, f"{category}/{rider['name']}")
+                todo.append((rider, name, week_label(d1.isoformat()), d1.isoformat(), d2.isoformat(),
+                             category, skipped, f"{category}/{rider['name']}"))
+            with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
+                for part in ex.map(lambda a: _rider_items(drive, *a), todo):
+                    items += part
             continue
         skipped.append(f"โฟลเดอร์ '{top['name']}' ไม่ใช่สัปดาห์ (2026-W34) หรือกลุ่มรถ (4 W Standard ...) — ข้าม")
     return items, skipped
@@ -139,11 +143,10 @@ def export_only(drive, exports_id):
                 rider_dir = drive.ensure_folder(exports_id, wk)
                 for part in (j.get("folder_name") or j["driver_name"]).split("/"):
                     rider_dir = drive.ensure_folder(rider_dir, part)
-                n = 0
-                for name, data in pipeline.customer_images(j["id"], j["driver_name"], fetch=drive.download):
-                    drive.upload_file(rider_dir, name, data, "image/jpeg")
-                    n += 1
-                log(f"🖼 {j['driver_name']}: {n} รูป → Exports/{wk}/{j.get('folder_name') or j['driver_name']}/")
+                imgs = list(pipeline.customer_images(j["id"], j["driver_name"], fetch=drive.download))
+                with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
+                    list(ex.map(lambda nd: drive.upload_file(rider_dir, nd[0], nd[1], "image/jpeg"), imgs))
+                log(f"🖼 {j['driver_name']}: {len(imgs)} รูป → Exports/{wk}/{j.get('folder_name') or j['driver_name']}/")
             except Exception as e:  # noqa: BLE001
                 log(f"✗ images {j['driver_name']}: {e}")
                 errors += 1
@@ -195,13 +198,18 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         db.set_job_status(job_id, "running")
         log(f"job #{job_id} {rider} {d_from}..{d_to}: {len(group)} รูป")
 
-        trip_ids = []
-        for i in group:
-            f = i["file"]
+        def _dl(i):
             try:
-                data = drive.download(f["id"])
+                return i, drive.download(i["file"]["id"]), None
             except Exception as e:  # noqa: BLE001
-                log(f"  ✗ download {f['name']}: {e}")
+                return i, None, e
+        with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
+            downloads = list(ex.map(_dl, group))
+        trip_ids = []
+        for i, data, err in downloads:
+            f = i["file"]
+            if err is not None:
+                log(f"  ✗ download {f['name']}: {err}")
                 errors += 1
                 continue
             tid = db.create_trip(job_id, f["name"], data, f["mime"], source_url=f.get("url"))
@@ -210,7 +218,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             db.record_ingested(f["id"], f["name"], job_id, tid)
             trip_ids.append(tid)
 
-        with ThreadPoolExecutor(max_workers=MAX_PARALLEL_EXTRACTIONS) as ex:
+        with ThreadPoolExecutor(max_workers=INGEST_PARALLEL) as ex:
             results = list(ex.map(lambda tid: pipeline.process_trip(tid, job_id), trip_ids))
         errors += results.count("error")
         pairs = pipeline.pair_fragments(job_id)
@@ -226,11 +234,10 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             rider_dir = drive.ensure_folder(exports_id, week_label(d_from))
             for part in (meta.get("folder_name") or rider).split("/"):
                 rider_dir = drive.ensure_folder(rider_dir, part)
-            n_img = 0
-            for name, data in pipeline.customer_images(job_id, rider, fetch=drive.download):
-                drive.upload_file(rider_dir, name, data, "image/jpeg")
-                n_img += 1
-            log(f"  🖼 รูปส่งลูกค้า {n_img} ไฟล์ → Exports/{week_label(d_from)}/{meta.get('folder_name') or rider}/")
+            imgs = list(pipeline.customer_images(job_id, rider, fetch=drive.download))
+            with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
+                list(ex.map(lambda nd: drive.upload_file(rider_dir, nd[0], nd[1], "image/jpeg"), imgs))
+            log(f"  🖼 รูปส่งลูกค้า {len(imgs)} ไฟล์ → Exports/{week_label(d_from)}/{meta.get('folder_name') or rider}/")
         except Exception as e:  # noqa: BLE001
             log(f"  ✗ customer images: {e}")
             errors += 1

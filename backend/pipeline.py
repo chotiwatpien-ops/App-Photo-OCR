@@ -115,18 +115,25 @@ def customer_images(job_id, rider, fetch=None):
     rows = db.trips_with_images(job_id)
     rows.sort(key=lambda r: (r["trip_date"] or "9999", _natural_key(r["file_name"])))
     drive_ids = db.drive_ids_for_job(job_id) if fetch else {}
+    if fetch:  # re-download cleared blobs in parallel before stitching
+        from concurrent.futures import ThreadPoolExecutor
+        from config import DRIVE_PARALLEL
+        need = []
+        for r in rows:
+            if r["top_blob"] is None and r["id"] in drive_ids:
+                need.append((r, "top_blob", drive_ids[r["id"]]))
+            bid = r.get("bottom_id")
+            if r["bottom_blob"] is None and bid and bid in drive_ids:
+                need.append((r, "bottom_blob", drive_ids[bid]))
+        with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
+            for (r, key, _), data in zip(need, ex.map(lambda t: fetch(t[2]), need)):
+                r[key] = data
     n = 0
     for r in rows:
-        top, bot = r["top_blob"], r["bottom_blob"]
-        if top is None and fetch and r["id"] in drive_ids:
-            top = fetch(drive_ids[r["id"]])
-            bid = r.get("bottom_id")
-            if bid and bid in drive_ids:
-                bot = fetch(drive_ids[bid])
-        if not top:
+        if not r["top_blob"]:
             continue
         n += 1
-        yield stitch.customer_name(rider, n), stitch.stitch(top, bot)
+        yield stitch.customer_name(rider, n), stitch.stitch(r["top_blob"], r["bottom_blob"])
 
 
 # team's vehicle groups -> template Service Type values
