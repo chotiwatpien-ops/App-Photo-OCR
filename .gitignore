@@ -1,5 +1,6 @@
 # secrets & local config
 photo_ocr_config.json
+service_account*.json
 .env
 
 # local data (never push rider PII)

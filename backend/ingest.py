@@ -28,6 +28,7 @@ from datetime import date, timedelta
 import db
 import excel_writer
 import pipeline
+import config
 from config import MAX_PARALLEL_EXTRACTIONS
 from drive_client import DriveClient, LocalDrive
 
@@ -191,9 +192,13 @@ def main():
         drive = LocalDrive(root)
         inbox, exports = root, a.exports or os.path.join(root, "..", "Exports")
     else:
-        drive = DriveClient()
-        inbox = os.environ["DRIVE_INBOX_FOLDER_ID"]
-        exports = a.exports or os.environ["DRIVE_EXPORTS_FOLDER_ID"]
+        if not config.GOOGLE_SERVICE_ACCOUNT:
+            sys.exit("ไม่พบ service account: วางไฟล์ service_account.json ไว้ในโฟลเดอร์โปรเจกต์ หรือตั้ง GOOGLE_SERVICE_ACCOUNT_JSON")
+        if not (config.DRIVE_INBOX_FOLDER_ID and (a.exports or config.DRIVE_EXPORTS_FOLDER_ID)):
+            sys.exit("ไม่พบ folder id: ใส่ drive_inbox_folder_id / drive_exports_folder_id ใน photo_ocr_config.json")
+        drive = DriveClient(config.GOOGLE_SERVICE_ACCOUNT)
+        inbox = config.DRIVE_INBOX_FOLDER_ID
+        exports = a.exports or config.DRIVE_EXPORTS_FOLDER_ID
     errors = run(drive, inbox, exports, dry_run=a.dry_run, limit=a.limit)
     sys.exit(1 if errors else 0)
 

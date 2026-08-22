@@ -88,6 +88,15 @@ TIME_BAND_SOURCE = _setting("TIME_BAND_SOURCE", "time_band_source", "screen_cloc
 # "total" = รวมค่าโดยสารของผู้โดยสาร. Both are kept in the Analysis sheet.
 PASSENGER_FARE_SOURCE = _setting("PASSENGER_FARE_SOURCE", "passenger_fare_source", "paid")
 
+# --- Google Drive (ingest) ---
+# service account: env GOOGLE_SERVICE_ACCOUNT_JSON (JSON text or path) > config "service_account_file" > ./service_account.json
+_sa_default = BASE_DIR / "service_account.json"
+GOOGLE_SERVICE_ACCOUNT = (os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+                          or _config_value("service_account_file")
+                          or (str(_sa_default) if _sa_default.exists() else None))
+DRIVE_INBOX_FOLDER_ID = _setting("DRIVE_INBOX_FOLDER_ID", "drive_inbox_folder_id")
+DRIVE_EXPORTS_FOLDER_ID = _setting("DRIVE_EXPORTS_FOLDER_ID", "drive_exports_folder_id")
+
 
 def _usable_key(k) -> bool:
     return bool(k) and "PASTE" not in str(k).upper() and len(str(k).strip()) >= 30
