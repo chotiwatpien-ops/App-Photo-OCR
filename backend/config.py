@@ -89,6 +89,16 @@ TIME_BAND_SOURCE = _setting("TIME_BAND_SOURCE", "time_band_source", "screen_cloc
 PASSENGER_FARE_SOURCE = _setting("PASSENGER_FARE_SOURCE", "passenger_fare_source", "paid")
 
 
+def api_key_source() -> str:
+    """Where the Gemini key comes from (never the key itself) — shown in /api/health."""
+    if os.environ.get("GEMINI_API_KEY"):
+        return "env GEMINI_API_KEY"
+    for p, label in ((CONFIG_PATH, "photo_ocr_config.json"), (VOICE_QA_CONFIG, "Voice QA csqa_config.json")):
+        if p.exists() and json.loads(p.read_text(encoding="utf-8")).get("api_key"):
+            return label
+    return "NOT FOUND"
+
+
 def load_api_key() -> str:
     v = os.environ.get("GEMINI_API_KEY")
     if v:

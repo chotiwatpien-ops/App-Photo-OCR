@@ -98,7 +98,8 @@ def health():
             excel_locked = True
     return {"ok": True, "is_cloud": config.IS_CLOUD, "excel_append": config.EXCEL_APPEND,
             "excel_locked": excel_locked, "excel_name": config.EXCEL_PATH.name,
-            "model": config.GEMINI_MODEL, "auth_required": bool(config.APP_PASSWORD)}
+            "model": config.GEMINI_MODEL, "auth_required": bool(config.APP_PASSWORD),
+            "api_key_source": config.api_key_source()}
 
 
 @app.post("/api/jobs")
