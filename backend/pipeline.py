@@ -71,7 +71,13 @@ def pair_fragments(job_id) -> int:
             })
             fields["kind"] = "full"
             note = f"รวม 2 รูป: {r['file_name']} + {b['file_name']}"
-            fields["note"] = f"{note} | {top['note']}" if top.get("note") else note
+            prior = top.get("note") or ""
+            # a bottom half that happened to show the booking code got flagged as a duplicate of
+            # its own top half — once they are merged that is not a duplicate
+            if top.get("duplicate_of") == b["id"]:
+                fields["duplicate_of"] = None
+                prior = " | ".join(p for p in prior.split(" | ") if "ซ้ำกับ" not in p)
+            fields["note"] = f"{note} | {prior}" if prior else note
             db.merge_bottom_into_top(b["id"], r["id"], fields)
             used.update({r["id"], b["id"]})
             pairs += 1
