@@ -6,7 +6,7 @@ import db
 import extractor
 
 # fields that only the bottom half can show — copied onto the top half when pairing
-BOTTOM_FIELDS = ["passenger_total", "grab_commission", "app_fee", "other_adj", "fare_refund"]
+BOTTOM_FIELDS = ["passenger_total", "passenger_paid", "grab_commission", "app_fee", "other_adj", "fare_refund"]
 # incentives appear on the bottom half too; take them when the top half has none
 BOTTOM_IF_MISSING = ["bonus", "turbo", "tolls"]
 
@@ -92,6 +92,7 @@ def process_trip(trip_id: int, job_id: int) -> str:
             "turbo": data.get("turbo") or 0,
             "tolls": data.get("tolls") or 0,
             "passenger_total": data.get("passenger_total"),
+            "passenger_paid": data.get("passenger_paid"),
             "grab_commission": data.get("grab_commission"),
             "pickup_district": data.get("pickup_district"),
             "dropoff_district": data.get("dropoff_district"),

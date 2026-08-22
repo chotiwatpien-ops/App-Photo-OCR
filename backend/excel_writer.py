@@ -39,10 +39,10 @@ ANALYSIS_HEADERS = [
     "Driver Name", "Date", "Time", "Booking Code", "Week", "Pick-up Zone", "Drop-off Zone",
     "Pick-up District", "Drop-off District", "Pick-up Province", "Drop-off Province",
     "Pick-up Address", "Drop-off Address", "Surge", "Queue Type", "Stops",
-    "App Fee (THB)", "Other Adjustments (THB)", "Fare Refund (THB)",
+    "Passenger Paid (THB)", "Passenger Total (THB)", "App Fee (THB)", "Other Adjustments (THB)", "Fare Refund (THB)",
     "Check", "Approved By", "Source File",
 ]
-ANALYSIS_WIDTHS = [24, 11, 7, 16, 6, 12, 12, 14, 14, 9, 9, 36, 36, 6, 11, 6, 10, 12, 12, 8, 11, 22]
+ANALYSIS_WIDTHS = [24, 11, 7, 16, 6, 12, 12, 14, 14, 9, 9, 36, 36, 6, 11, 6, 12, 12, 10, 12, 12, 8, 11, 22]
 
 # --- template styling (copied from the team's file) ---
 _MED = Side(style="medium", color="000000")
@@ -100,8 +100,17 @@ def _style_header(ws, headers, widths, medium=True):
     ws.row_dimensions[1].height = 14.4
 
 
+def passenger_fare(t):
+    """Column P per the team's convention; falls back to the other line (derived if needed)."""
+    paid, total = t.get("passenger_paid"), t.get("passenger_total")
+    if paid is None and total is not None:
+        paid = total - (t.get("app_fee") or 0) - (t.get("other_adj") or 0)
+    return paid if config.PASSENGER_FARE_SOURCE == "paid" else (total if total is not None else paid)
+
+
 def _write_main_row(ws, row, driver_name, t):
     d = datetime.strptime(t["trip_date"], "%Y-%m-%d")
+    pf = passenger_fare(t)
     values = [
         driver_name,                                            # A
         d,                                                      # B Date & Time
@@ -118,8 +127,8 @@ def _write_main_row(ws, row, driver_name, t):
         t.get("bonus") or 0,                                    # M
         t.get("turbo") or 0,                                    # N
         t.get("tolls") or 0,                                    # O
-        t.get("passenger_total"),                               # P
-        f"=P{row}-J{row}" if t.get("passenger_total") is not None else None,  # Q (template formula)
+        pf,                                                     # P passenger fare (team convention)
+        f"=P{row}-J{row}" if pf is not None else None,          # Q (template formula)
     ]
     for col, v in enumerate(values, start=1):
         cell = ws.cell(row=row, column=col)
@@ -143,6 +152,7 @@ def _write_analysis_row(ws, row, driver_name, t):
         t.get("pickup_code"), t.get("dropoff_code"),
         t.get("pickup_text"), t.get("dropoff_text"),
         "Y" if t.get("surge") else None, t.get("queue_type"), t.get("num_stops"),
+        t.get("passenger_paid"), t.get("passenger_total"),
         t.get("app_fee"), t.get("other_adj"), t.get("fare_refund"),
         t.get("check_status"),
         "auto" if t.get("auto_approved") else ("person" if t.get("committed") else "pending"),

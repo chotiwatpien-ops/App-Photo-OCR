@@ -84,6 +84,10 @@ MAX_PARALLEL_EXTRACTIONS = int(_setting("MAX_PARALLEL", "max_parallel", 4))
 # capture time (riders screenshot in the evening). "screen_clock" bands that clock; "na" writes N/A.
 TIME_BAND_SOURCE = _setting("TIME_BAND_SOURCE", "time_band_source", "screen_clock")
 
+# Sheet1 "Passenger Fare": "paid" = ยอดที่ผู้โดยสารชำระ (matches Operation's template 21/21),
+# "total" = รวมค่าโดยสารของผู้โดยสาร. Both are kept in the Analysis sheet.
+PASSENGER_FARE_SOURCE = _setting("PASSENGER_FARE_SOURCE", "passenger_fare_source", "paid")
+
 
 def load_api_key() -> str:
     v = os.environ.get("GEMINI_API_KEY")

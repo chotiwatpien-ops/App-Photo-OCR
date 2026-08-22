@@ -49,6 +49,10 @@ SCHEMA = types.Schema(
             type=types.Type.NUMBER, nullable=True,
             description="The 'รวมค่าโดยสารของผู้โดยสาร' TOTAL line (bold, at the bottom of the 'ค่าโดยสารของผู้โดยสารทั้งหมด' section) — NOT the 'ยอดที่ผู้โดยสารชำระ' sub-line above it. Null if that section is collapsed.",
         ),
+        "passenger_paid": types.Schema(
+            type=types.Type.NUMBER, nullable=True,
+            description="The 'ยอดที่ผู้โดยสารชำระ' sub-line (first line inside the 'ค่าโดยสารของผู้โดยสารทั้งหมด' section) — the amount the passenger actually paid, BEFORE the app fee / discount lines. Null if not visible.",
+        ),
         "grab_commission": types.Schema(
             type=types.Type.NUMBER, nullable=True,
             description="'ค่าบริการที่แกร็บได้รับ' — Grab's cut in THB. Null if collapsed/not shown.",
