@@ -61,17 +61,31 @@ class DriveClient:
             _, done = dl.next_chunk()
         return buf.getvalue()
 
-    def upload_xlsx(self, parent_id, name, data: bytes) -> str:
+    def ensure_folder(self, parent_id, name) -> str:
+        """Id of child folder `name`, created if missing."""
+        q = (f"'{parent_id}' in parents and name='{name}' and "
+             f"mimeType='application/vnd.google-apps.folder' and trashed=false")
+        found = self._list(q, "id")
+        if found:
+            return found[0]["id"]
+        meta = {"name": name, "parents": [parent_id], "mimeType": "application/vnd.google-apps.folder"}
+        return self.svc.files().create(body=meta, fields="id", supportsAllDrives=True).execute()["id"]
+
+    def upload_file(self, parent_id, name, data: bytes, mime: str) -> str:
+        """Create or overwrite `name` inside the folder."""
         from googleapiclient.http import MediaIoBaseUpload
-        media = MediaIoBaseUpload(io.BytesIO(data), mimetype=XLSX_MIME, resumable=False)
+        media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime, resumable=False)
         existing = self._list(f"'{parent_id}' in parents and name='{name}' and trashed=false", "id")
         if existing:
             fid = existing[0]["id"]
             self.svc.files().update(fileId=fid, media_body=media, supportsAllDrives=True).execute()
             return fid
-        meta = {"name": name, "parents": [parent_id], "mimeType": XLSX_MIME}
+        meta = {"name": name, "parents": [parent_id], "mimeType": mime}
         return self.svc.files().create(body=meta, media_body=media, fields="id",
                                        supportsAllDrives=True).execute()["id"]
+
+    def upload_xlsx(self, parent_id, name, data: bytes) -> str:
+        return self.upload_file(parent_id, name, data, XLSX_MIME)
 
 
 class LocalDrive:
@@ -92,8 +106,16 @@ class LocalDrive:
     def download(self, file_id) -> bytes:
         return Path(file_id).read_bytes()
 
-    def upload_xlsx(self, parent_id, name, data: bytes) -> str:
+    def ensure_folder(self, parent_id, name) -> str:
+        p = Path(parent_id) / name
+        p.mkdir(parents=True, exist_ok=True)
+        return str(p)
+
+    def upload_file(self, parent_id, name, data: bytes, mime: str) -> str:
         out = Path(parent_id)
         out.mkdir(parents=True, exist_ok=True)
         (out / name).write_bytes(data)
         return str(out / name)
+
+    def upload_xlsx(self, parent_id, name, data: bytes) -> str:
+        return self.upload_file(parent_id, name, data, XLSX_MIME)

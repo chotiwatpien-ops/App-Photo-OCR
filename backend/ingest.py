@@ -47,6 +47,11 @@ def week_bounds(folder_name):
     return monday, monday + timedelta(days=6)
 
 
+def week_label(d_from: str) -> str:
+    y, w, _ = date.fromisoformat(d_from).isocalendar()
+    return f"{y}-W{w:02d}"
+
+
 def clean_name(s):
     return re.sub(r"\s+", " ", s).strip()
 
@@ -136,6 +141,18 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None):
         if dated:
             log(f"  📅 กระจาย {dated} งานลง จ–อา เท่าๆ กัน")
 
+        # customer images: Exports/<week>/<rider>/<rider>1.jpg ... (before approval clears the blobs)
+        try:
+            rider_dir = drive.ensure_folder(drive.ensure_folder(exports_id, week_label(d_from)), rider)
+            n_img = 0
+            for name, data in pipeline.customer_images(job_id, rider):
+                drive.upload_file(rider_dir, name, data, "image/jpeg")
+                n_img += 1
+            log(f"  🖼 รูปส่งลูกค้า {n_img} ไฟล์ → Exports/{week_label(d_from)}/{rider}/")
+        except Exception as e:  # noqa: BLE001
+            log(f"  ✗ customer images: {e}")
+            errors += 1
+
         stats = db.auto_approve_job(job_id)
         approved += stats["approved"]
         flagged += stats["flagged"]
@@ -145,8 +162,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None):
     # weekly workbooks back to Drive (all riders, approved rows only)
     for d_from, d_to in sorted(touched_weeks):
         rows = db.query_trips(date_from=d_from, date_to=d_to, committed_only=True)
-        y, w, _ = date.fromisoformat(d_from).isocalendar()
-        name = f"Rider Trips {y}-W{w:02d}.xlsx"
+        name = f"Rider Trips {week_label(d_from)}.xlsx"
         try:
             drive.upload_xlsx(exports_id, name, excel_writer.build_workbook(rows))
             log(f"📄 {name}: {len(rows)} แถว")

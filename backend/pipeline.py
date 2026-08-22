@@ -80,6 +80,20 @@ def spread_dates(job_id, date_from, date_to, only_missing=True) -> int:
     return n
 
 
+def customer_images(job_id, rider):
+    """Yield (file_name, jpeg_bytes) for every trip in customer order: '<rider>1.jpg', '<rider>2.jpg', ...
+    Must run while the job's image blobs still exist (i.e. before approval clears them)."""
+    import stitch
+    rows = db.trips_with_images(job_id)
+    rows.sort(key=lambda r: (r["trip_date"] or "9999", _natural_key(r["file_name"])))
+    n = 0
+    for r in rows:
+        if not r["top_blob"]:
+            continue  # blob already cleared — nothing to deliver
+        n += 1
+        yield stitch.customer_name(rider, n), stitch.stitch(r["top_blob"], r["bottom_blob"])
+
+
 def process_trip(trip_id: int, job_id: int) -> str:
     """Extract one stored image and persist the result. Returns 'done' | 'error'."""
     try:

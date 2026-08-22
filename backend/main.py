@@ -206,6 +206,15 @@ def commit(job_id: int, force: bool = False):
     done.sort(key=lambda t: (t["trip_date"], t["trip_time"] or "99:99"))
     written_file = None
     if config.EXCEL_APPEND:
+        # local mode: drop the customer images next to the workbook before the blobs are cleared
+        out_dir = config.EXCEL_PATH.parent / "Rider Images" / f"{j['date_from']}_{j['date_to']}" / j["driver_name"]
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+            for name, data in pipeline.customer_images(job_id, j["driver_name"]):
+                (out_dir / name).write_bytes(data)
+        except Exception as e:  # noqa: BLE001
+            logging.warning("customer images: %s", e)
+    if config.EXCEL_APPEND:
         try:
             excel_writer.append_trips(j["driver_name"], done)
             written_file = config.EXCEL_PATH.name
@@ -223,6 +232,28 @@ def spread_dates(job_id: int, all_rows: bool = False):
         raise HTTPException(404, "ไม่พบ job")
     n = pipeline.spread_dates(job_id, j["date_from"], j["date_to"], only_missing=not all_rows)
     return {"dated": n}
+
+
+@app.get("/api/jobs/{job_id}/images.zip")
+def job_images_zip(job_id: int):
+    """Customer-facing images (stitched, '<rider>N.jpg') — available while the job is unapproved."""
+    import io
+    import zipfile
+    j = db.get_job(job_id)
+    if not j:
+        raise HTTPException(404, "ไม่พบ job")
+    buf = io.BytesIO()
+    n = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, data in pipeline.customer_images(job_id, j["driver_name"]):
+            z.writestr(name, data)
+            n += 1
+    if n == 0:
+        raise HTTPException(404, "ไม่มีรูปให้ดาวน์โหลดแล้ว (รูปถูกลบออกจากระบบหลังอนุมัติ) — ดาวน์โหลดก่อนกดอนุมัติ")
+    fname = f"{j['driver_name']} {j['date_from']}_{j['date_to']}.zip"
+    return Response(content=buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}",
+                             "X-File-Count": str(n)})
 
 
 @app.get("/api/drivers")

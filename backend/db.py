@@ -522,3 +522,19 @@ def done_trips_for_dating(job_id, only_missing=True):
         q = q.where(trips.c.trip_date.is_(None))
     with engine.begin() as c:
         return [dict(r) for r in c.execute(q).mappings().all()]
+
+
+def trips_with_images(job_id):
+    """Done trips of a job with their image blobs — the merged bottom half's blob attached as
+    `bottom_blob`. Only useful while blobs exist (before approval clears them)."""
+    with engine.begin() as c:
+        rows = c.execute(select(trips.c.id, trips.c.file_name, trips.c.trip_date,
+                                trips.c.image_blob)
+                         .where(trips.c.job_id == job_id, trips.c.status == "done")).mappings().all()
+        bottoms = {r["merged_into"]: r["image_blob"] for r in c.execute(
+            select(trips.c.merged_into, trips.c.image_blob)
+            .where(trips.c.job_id == job_id, trips.c.status == "merged")).mappings().all()}
+    return [{"id": r["id"], "file_name": r["file_name"], "trip_date": r["trip_date"],
+             "top_blob": bytes(r["image_blob"]) if r["image_blob"] else None,
+             "bottom_blob": bytes(bottoms[r["id"]]) if bottoms.get(r["id"]) else None}
+            for r in rows]

@@ -211,6 +211,13 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
               </p>
             )}
           </div>
+          {!isCommitted && done.length > 0 && (
+            <a
+              href={`/api/jobs/${job.id}/images.zip`}
+              className="border border-slate-300 text-slate-700 hover:bg-slate-50 rounded-lg px-4 py-2.5 text-sm font-medium"
+              title="รูปรวมสำหรับส่งลูกค้า (ชื่อไรเดอร์ + เลขรัน) — โหลดก่อนอนุมัติ เพราะรูปจะถูกลบจากระบบหลังอนุมัติ"
+            >🖼 รูปส่งลูกค้า (zip)</a>
+          )}
           <a
             href={exportUrl({ jobId: job.id, committedOnly: false })}
             className="border border-emerald-600 text-emerald-700 hover:bg-emerald-50 rounded-lg px-4 py-2.5 text-sm font-medium"
