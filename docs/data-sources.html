@@ -1,0 +1,165 @@
+<title>ที่มาข้อมูล Rider Trips</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<style>
+:root{
+  --bg:#FAFBF8; --surface:#FFFFFF; --ink:#1B2420; --muted:#5C6B62;
+  --line:#E2E8E0; --accent:#00894A; --accent-soft:#E7F4EC;
+  --warn:#B87A00; --warn-soft:#FBF3E2; --chip-ink:#FFFFFF;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#12171A; --surface:#1A2220; --ink:#E8EFE9; --muted:#93A69B;
+    --line:#2A3530; --accent:#3DC97E; --accent-soft:#1D3328;
+    --warn:#E0A93E; --warn-soft:#33290F; --chip-ink:#0E1512;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#12171A; --surface:#1A2220; --ink:#E8EFE9; --muted:#93A69B;
+  --line:#2A3530; --accent:#3DC97E; --accent-soft:#1D3328;
+  --warn:#E0A93E; --warn-soft:#33290F; --chip-ink:#0E1512;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:"IBM Plex Sans Thai","Noto Sans Thai",sans-serif;line-height:1.75;font-size:15.5px}
+.wrap{max-width:880px;margin:0 auto;padding:48px 22px 80px}
+header h1{font-size:1.9rem;font-weight:700;margin:0 0 6px;text-wrap:balance}
+header p.sub{color:var(--muted);margin:0 0 4px;max-width:62ch}
+header p.meta{color:var(--muted);font-size:.8rem;margin:0}
+h2{font-size:1.15rem;font-weight:700;margin:44px 0 4px;padding-top:20px;border-top:1px solid var(--line)}
+h2 .tag{font-family:"IBM Plex Mono",monospace;font-size:.7rem;color:var(--accent);letter-spacing:.08em;display:block}
+p.lead{color:var(--muted);margin:0 0 18px;max-width:66ch}
+.col{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px 18px;margin:10px 0}
+.col-head{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
+.chip{font-family:"IBM Plex Mono",monospace;font-weight:500;font-size:.8rem;background:var(--accent);color:var(--chip-ink);
+  border-radius:6px;padding:1px 8px;flex:none}
+.col-head b{font-size:1rem}
+.col-head span.th{color:var(--muted);font-size:.85rem}
+dl{margin:8px 0 0;display:grid;grid-template-columns:7.5em 1fr;gap:4px 14px}
+dt{color:var(--muted);font-size:.8rem;font-weight:600;letter-spacing:.02em;padding-top:2px}
+dd{margin:0}
+dd ol{margin:0;padding-left:1.2em}
+dd ol li{margin:2px 0}
+.note{background:var(--warn-soft);border-left:3px solid var(--warn);border-radius:0 8px 8px 0;
+  padding:10px 14px;margin:10px 0;font-size:.9rem}
+.ok{background:var(--accent-soft);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;
+  padding:10px 14px;margin:10px 0;font-size:.9rem}
+code{font-family:"IBM Plex Mono",monospace;font-size:.85em;background:var(--accent-soft);border-radius:4px;padding:0 5px}
+.formula{font-family:"IBM Plex Mono",monospace;font-size:.95rem;background:var(--surface);border:1px dashed var(--accent);
+  border-radius:8px;padding:10px 16px;display:inline-block;margin:6px 0}
+table{border-collapse:collapse;width:100%;font-size:.9rem}
+.scroll{overflow-x:auto;border:1px solid var(--line);border-radius:10px}
+th,td{text-align:left;padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:var(--surface);font-size:.78rem;color:var(--muted);letter-spacing:.04em}
+tr:last-child td{border-bottom:none}
+footer{margin-top:52px;border-top:1px solid var(--line);padding-top:14px;color:var(--muted);font-size:.8rem}
+@media (prefers-reduced-motion: no-preference){ html{scroll-behavior:smooth} }
+</style>
+
+<div class="wrap">
+<header>
+  <h1>ที่มาข้อมูล Rider Trips</h1>
+  <p class="sub">แต่ละคอลัมน์ในไฟล์ <b>Rider Trips.xlsx</b> (Sheet1, A–R) ดึงมาจากส่วนไหนของรูปสลิป Grab
+     ถ้าส่วนหลักไม่มีในรูป ระบบไปหยิบจากที่ไหนต่อ และเมื่อไหร่ที่ยอมเว้นว่างแทนการเดา</p>
+  <p class="meta">อัพเดต 24 ส.ค. 2026 · ตรวจทานตรงกับโค้ดจริงของระบบ · เลขเงินทุกช่องมาจากรูปเท่านั้น ระบบไม่เดาเลขเงินเอง</p>
+</header>
+
+<h2><span class="tag">SOURCE MAP</span>คอลัมน์ A–R มาจากไหน</h2>
+
+<div class="col"><div class="col-head"><span class="chip">A</span><b>Driver Name</b><span class="th">ชื่อไรเดอร์</span></div>
+<dl><dt>หลัก</dt><dd>ชื่อ<b>โฟลเดอร์</b>ของไรเดอร์บน Drive (ตัดเลขนำหน้า "NN-" ออก) — ไม่ได้อ่านจากรูป</dd>
+<dt>สำรอง</dt><dd>ถ้าสองคนชื่อเดียวกันในสัปดาห์+กลุ่มรถเดียวกัน → ต่อท้ายชื่อแอดมิน เช่น <code>สมชาย-ทีมA</code></dd></dl></div>
+
+<div class="col"><div class="col-head"><span class="chip">B</span><b>Date &amp; Time</b><span class="th">วันที่</span></div>
+<dl><dt>หลัก</dt><dd><ol>
+<li>โฟลเดอร์วันย่อย (ถ้าทีมแยกวันไว้)</li>
+<li>ไม่มีวันย่อย → <b>กระจายเฉลี่ย จ–อา</b> จากช่วงในชื่อโฟลเดอร์ Week ตามลำดับไฟล์ (21 งาน → 3 งาน/วัน)</li>
+<li>แก้มือได้ในหน้า "เปิดแก้ตัวเลข"</li></ol></dd>
+<dt>หมายเหตุ</dt><dd>รูปสลิปไม่มีวันที่วิ่งงาน — ทีมยืนยันแล้วว่าวันที่ไม่ใช่สาระสำคัญ ใช้ระดับสัปดาห์พอ</dd></dl></div>
+
+<div class="col"><div class="col-head"><span class="chip">C</span><b>Time</b><span class="th">ช่วงเวลา 6 ชม.</span></div>
+<dl><dt>หลัก</dt><dd><b>นาฬิกาแถบบนสุดของมือถือ</b>ในรูป (= เวลาแคป ไม่ใช่เวลาวิ่งงาน — มติทีม) → จับลงช่วง 00:01-05:59 / 06:00-11:59 / 12:00-17:59 / 18:00-23:59</dd>
+<dt>ถ้าไม่มี</dt><dd>อ่านนาฬิกาไม่ได้ → <code>N/A</code> · เวลาจริงแบบ HH:MM เก็บไว้ในชีท Analysis</dd></dl></div>
+
+<div class="col"><div class="col-head"><span class="chip">D</span><b>Service Type</b><span class="th">ประเภทบริการ</span></div>
+<dl><dt>หลัก</dt><dd><b>กลุ่มโฟลเดอร์ของไรเดอร์เสมอ</b> (มติทีม 23 ส.ค.): 4W Standard→Standard Car · 4W Saver→Saver Car · 2W Standard→Standard Bike · 2W Saver→Saver Bike</dd>
+<dt>ชิพในรูป</dt><dd>ป้ายบริการในรูป (เช่น "Standard (JustGrab)") ใช้แค่<b>ตรวจจับความขัดแย้ง</b> — รูปเป็นรถยนต์แต่โฟลเดอร์เป็นมอไซค์ → เข้าคิวตรวจ (เคสพลอย)</dd></dl></div>
+
+<div class="col"><div class="col-head"><span class="chip">E</span><b>Payment Method</b><span class="th">วิธีจ่าย</span></div>
+<dl><dt>หลัก</dt><dd>ข้อความ<b>ชิพจ่ายเงินตัวจริง</b>บนรูปครึ่งบน (GrabPay / เงินสด / บัตร) — คัดลอกตรงตัวแล้วแมพในโค้ด แม่นกว่าให้ AI เดา</dd>
+<dt>ห้ามใช้</dt><dd>ครึ่งล่างไม่มีชิพนี้ — ค่าที่ AI "เห็น" จากครึ่งล่างถูกทิ้งเสมอ (เคยหลอนบ่อย)</dd></dl></div>
+
+<div class="col"><div class="col-head"><span class="chip">F–G</span><b>Pick-up / Drop-off</b><span class="th">โซนรับ–ส่ง</span></div>
+<dl><dt>หลัก</dt><dd>คำนวณจากที่อยู่ในรูป ตามลำดับ: <b>เขต/อำเภอ → คำในที่อยู่ → จังหวัด → Downtown</b> (นิยามโซนใน <code>zones.py</code> — รอทีมยืนยันจากไฟล์ Zone Mapping)</dd>
+<dt>ข้อมูลดิบ</dt><dd>เขต จังหวัด และที่อยู่เต็ม เก็บครบในชีท Analysis + กติกาโซนอยู่ในชีท Zone Map ท้ายไฟล์</dd></dl></div>
+
+<div class="col"><div class="col-head"><span class="chip">H–I</span><b>Distance / Duration</b><span class="th">กม. / นาที</span></div>
+<dl><dt>หลัก</dt><dd>บรรทัด "<b>X km · Total Y นาที</b>" หัวรูปครึ่งบน</dd>
+<dt>ถ้าไม่มี</dt><dd>รูปตัดหัวหรือไม่แสดง → เว้นว่าง (Duration มีเฉพาะบางงาน)</dd></dl></div>
+
+<div class="col"><div class="col-head"><span class="chip">J</span><b>Net Earnings</b><span class="th">รายได้สุทธิ</span></div>
+<dl><dt>ใน Excel</dt><dd>เป็นสูตร <code>=K+M+N</code> ตามเทมเพลตทีม</dd>
+<dt>ค่าอ้างอิง</dt><dd>"<b>คุณได้รับ ฿…</b>" บนรูป<b>ครึ่งบนเท่านั้น</b> — ใช้เป็นกรรมการตัดสินเช็คเลขทุกช่อง</dd>
+<dt>กับดัก</dt><dd>"รวมรายได้จากรอบขับ" ในครึ่งล่างคือ base ไม่ใช่ net — ระบบไม่เอามาปนแล้ว</dd></dl></div>
+
+<div class="col"><div class="col-head"><span class="chip">K</span><b>Base Fare</b><span class="th">ค่าโดยสารพื้นฐาน</span></div>
+<dl><dt>ลำดับ</dt><dd><ol>
+<li><b>ใบแจกแจงครึ่งล่าง</b> (บรรทัด "ค่าโดยสารพื้นฐาน") — ชนะทุกแหล่งเสมอ</li>
+<li>กล่อง "ค่าบริการที่แกร็บได้รับ" (บรรทัด "รายได้จากรอบขับ") — แหล่งเดียวกันมุมอื่น ใช้เทียบทาน</li>
+<li>จับคู่ตามลำดับไฟล์แล้วครึ่งล่างอ่านเลขไม่ได้ → <b>อนุมาน = J − (M+N)</b> พร้อมหมายเหตุในแถว</li></ol></dd>
+<dt>กับดัก</dt><dd>รูปครึ่งบนของรถยนต์โชว์แค่ net → AI เคยเดา base=net (แก้ถาวรแล้ว: ครึ่งล่างชนะเสมอ)</dd></dl></div>
+
+<div class="col"><div class="col-head"><span class="chip">L</span><b>International Fee</b><span class="th">ค่าธุรกรรม ตปท.</span></div>
+<dl><dt>หลัก</dt><dd>บรรทัด "ค่าธุรกรรมต่างประเทศ" ในหัวข้อค่าโดยสารผู้โดยสาร (บันทึกเป็นค่าบวก)</dd></dl></div>
+
+<div class="col"><div class="col-head"><span class="chip">M</span><b>Bonus</b><span class="th">โบนัส (รวมทิป)</span></div>
+<dl><dt>หลัก</dt><dd>บรรทัดโบนัสในหัวข้อ "รายได้เพิ่มเติม" <b>+ ค่าทิป</b> (มติทีม: ทิป = Bonus · ยอดทิปดิบแยกเก็บในชีท Analysis)</dd>
+<dt>กันพลาด</dt><dd>ถ้า AI อ่านยอดรวมที่นับทิปแล้ว ระบบใช้สมการเลือกค่าที่ลงตัว ไม่บวกทิปซ้ำ</dd>
+<dt>เติมได้</dt><dd>surge ที่ซ่อนใน "รายได้จากรอบขับ" (รูปไม่แสดงบรรทัดแยก) → เติมลง M พร้อมหมายเหตุกำกับ</dd></dl></div>
+
+<div class="col"><div class="col-head"><span class="chip">N</span><b>Turbo Incentive</b><span class="th">เทอร์โบ</span></div>
+<dl><dt>หลัก</dt><dd>บรรทัด "อินเซนทีฟเทอร์โบ" ในหัวข้อรายได้เพิ่มเติม</dd>
+<dt>เติมได้</dt><dd>รูปพับหัวข้อจนเลขหาย แต่ J−K เหลือส่วนต่างบวกเล็กๆ (~5% ของ K) → เติมส่วนต่างลง N พร้อมหมายเหตุ "เติมจากส่วนต่าง" — ทุกแถวแบบนี้ยังต้องผ่านคนกดอนุมัติ</dd></dl></div>
+
+<div class="col"><div class="col-head"><span class="chip">O</span><b>Reimbursements / Tolls</b><span class="th">ค่าทางด่วน</span></div>
+<dl><dt>หลัก</dt><dd>หัวข้อ "รายการจ่ายคืน" (ค่าทางด่วน ฯลฯ)</dd></dl></div>
+
+<div class="col"><div class="col-head"><span class="chip">P</span><b>Passenger Fare</b><span class="th">ค่าโดยสารผู้โดยสาร</span></div>
+<dl><dt>หลัก</dt><dd>บรรทัด "<b>ยอดที่ผู้โดยสารชำระ</b>" (มติทีม — ยืนยันจากการเทียบข้อมูลจริง 21/21 แถว)</dd>
+<dt>สำรอง</dt><dd>ไม่มีบรรทัดนั้น → คำนวณ = รวมค่าโดยสารผู้โดยสาร − ค่าแอป − รายการปรับ</dd>
+<dt>เว้นว่าง</dt><dd>ไรเดอร์แคปมาแบบหัวข้อผู้โดยสารพับ/ไม่ถึงท่อนนั้น → เลขไม่อยู่ในรูป ระบบเว้นว่างตามจริง (เคส 6 ไรเดอร์ประจำ)</dd></dl></div>
+
+<div class="col"><div class="col-head"><span class="chip">Q</span><b>Grab Service Fee</b><span class="th">ค่าบริการแกร็บ</span></div>
+<dl><dt>ใน Excel</dt><dd>เป็นสูตร <code>=P−J</code> ตามเทมเพลตทีม (มีค่าเมื่อ P มี)</dd>
+<dt>เทียบทาน</dt><dd>กล่อง "ค่าบริการที่แกร็บได้รับ" ในรูปโชว์เลขเดียวกัน — ใช้ตรวจสอบกันได้</dd></dl></div>
+
+<div class="col"><div class="col-head"><span class="chip">R</span><b>Image</b><span class="th">รูปอ้างอิง</span></div>
+<dl><dt>หลัก</dt><dd>ชื่อไฟล์รูปรวมที่ส่งลูกค้า เช่น <code>WK33-สมชาย7.jpg</code> — ตามกลับไปเปิดใน Export Pic ได้ทันที · ชื่อไฟล์ต้นฉบับเก็บในชีท Analysis</dd></dl></div>
+
+<h2><span class="tag">VERIFY</span>สมการที่ใช้ตัดสินทุกแถว</h2>
+<p class="lead">ก่อนอนุมัติอัตโนมัติ ระบบบวกเลขจากรูปทวนเองเสมอ:</p>
+<div class="formula">J (คุณได้รับ) = K (พื้นฐาน) + M (โบนัส+ทิป) + N (เทอร์โบ)</div>
+<div class="scroll"><table>
+<tr><th>เงื่อนไขอนุมัติอัตโนมัติ</th><th>ถ้าไม่ผ่าน</th></tr>
+<tr><td>สมการข้างบนลงตัว (±0.01)</td><td>ป้าย "เลขขัดกัน" → คิวตรวจ</td></tr>
+<tr><td>มี booking code และไม่ซ้ำกับที่เคยอนุมัติ</td><td>ป้าย "เคยอนุมัติแล้ว/ซ้ำ" → คิวตรวจ (จับสลิปซ้ำข้ามไรเดอร์ได้)</td></tr>
+<tr><td>ไม่ซ้ำใน job เดียวกัน + มีวันที่</td><td>คิวตรวจ</td></tr>
+</table></div>
+<p class="lead" style="margin-top:10px">สมการเทียบประกอบ: ยอดผู้โดยสารรวม − ค่าบริการแกร็บ = K (ใช้ทาน ไม่ใช้ตัดสิน)</p>
+
+<h2><span class="tag">PAIRING</span>รูป 2 ใบรวมเป็นงานเดียวยังไง</h2>
+<div class="scroll"><table>
+<tr><th>ชั้น</th><th>เงื่อนไข</th><th>ใช้เมื่อ</th></tr>
+<tr><td><b>1 · เลขตรง</b></td><td>base/net/ยอดรวมของสองรูปตรงกัน</td><td>รูปปกติ (90%+ ของงาน)</td></tr>
+<tr><td><b>2 · ลำดับไฟล์ + อนุมาน</b></td><td>รูปล่างอ่านเลขไม่ได้เลย → จับกับรูปบนที่ติดกัน แล้วอนุมาน K</td><td>เครื่องฟอนต์ใหญ่ / รูปเลื่อนเกิน</td></tr>
+<tr><td><b>3 · ลำดับไฟล์ + booking code</b></td><td>รูปล่างไม่มี code ติดกับรูปบนที่มี code → คู่กัน (ดึงเฉพาะข้อมูลฝั่งผู้โดยสาร)</td><td>ทีมยืนยัน: ไรเดอร์วางรูปคู่ติดกันเสมอ</td></tr>
+</table></div>
+<div class="ok">ค่าจากใบแจกแจง<b>ครึ่งล่างถือเป็นความจริง</b>สำหรับ K, M, N — ครึ่งบนใช้ยืนยัน J (คุณได้รับ) กับข้อมูลเส้นทาง/ชิพเท่านั้น</div>
+
+<h2><span class="tag">CAPTURE</span>ข้อควรรู้เวลาแคปรูป (สรุปให้ไรเดอร์)</h2>
+<div class="note"><b>กางหัวข้อทุกอันก่อนแคป</b> — รายได้จากรอบขับ · รายได้เพิ่มเติม · ค่าโดยสารของผู้โดยสารทั้งหมด
+ถ้าพับไว้ เลขจะไม่อยู่ในรูปและงานจะติดคิวตรวจ (หรือ P/Q ว่าง)</div>
+<div class="note"><b>อย่าใช้ฟอนต์เครื่องขนาดใหญ่มาก</b> — สลิปจะยาวจนตัดเลขสำคัญตกขอบรูป</div>
+<div class="note"><b>งานละไม่เกิน 2 รูป วางเรียงติดกัน</b> — รูปบน (เส้นทาง + คุณได้รับ + รหัสจอง) ต่อด้วยรูปล่าง (ใบแจกแจง)</div>
+
+<footer>Rider Photo OCR · เอกสารอ้างอิงสำหรับทีม Operation · ค่าที่ระบบ "เติม" ทุกกรณีมีหมายเหตุกำกับในแถวและยังต้องผ่านคนกดอนุมัติเสมอ</footer>
+</div>
