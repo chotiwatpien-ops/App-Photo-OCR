@@ -112,6 +112,12 @@ def customer_images(job_id, rider, fetch=None):
     Uses the stored blobs; when they were already cleared (approved rows) and `fetch(drive_id)`
     is given, re-downloads the originals from Drive."""
     import stitch
+    from datetime import date as _date
+    job = db.get_job_meta(job_id)
+    wk = None
+    if job and job.get("date_from"):
+        _, w, _ = _date.fromisoformat(job["date_from"]).isocalendar()
+        wk = f"WK{w:02d}"
     rows = db.trips_with_images(job_id)
     rows.sort(key=lambda r: (r["trip_date"] or "9999", _natural_key(r["file_name"])))
     drive_ids = db.drive_ids_for_job(job_id) if fetch else {}
@@ -133,7 +139,7 @@ def customer_images(job_id, rider, fetch=None):
         if not r["top_blob"]:
             continue
         n += 1
-        name = stitch.customer_name(rider, n)
+        name = stitch.customer_name(rider, n, wk)
         db.update_trip(r["id"], {"customer_image": name})  # so Sheet1 can trace back to this file
         yield name, stitch.stitch(r["top_blob"], r["bottom_blob"])
 
