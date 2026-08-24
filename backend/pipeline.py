@@ -182,6 +182,9 @@ def process_trip(trip_id: int, job_id: int) -> str:
         service, svc_note = normalize_service(data.get("service_type"), job.get("category") if job else None)
         if data.get("kind") == "bottom":
             svc_note = None  # no service chip on the bottom half — the model guessed
+        if data.get("kind") in ("full", "bottom") and data.get("passenger_paid") is None and data.get("passenger_total") is None:
+            pf_note = "P ว่าง — รูปหุบหัวข้อ 'ค่าโดยสารของผู้โดยสารทั้งหมด' (แจ้งไรเดอร์กางก่อนแคป)"
+            note = f"{pf_note} | {note}" if note else pf_note
         if svc_note:
             note = f"{svc_note} | {note}" if note else svc_note
             if check == "pass":
