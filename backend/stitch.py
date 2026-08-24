@@ -44,7 +44,7 @@ def stitch(top: bytes, bottom: bytes = None) -> bytes:
     return _encode(out)
 
 
-def customer_name(rider: str, n: int) -> str:
-    """'กิตติพงศ์ สินประเสริฐ', 7 -> 'กิตติพงศ์ สินประเสริฐ7.jpg' (spaces kept, unsafe chars dropped)."""
-    safe = re.sub(r'[\\/:*?"<>|]+', "", rider).strip()
-    return f"{safe}{n}.jpg"
+def customer_name(rider: str, n: int, week: str = None) -> str:
+    """('นภสิทธิ์', 7, 'WK33') -> 'WK33-นภสิทธิ์7.jpg' — week prefix so a forwarded file still tells its week."""
+    safe = re.sub(r'[\/:*?"<>|]+', "", rider).strip()
+    return f"{week}-{safe}{n}.jpg" if week else f"{safe}{n}.jpg"
