@@ -45,6 +45,7 @@ export const api = {
   summary: (params = {}) => fetch(`/api/summary?${new URLSearchParams(params)}`).then(handle),
   trips: (params = {}) => fetch(`/api/trips?${new URLSearchParams(params)}`).then(handle),
   reviewQueue: () => fetch('/api/review-queue').then(handle),
+  completeness: () => fetch('/api/completeness').then(handle),
   spreadDates: (jobId, allRows = false) =>
     fetch(`/api/jobs/${jobId}/spread-dates?all_rows=${allRows}`, { method: 'POST' }).then(handle),
   approveTrip: (id) => fetch(`/api/trips/${id}/approve`, { method: 'POST' }).then(handle),

@@ -14,6 +14,48 @@ function Kpi({ label, value, sub, tone = '' }) {
   )
 }
 
+function Completeness() {
+  const [comp, setComp] = useState(null)
+  useEffect(() => { api.completeness().then(setComp).catch(() => {}) }, [])
+  if (!comp) return null
+  const weeks = comp.weeks.filter((w) => w.incomplete.length || w.absent.length)
+  return (
+    <section className="bg-white rounded-xl border border-slate-200 p-5">
+      <h2 className="font-semibold mb-1">เช็คความครบของไรเดอร์ <span className="text-xs text-slate-400 font-normal">เกณฑ์ {comp.expected} งาน/คน/สัปดาห์ — คนที่ครบแล้วจะหายจากลิสต์เอง</span></h2>
+      {weeks.length === 0 ? (
+        <p className="text-sm text-emerald-700 mt-2">🎉 ทุกคนครบทุกสัปดาห์</p>
+      ) : weeks.map((w) => (
+        <div key={w.week} className="mt-3">
+          <h3 className="text-sm font-semibold text-slate-700">
+            {w.week} <span className="text-slate-400 font-normal">({w.date_from} → {w.date_to})</span>
+            <span className="ml-2 text-xs rounded-full px-2 py-0.5 bg-red-100 text-red-700">ไม่ครบ {w.incomplete.length + w.absent.length} คน</span>
+          </h3>
+          <div className="flex flex-wrap gap-2 mt-2">
+            {w.incomplete.map((r) => {
+              const why = r.pending ? `กำลังอ่าน ${r.pending}` :
+                r.errors ? `อ่านพลาด ${r.errors}` :
+                r.waiting ? `รอตรวจ ${r.waiting}` :
+                `ขาดอีก ${r.missing} งาน`
+              return (
+                <span key={r.job_id} title={`${r.category} · รูป ${r.images} · อ่านได้ ${r.done} · อนุมัติ ${r.approved}/${comp.expected}`}
+                  className={`text-xs rounded-full px-2.5 py-1 border ${r.missing ? 'bg-red-50 border-red-200 text-red-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
+                  {r.driver_name} · {r.approved}/{comp.expected} · {why}
+                </span>
+              )
+            })}
+            {w.absent.map((name) => (
+              <span key={name} className="text-xs rounded-full px-2.5 py-1 border bg-slate-100 border-slate-300 text-slate-600"
+                title="เคยส่งรูปในสัปดาห์ก่อนหน้า แต่สัปดาห์นี้ยังไม่มีรูปเลย">
+                {name} · ยังไม่ส่งรูป
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
+    </section>
+  )
+}
+
 export default function Dashboard() {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
@@ -35,6 +77,7 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      <Completeness />
       <div className="flex flex-wrap items-end gap-3 text-sm">
         <label className="block">
           <span className="block text-slate-600 mb-1">ตั้งแต่</span>

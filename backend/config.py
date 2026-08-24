@@ -74,6 +74,9 @@ GITHUB_TOKEN = _setting("GITHUB_TOKEN", "github_token")          # fine-grained 
 GITHUB_REPO = _setting("GITHUB_REPO", "github_repo")             # "owner/repo"
 GITHUB_WORKFLOW = _setting("GITHUB_WORKFLOW", "github_workflow", "ingest.yml")
 
+# trips each rider owes the customer per week (3/day × 7) — Dashboard completeness check
+EXPECTED_TRIPS_PER_WEEK = int(os.environ.get("EXPECTED_TRIPS_PER_WEEK", "21"))
+
 # --- Gemini ---
 # Audited 2026-08-21 (5 rounds x 19 images each, 100% on money fields for all three):
 #   gemini-3.7-flash  thinking=low   ฿0.09/img  (default — user's plan)

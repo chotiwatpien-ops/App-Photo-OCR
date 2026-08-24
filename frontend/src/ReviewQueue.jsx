@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api.js'
+import { IssuesPanel } from './RunsIssues.jsx'
 
 function reason(t) {
   if (t.duplicate_of) return { label: 'ซ้ำใน job', cls: 'bg-red-100 text-red-700', tip: t.note || 'booking code ซ้ำกับรูปอื่นใน job เดียวกัน' }
@@ -12,11 +13,12 @@ function reason(t) {
 
 export default function ReviewQueue({ onOpenJob }) {
   const [rows, setRows] = useState(null)
+  const [issues, setIssues] = useState([])
   const [msg, setMsg] = useState('')
   const [modal, setModal] = useState(null)
 
   const load = useCallback(() => {
-    api.reviewQueue().then((r) => setRows(r.rows)).catch((e) => setMsg(e.message))
+    api.reviewQueue().then((r) => { setRows(r.rows); setIssues(r.issues || []) }).catch((e) => setMsg(e.message))
   }, [])
   useEffect(() => { load() }, [load])
 
@@ -63,6 +65,7 @@ export default function ReviewQueue({ onOpenJob }) {
 
   return (
     <div className="space-y-4">
+      <IssuesPanel issues={issues} />
       <div className="flex items-center justify-between flex-wrap gap-3">
         <p className="text-sm text-slate-600">
           แถวที่ระบบไม่กล้าอนุมัติเอง — <strong>{rows.length}</strong> รายการจากทุก job ·

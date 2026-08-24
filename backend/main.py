@@ -260,8 +260,44 @@ def job_images_zip(job_id: int):
 @app.get("/api/weeks")
 def weeks():
     return {"weeks": db.weeks_overview(), "last_run": db.latest_ingest_run(),
+            "runs": db.list_ingest_runs(10), "issues": db.list_ingest_issues(50),
             "can_trigger": bool(config.GITHUB_TOKEN and config.GITHUB_REPO),
             "exports_folder": config.DRIVE_EXPORTS_FOLDER_ID, "inbox_folder": config.DRIVE_INBOX_FOLDER_ID}
+
+
+@app.get("/api/completeness")
+def completeness():
+    """Per-week rider check: who is short of the expected trips, who sent nothing at all.
+    Complete riders are simply not listed (the flag disappears once the data is in)."""
+    exp = config.EXPECTED_TRIPS_PER_WEEK
+    weeks_ = db.weeks_overview()
+    first_seen = {}  # rider -> earliest week date_from they appeared
+    for W in weeks_:
+        for g in W["groups"]:
+            for j in g["jobs"]:
+                d = first_seen.get(j["driver_name"])
+                if d is None or W["date_from"] < d:
+                    first_seen[j["driver_name"]] = W["date_from"]
+    out = []
+    for W in weeks_:
+        incomplete, present = [], set()
+        for g in W["groups"]:
+            for j in g["jobs"]:
+                present.add(j["driver_name"])
+                settled = (j["waiting"] or 0) == 0 and (j["pending"] or 0) == 0 and (j["errors"] or 0) == 0
+                if (j["approved"] or 0) >= exp and settled:
+                    continue  # ครบ — no flag
+                incomplete.append({
+                    "driver_name": j["driver_name"], "category": g["category"], "job_id": j["id"],
+                    "images": j["images"] or 0, "done": j["done"] or 0, "approved": j["approved"] or 0,
+                    "waiting": j["waiting"] or 0, "pending": j["pending"] or 0, "errors": j["errors"] or 0,
+                    "missing": max(0, exp - (j["done"] or 0)),
+                })
+        absent = sorted(r for r, d in first_seen.items()
+                        if r not in present and d < W["date_from"])
+        out.append({"week": W["week"], "date_from": W["date_from"], "date_to": W["date_to"],
+                    "riders": W["riders"], "incomplete": incomplete, "absent": absent})
+    return {"weeks": out, "expected": exp}
 
 
 @app.post("/api/ingest/trigger")
@@ -320,12 +356,24 @@ def trips_view(date_from: str = None, date_to: str = None, driver: str = None,
                status: str = "all", q: str = None, page: int = 1, size: int = 50):
     size = max(1, min(size, 200))
     rows, total = db.search_trips(date_from, date_to, driver, status, q, size, (max(page, 1) - 1) * size)
+    from zones import zone_for
+    for r in rows:  # the same derived values Sheet1 shows (คอลัมน์ C/F/G/J/P/Q)
+        r["time_band"] = excel_writer.time_band(r.get("trip_time"))
+        r["pickup_zone"] = zone_for(r.get("pickup_district"), r.get("pickup_code"), r.get("pickup_text"))
+        r["dropoff_zone"] = zone_for(r.get("dropoff_district"), r.get("dropoff_code"), r.get("dropoff_text"))
+        pf = excel_writer.passenger_fare(r)
+        net = None
+        if r.get("base_fare") is not None:
+            net = round((r.get("base_fare") or 0) + (r.get("bonus") or 0) + (r.get("turbo") or 0), 2)
+        r["passenger_fare"] = pf
+        r["sheet_net"] = net
+        r["service_fee"] = round(pf - net, 2) if (pf is not None and net is not None) else None
     return {"rows": rows, "total": total, "page": page, "size": size}
 
 
 @app.get("/api/review-queue")
 def review_queue():
-    return {"rows": db.review_queue()}
+    return {"rows": db.review_queue(), "issues": db.list_ingest_issues(50)}
 
 
 @app.post("/api/trips/{trip_id}/approve")

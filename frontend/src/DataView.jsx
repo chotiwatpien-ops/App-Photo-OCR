@@ -60,31 +60,45 @@ export default function DataView({ onOpenJob }) {
 
       {err && <p className="text-red-600 text-sm">⚠️ {err}</p>}
 
+      <p className="text-xs text-slate-500">คอลัมน์เรียงตาม Sheet1 ในไฟล์ Rider Trips.xlsx (A→R)</p>
       <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
-        <table className="w-full text-sm min-w-[1000px]">
-          <thead><tr className="text-left text-slate-500 border-b border-slate-200 bg-slate-50">
-            <th className="p-2">วันที่</th><th className="p-2">เวลา</th><th className="p-2">ไรเดอร์</th>
-            <th className="p-2">Service</th><th className="p-2">จ่าย</th><th className="p-2">เส้นทาง</th>
-            <th className="p-2 text-right">กม.</th><th className="p-2 text-right">รายได้</th>
-            <th className="p-2 text-right">ผู้โดยสารจ่าย</th><th className="p-2">Booking</th>
+        <table className="w-full text-sm min-w-[1700px]">
+          <thead><tr className="text-left text-slate-500 border-b border-slate-200 bg-slate-50 text-xs">
+            <th className="p-2">Driver Name</th><th className="p-2">Date</th><th className="p-2">Time</th>
+            <th className="p-2">Service Type</th><th className="p-2">Payment</th>
+            <th className="p-2">Pick-up</th><th className="p-2">Drop-off</th>
+            <th className="p-2 text-right">Distance</th><th className="p-2 text-right">Duration</th>
+            <th className="p-2 text-right">Net</th><th className="p-2 text-right">Base</th>
+            <th className="p-2 text-right">Intl Fee</th><th className="p-2 text-right">Bonus</th>
+            <th className="p-2 text-right">Turbo</th><th className="p-2 text-right">Tolls</th>
+            <th className="p-2 text-right">Passenger Fare</th><th className="p-2 text-right">Service Fee</th>
+            <th className="p-2">Image</th>
             <th className="p-2">สถานะ</th><th className="p-2"></th>
           </tr></thead>
           <tbody>
             {data.rows.map((t) => (
               <tr key={t.id} className="border-b border-slate-100 hover:bg-slate-50">
+                <td className="p-2 font-medium whitespace-nowrap">{t.driver_name}</td>
                 <td className="p-2 whitespace-nowrap">{t.trip_date || '—'}</td>
-                <td className="p-2">{t.trip_time || ''}</td>
-                <td className="p-2 font-medium">{t.driver_name}</td>
+                <td className="p-2 whitespace-nowrap">{t.time_band || 'N/A'}</td>
                 <td className="p-2">{t.service_type}</td>
                 <td className="p-2">{t.payment_method}</td>
-                <td className="p-2 text-slate-600">
-                  {t.pickup_district || t.pickup_code} → {t.dropoff_district || t.dropoff_code}
+                <td className="p-2">{t.pickup_zone || '—'}</td>
+                <td className="p-2">{t.dropoff_zone || '—'}</td>
+                <td className="p-2 text-right tabular-nums">{t.distance_km}</td>
+                <td className="p-2 text-right tabular-nums">{t.duration_mins ?? ''}</td>
+                <td className="p-2 text-right tabular-nums font-medium">{t.sheet_net ?? t.net_earnings}</td>
+                <td className="p-2 text-right tabular-nums">{t.base_fare}</td>
+                <td className="p-2 text-right tabular-nums text-slate-500">{t.intl_fee ?? 0}</td>
+                <td className="p-2 text-right tabular-nums text-slate-500">{t.bonus ?? 0}</td>
+                <td className="p-2 text-right tabular-nums text-slate-500">{t.turbo ?? 0}</td>
+                <td className="p-2 text-right tabular-nums text-slate-500">{t.tolls ?? 0}</td>
+                <td className="p-2 text-right tabular-nums">{t.passenger_fare ?? '—'}</td>
+                <td className="p-2 text-right tabular-nums text-slate-500">{t.service_fee ?? '—'}</td>
+                <td className="p-2 text-xs text-slate-500 whitespace-nowrap" title={t.file_name}>
+                  {t.customer_image || t.file_name || '—'}
                   {t.surge ? ' 🔥' : ''}
                 </td>
-                <td className="p-2 text-right tabular-nums">{t.distance_km}</td>
-                <td className="p-2 text-right tabular-nums font-medium">{t.net_earnings}</td>
-                <td className="p-2 text-right tabular-nums text-slate-500">{t.passenger_total ?? '—'}</td>
-                <td className="p-2 font-mono text-xs text-slate-500">{t.booking_code || '—'}</td>
                 <td className="p-2">
                   {t.committed
                     ? <span className="text-xs rounded-full px-2 py-0.5 bg-emerald-100 text-emerald-700">{t.auto_approved ? '✓ auto' : '✓ คน'}</span>
@@ -96,7 +110,7 @@ export default function DataView({ onOpenJob }) {
                 </td>
               </tr>
             ))}
-            {data.rows.length === 0 && <tr><td colSpan={12} className="p-6 text-center text-slate-400">ไม่พบข้อมูล</td></tr>}
+            {data.rows.length === 0 && <tr><td colSpan={20} className="p-6 text-center text-slate-400">ไม่พบข้อมูล</td></tr>}
           </tbody>
         </table>
       </div>

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, exportUrl } from './api.js'
 import NewJobForm from './NewJobForm.jsx'
+import { RunsOverview, IssuesPanel } from './RunsIssues.jsx'
 
 const fmt = (n) => (n ?? 0).toLocaleString('th-TH', { maximumFractionDigits: 0 })
 const driveFile = (id) => `https://drive.google.com/file/d/${id}/view`
@@ -33,7 +34,7 @@ function RunStatus({ run, canTrigger, onTriggered }) {
         {msg && <p className="text-xs text-slate-600 mt-1">{msg}</p>}
       </div>
       <div className="text-right text-xs text-slate-500">
-        <p>ตั้งเวลา: ทุกวันจันทร์ 06:00</p>
+        <p>ตั้งเวลา: ทุกวัน 08:00 / 11:00 / 14:00 / 17:00 / 20:00</p>
         <button onClick={trigger} disabled={busy || running || !canTrigger}
           title={canTrigger ? 'สั่ง GitHub Actions รันทันที' : 'ยังไม่ได้ตั้งค่า GITHUB_TOKEN — รันได้จากแท็บ Actions บน GitHub'}
           className="mt-1 bg-slate-900 hover:bg-slate-700 disabled:bg-slate-300 text-white rounded-lg px-4 py-2 text-sm font-medium">
@@ -89,6 +90,8 @@ export default function Home({ onOpenJob, onJobCreated }) {
   return (
     <div className="space-y-6">
       <RunStatus run={data.last_run} canTrigger={data.can_trigger} onTriggered={() => setTimeout(load, 3000)} />
+      <IssuesPanel issues={data.issues} />
+      <RunsOverview runs={data.runs} />
 
       {weeks.length === 0 && (
         <div className="bg-white rounded-xl border border-slate-200 p-10 text-center text-slate-400">

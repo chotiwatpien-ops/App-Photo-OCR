@@ -122,6 +122,21 @@ ingest_runs = Table(
     Column("notes", Text),
 )
 
+# problems seen by ingest runs — one row per distinct problem, auto-resolved (but kept as
+# history) once a later run no longer sees it
+ingest_issues = Table(
+    "ingest_issues", meta,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("key", Text, nullable=False),     # stable identity, e.g. "folder:<path>" / "download:<file id>"
+    Column("kind", String(24)),              # folder | download | process | images | xlsx
+    Column("message", Text),
+    Column("first_run", Integer),
+    Column("last_run", Integer),
+    Column("times_seen", Integer, default=1),
+    Column("resolved_run", Integer),
+    Column("resolved_at", String(19)),
+)
+
 TRIP_EDITABLE = [
     "trip_date", "trip_time", "service_type", "payment_method",
     "pickup_code", "dropoff_code", "pickup_text", "dropoff_text",
@@ -506,6 +521,52 @@ def list_ingest_runs(limit=10):
     with engine.begin() as c:
         return [dict(r) for r in c.execute(select(ingest_runs).order_by(ingest_runs.c.id.desc())
                                            .limit(limit)).mappings().all()]
+
+
+def sync_ingest_issues(run_id, issues):
+    """issues = [(key, kind, message)] seen this run. Open issues seen again get their counter
+    bumped; new ones are inserted; open ones NOT seen are auto-resolved (row kept as history).
+    'process' issues resolve only when their trip is fixed or deleted, since a failed trip is
+    not retried by later runs."""
+    seen = {key: (kind, msg) for key, kind, msg in issues}
+    with engine.begin() as c:
+        open_rows = c.execute(select(ingest_issues)
+                              .where(ingest_issues.c.resolved_run.is_(None))).mappings().all()
+        open_by_key = {r["key"]: r for r in open_rows}
+        for key, (kind, msg) in seen.items():
+            row = open_by_key.get(key)
+            if row:
+                c.execute(update(ingest_issues).where(ingest_issues.c.id == row["id"])
+                          .values(last_run=run_id, message=msg,
+                                  times_seen=(row["times_seen"] or 1) + 1))
+            else:
+                c.execute(insert(ingest_issues).values(
+                    key=key, kind=kind, message=msg,
+                    first_run=run_id, last_run=run_id, times_seen=1))
+        for key, row in open_by_key.items():
+            if key in seen:
+                continue
+            if row["kind"] == "process":
+                try:
+                    tid = int(key.split(":", 1)[1])
+                except ValueError:
+                    tid = None
+                if tid is not None:
+                    t = c.execute(select(trips.c.status).where(trips.c.id == tid)).first()
+                    if t and t[0] == "error":
+                        continue  # still broken — keep open
+            c.execute(update(ingest_issues).where(ingest_issues.c.id == row["id"])
+                      .values(resolved_run=run_id, resolved_at=_now()))
+
+
+def list_ingest_issues(limit=100):
+    """Open issues first (newest first), then recently resolved history."""
+    with engine.begin() as c:
+        rows = c.execute(select(ingest_issues)
+                         .order_by(ingest_issues.c.resolved_run.isnot(None),
+                                   ingest_issues.c.id.desc())
+                         .limit(limit)).mappings().all()
+        return [dict(r) for r in rows]
 
 
 # ---------- half-screenshot pairing ----------

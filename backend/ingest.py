@@ -227,7 +227,9 @@ def export_only(drive, exports_id):
 def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     run_id = None if dry_run else db.start_ingest_run()
     t0 = time.time()
+    issues = []  # (key, kind, message) — synced to ingest_issues at the end (auto-resolve)
     items, skipped = discover(drive, inbox_id)
+    issues += [(f"folder:{s}", "folder", s) for s in skipped]
     if only:
         keys = [k.strip() for k in only.split(",") if k.strip()]
         items = [i for i in items if any(k in (i.get("folder_name") or i["rider"]) for k in keys)]
@@ -284,6 +286,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             f = i["file"]
             if err is not None:
                 log(f"  ✗ download {f['name']}: {err}")
+                issues.append((f"download:{f['id']}", "download", f"{rider}: โหลดรูป {f['name']} ไม่สำเร็จ ({err})"))
                 errors += 1
                 continue
             tid = db.create_trip(job_id, f["name"], data, f["mime"], source_url=f.get("url"))
@@ -295,6 +298,10 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         with ThreadPoolExecutor(max_workers=INGEST_PARALLEL) as ex:
             results = list(ex.map(lambda tid: pipeline.process_trip(tid, job_id), trip_ids))
         errors += results.count("error")
+        for tid, res in zip(trip_ids, results):
+            if res == "error":
+                issues.append((f"process:{tid}", "process",
+                               f"{rider} (job #{job_id}): อ่านรูป #{tid} ไม่สำเร็จ"))
         pairs = pipeline.pair_fragments(job_id)
         if pairs:
             log(f"  ⧉ จับคู่รูปบน/ล่างได้ {pairs} งาน")
@@ -317,6 +324,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             log(f"  🖼 รูปส่งลูกค้า {len(imgs)} ไฟล์ → Exports/{wk}/{meta.get('category') or 'อัปโหลดมือ'}/ (ชื่อ {display}N.jpg)")
         except Exception as e:  # noqa: BLE001
             log(f"  ✗ customer images: {e}")
+            issues.append((f"images:{job_id}", "images", f"อัพโหลดรูปส่งลูกค้าของ {rider} ไม่สำเร็จ: {e}"))
             errors += 1
 
         stats = db.auto_approve_job(job_id)
@@ -336,8 +344,10 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             log(f"📄 {name}: {len(rows)} แถวรวมทุกสัปดาห์")
         except Exception as e:  # noqa: BLE001
             log(f"✗ upload {name}: {e}")
+            issues.append(("xlsx", "xlsx", f"อัพโหลด {name} ขึ้น Drive ไม่สำเร็จ: {e}"))
             errors += 1
 
+    db.sync_ingest_issues(run_id, issues)
     db.finish_ingest_run(run_id, files_new=len(new), files_skipped=len(items) - len(new),
                          jobs_created=jobs_created, auto_approved=approved, flagged=flagged,
                          errors=errors, notes="\n".join(skipped) or None)
