@@ -285,6 +285,11 @@ def auto_approve_job(job_id) -> dict:
 
 def start_ingest_run() -> int:
     with engine.begin() as c:
+        # a run that never finished = the previous job crashed mid-way — close it out so the
+        # UI's "กำลังรัน" state (and the trigger button) don't stay stuck forever
+        c.execute(update(ingest_runs).where(ingest_runs.c.finished_at.is_(None))
+                  .values(finished_at=_now(), errors=ingest_runs.c.errors + 1,
+                          notes="รอบนี้ไม่จบตามปกติ (ระบบล่มกลางทาง) — ดู log ใน GitHub Actions"))
         return c.execute(insert(ingest_runs).values(started_at=_now())).inserted_primary_key[0]
 
 
