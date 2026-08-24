@@ -24,3 +24,11 @@ services:
         value: gemini-3.7-flash
       - key: MAX_PARALLEL
         value: "4"
+      - key: DRIVE_INBOX_FOLDER_ID
+        value: 18eIIwSjhAcaAlXOILAJGfaQZghnkzERa
+      - key: DRIVE_EXPORTS_FOLDER_ID
+        value: 1oQaYFS07ZzpbSO5qq9RtAmSf_WAFYOOv
+      - key: GITHUB_REPO           # for the "run ingest now" button (needs GITHUB_TOKEN, added later)
+        value: chotiwatpien-ops/App-Photo-OCR
+      - key: GITHUB_WORKFLOW
+        value: ingest.yml
