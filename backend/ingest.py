@@ -333,13 +333,15 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         touched_weeks.add((d_from, d_to))
         log(f"  ✓ อนุมัติอัตโนมัติ {stats['approved']} · รอคน {stats['flagged']} · error {results.count('error')}")
 
-    # ONE continuous workbook for the whole project (all weeks appended)
-    if touched_weeks:
-        rows = db.query_trips(committed_only=True)
+    # ONE continuous workbook for the whole project (all weeks appended). Regenerated EVERY
+    # run — not just when new photos arrived — so edits/approvals made in the web app between
+    # runs always reach the Drive copy too.
+    rows = db.query_trips(committed_only=True)
+    if rows:
         name = "Rider Trips.xlsx"
         try:
             fid = drive.upload_xlsx(exports_id, name, excel_writer.build_workbook(rows))
-            for d_from, _ in touched_weeks:
+            for (d_from, _), _js in db.jobs_by_week().items():
                 db.record_drive_file(week_label(d_from), "xlsx", fid, name)
             log(f"📄 {name}: {len(rows)} แถวรวมทุกสัปดาห์")
         except Exception as e:  # noqa: BLE001
