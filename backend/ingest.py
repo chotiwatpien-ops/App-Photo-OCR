@@ -37,6 +37,11 @@ DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
 # team layout: "01 สายยนต์ 3-9 Aug", "01ธัญณิชา 3-9 Aug", "02 ชื่อ 28 Jul-3 Aug"
 RIDER_RANGE_RE = re.compile(
     r"^\s*(?:\d{1,3}\s*)?(?P<name>.+?)\s+(?P<d1>\d{1,2})\s*(?P<m1>[A-Za-z]{3,9})?\s*[-–]\s*(?P<d2>\d{1,2})\s*(?P<m2>[A-Za-z]{3,9})\s*(?P<y>\d{4})?\s*$")
+# production layout: week folders "Week 10-16 Aug", "Week 31 Aug-6 Sep"
+RANGE_RE = re.compile(
+    r"(?P<d1>\d{1,2})\s*(?P<m1>[A-Za-z]{3,9})?\s*[-–]\s*(?P<d2>\d{1,2})\s*(?P<m2>[A-Za-z]{3,9})\s*(?P<y>\d{4})?\s*$")
+ADMIN_RE = re.compile(r"^\s*admin\b\s*(?P<name>.*)$", re.IGNORECASE)
+NUM_PREFIX_RE = re.compile(r"^\s*\d{1,3}\s*[-. ]\s*")
 MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
 CATEGORIES = {"4 w standard", "4 w saver", "2 w standard", "2 w saver"}
 
@@ -59,7 +64,32 @@ def week_label(d_from: str) -> str:
 
 
 def clean_name(s):
+    s = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", s or "")  # zero-width chars from LINE copy-paste
     return re.sub(r"\s+", " ", s).strip()
+
+
+def rider_display_name(folder_name):
+    """'07-นภสิทธิ์ ' -> 'นภสิทธิ์'; 'พลอย' -> 'พลอย'."""
+    return clean_name(NUM_PREFIX_RE.sub("", clean_name(folder_name)))
+
+
+def parse_range(text, default_year=None):
+    """'10-16 Aug' / '31 Aug-6 Sep' / '3-9 Aug 2026' -> (date_from, date_to) or None."""
+    m = RANGE_RE.search(text or "")
+    if not m:
+        return None
+    m2 = MONTHS.get((m.group("m2") or "")[:3].lower())
+    m1 = MONTHS.get((m.group("m1") or "")[:3].lower(), m2)
+    if not m2:
+        return None
+    y = int(m.group("y") or default_year or date.today().year)
+    try:
+        d1, d2 = date(y, m1, int(m.group("d1"))), date(y, m2, int(m.group("d2")))
+    except ValueError:
+        return None
+    if d2 < d1:
+        d2 = d2.replace(year=y + 1)
+    return d1, d2
 
 
 def parse_rider_folder(name, default_year=None):
@@ -81,10 +111,10 @@ def parse_rider_folder(name, default_year=None):
     return clean_name(m.group("name")), d1, d2
 
 
-def _rider_items(drive, folder, name, week_label_, d_from, d_to, category, skipped, folder_name):
+def _rider_items(drive, folder, name, week_label_, d_from, d_to, category, skipped, folder_name, admin=None):
     items = []
     for img in drive.list_images(folder["id"]):
-        items.append({"file": img, "rider": name, "week": week_label_, "category": category,
+        items.append({"file": img, "rider": name, "week": week_label_, "category": category, "admin": admin,
                       "folder_name": folder_name, "date_from": d_from, "date_to": d_to, "trip_date": None})
     for day in drive.list_folders(folder["id"]):
         dm = DATE_RE.match(day["name"].strip())
@@ -92,10 +122,37 @@ def _rider_items(drive, folder, name, week_label_, d_from, d_to, category, skipp
             skipped.append(f"'{folder_name}/{day['name']}' ไม่ใช่วันที่ YYYY-MM-DD — ข้าม")
             continue
         for img in drive.list_images(day["id"]):
-            items.append({"file": img, "rider": name, "week": week_label_, "category": category,
+            items.append({"file": img, "rider": name, "week": week_label_, "category": category, "admin": admin,
                           "folder_name": folder_name, "date_from": d_from, "date_to": d_to,
                           "trip_date": day["name"].strip()})
     return items
+
+
+def _discover_category(drive, cat_folder, category, d_from, d_to, wk_name, skipped, items):
+    """Children of a category folder are either Admin folders (production) or rider folders."""
+    for child in drive.list_folders(cat_folder["id"]):
+        adm = ADMIN_RE.match(clean_name(child["name"]))
+        if adm:
+            admin = adm.group("name").strip() or child["name"].strip()
+            for rider in drive.list_folders(child["id"]):
+                name = rider_display_name(rider["name"])
+                if not name:
+                    continue
+                items += _rider_items(drive, rider, name, wk_name, d_from, d_to, category, skipped,
+                                      f"{category}/{clean_name(child['name'])}/{clean_name(rider['name'])}", admin=admin)
+            continue
+        # rider folder directly under the category (older layout, may carry its own date range)
+        parsed = parse_rider_folder(child["name"])
+        if parsed:
+            name, r1, r2 = parsed
+            items += _rider_items(drive, child, name, week_label(r1.isoformat()), r1.isoformat(), r2.isoformat(),
+                                  category, skipped, f"{category}/{clean_name(child['name'])}")
+        elif d_from:
+            name = rider_display_name(child["name"])
+            items += _rider_items(drive, child, name, wk_name, d_from, d_to, category, skipped,
+                                  f"{category}/{clean_name(child['name'])}")
+        else:
+            skipped.append(f"'{category}/{child['name']}' อ่านชื่อ/ช่วงวันที่ไม่ออก — ข้าม")
 
 
 def discover(drive, inbox_id):
@@ -103,8 +160,22 @@ def discover(drive, inbox_id):
       A) Inbox/<YYYY-Www>/<rider>/[YYYY-MM-DD/]*.jpg
       B) Inbox/<4 W Standard|4 W Saver|2 W Standard|2 W Saver>/<NN name D-D Mon>/*.jpg   (the team's)
     Returns (items, skipped-warnings)."""
+    import config as _cfg
     items, skipped = [], []
     for top in drive.list_folders(inbox_id):
+        if top["id"] == (_cfg.DRIVE_EXPORTS_FOLDER_ID or ""):
+            continue  # the Exports folder lives inside the Inbox — never read our own outputs
+        top_name = clean_name(top["name"])
+        rng = parse_range(top_name) if top_name.lower().startswith("week") else None
+        if rng:  # production: Week D-D Mon / <category> / <Admin X> / <rider>
+            d1, d2 = rng
+            wk = week_label(d1.isoformat())
+            for cat in drive.list_folders(top["id"]):
+                if clean_name(cat["name"]).lower() in CATEGORIES:
+                    _discover_category(drive, cat, clean_name(cat["name"]), d1.isoformat(), d2.isoformat(), wk, skipped, items)
+                else:
+                    skipped.append(f"'{top['name']}/{cat['name']}' ไม่ใช่กลุ่มรถ (4 W Standard ...) — ข้าม")
+            continue
         bounds = week_bounds(top["name"])
         if bounds:  # layout A
             monday, sunday = bounds
@@ -114,20 +185,8 @@ def discover(drive, inbox_id):
                 items += _rider_items(drive, rider, name, top["name"], monday.isoformat(), sunday.isoformat(),
                                       None, skipped, f"{top['name']}/{rider['name']}")
             continue
-        if clean_name(top["name"]).lower() in CATEGORIES:  # layout B
-            category = clean_name(top["name"])
-            todo = []
-            for rider in drive.list_folders(top["id"]):
-                parsed = parse_rider_folder(rider["name"])
-                if not parsed:
-                    skipped.append(f"'{category}/{rider['name']}' อ่านชื่อ/ช่วงวันที่ไม่ออก (ต้องเป็น 'NN ชื่อ 3-9 Aug') — ข้าม")
-                    continue
-                name, d1, d2 = parsed
-                todo.append((rider, name, week_label(d1.isoformat()), d1.isoformat(), d2.isoformat(),
-                             category, skipped, f"{category}/{rider['name']}"))
-            with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
-                for part in ex.map(lambda a: _rider_items(drive, *a), todo):
-                    items += part
+        if clean_name(top["name"]).lower() in CATEGORIES:  # layout B (test folder)
+            _discover_category(drive, top, clean_name(top["name"]), None, None, None, skipped, items)
             continue
         skipped.append(f"โฟลเดอร์ '{top['name']}' ไม่ใช่สัปดาห์ (2026-W34) หรือกลุ่มรถ (4 W Standard ...) — ข้าม")
     return items, skipped
@@ -197,7 +256,8 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         job_id = db.find_job(rider, d_from, d_to)
         if job_id is None:
             job_id = db.create_job(rider, excel_writer.SHEET, d_from, d_to,
-                                   category=meta.get("category"), folder_name=meta.get("folder_name"))
+                                   category=meta.get("category"), folder_name=meta.get("folder_name"),
+                                   admin=meta.get("admin"))
             jobs_created += 1
         db.set_job_status(job_id, "running")
         log(f"job #{job_id} {rider} {d_from}..{d_to}: {len(group)} รูป")

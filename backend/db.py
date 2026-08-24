@@ -28,7 +28,8 @@ jobs = Table(
     Column("status", String(16), nullable=False, default="running"),  # running | review | committed
     Column("created_at", String(19), nullable=False),
     Column("category", String(32)),      # team's vehicle group: 4 W Standard | 4 W Saver | 2 W Standard | 2 W Saver
-    Column("folder_name", Text),         # original rider folder name on Drive (mirrored into Exports)
+    Column("folder_name", Text),         # original rider folder path on Drive (mirrored into Exports)
+    Column("admin", String(64)),         # which admin's folder the photos came from
 )
 
 trips = Table(
@@ -155,11 +156,11 @@ def init_db():
 
 # ---------- jobs ----------
 
-def create_job(driver_name, sheet, date_from, date_to, category=None, folder_name=None) -> int:
+def create_job(driver_name, sheet, date_from, date_to, category=None, folder_name=None, admin=None) -> int:
     with engine.begin() as c:
         r = c.execute(insert(jobs).values(
             driver_name=driver_name, sheet=sheet, date_from=date_from, date_to=date_to,
-            status="running", created_at=_now(), category=category, folder_name=folder_name))
+            status="running", created_at=_now(), category=category, folder_name=folder_name, admin=admin))
         return r.inserted_primary_key[0]
 
 
@@ -345,7 +346,7 @@ def find_committed_duplicates(codes):
 
 def query_trips(date_from=None, date_to=None, driver=None, committed_only=True, job_id=None):
     """Rows for export / the data view, joined with the job's driver name."""
-    q = (select(*TRIP_COLS, jobs.c.driver_name, jobs.c.id.label("job_id_"))
+    q = (select(*TRIP_COLS, jobs.c.driver_name, jobs.c.category, jobs.c.admin, jobs.c.id.label("job_id_"))
          .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
          .where(trips.c.status == "done"))
     if committed_only:
