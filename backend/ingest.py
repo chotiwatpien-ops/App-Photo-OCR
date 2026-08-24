@@ -201,14 +201,14 @@ def export_only(drive, exports_id):
             try:
                 week_dir = drive.ensure_folder(exports_id, wk)
                 db.record_drive_file(wk, "week_folder", week_dir)
-                rider_dir = week_dir
-                for part in (j.get("folder_name") or j["driver_name"]).split("/"):
-                    rider_dir = drive.ensure_folder(rider_dir, part)
-                db.record_drive_file(wk, "rider_folder", rider_dir, j.get("folder_name"), ref=j["id"])
-                imgs = list(pipeline.customer_images(j["id"], j["driver_name"], fetch=drive.download))
+                cat_dir = drive.ensure_folder(week_dir, j.get("category") or "อัปโหลดมือ")
+                db.record_drive_file(wk, "rider_folder", cat_dir, j.get("category"), ref=j["id"])
+                dup = sum(1 for x in js if x["driver_name"] == j["driver_name"] and x.get("category") == j.get("category")) > 1
+                display = f"{j['driver_name']}-{j.get('admin')}" if (dup and j.get("admin")) else j["driver_name"]
+                imgs = list(pipeline.customer_images(j["id"], display, fetch=drive.download))
                 with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
-                    list(ex.map(lambda nd: drive.upload_file(rider_dir, nd[0], nd[1], "image/jpeg"), imgs))
-                log(f"🖼 {j['driver_name']}: {len(imgs)} รูป → Exports/{wk}/{j.get('folder_name') or j['driver_name']}/")
+                    list(ex.map(lambda nd: drive.upload_file(cat_dir, nd[0], nd[1], "image/jpeg"), imgs))
+                log(f"🖼 {display}: {len(imgs)} รูป → Exports/{wk}/{j.get('category') or 'อัปโหลดมือ'}/")
             except Exception as e:  # noqa: BLE001
                 log(f"✗ images {j['driver_name']}: {e}")
                 errors += 1
@@ -248,6 +248,12 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     for i in new:
         groups.setdefault((i["rider"], i["date_from"], i["date_to"]), []).append(i)
     by_key = {k: v[0] for k, v in groups.items()}  # category / folder_name for the group
+    # riders sharing a display name inside the same week+vehicle group get an -Admin suffix
+    name_count = {}
+    for (rider, d_from, d_to), v in groups.items():
+        kk = (d_from, d_to, v[0].get("category"), rider)
+        name_count[kk] = name_count.get(kk, 0) + 1
+    display_names = {}
 
     jobs_created = approved = flagged = errors = 0
     touched_weeks = set()
@@ -260,6 +266,9 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
                                    admin=meta.get("admin"))
             jobs_created += 1
         db.set_job_status(job_id, "running")
+        kk = (d_from, d_to, meta.get("category"), rider)
+        dup_here = name_count.get(kk, 0) > 1 or db.name_shared_in_group(rider, d_from, d_to, meta.get("category"), job_id)
+        display_names[job_id] = f"{rider}-{meta.get('admin')}" if (dup_here and meta.get("admin")) else rider
         log(f"job #{job_id} {rider} {d_from}..{d_to}: {len(group)} รูป")
 
         def _dl(i):
@@ -292,19 +301,19 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         if dated:
             log(f"  📅 กระจาย {dated} งานลง จ–อา เท่าๆ กัน")
 
-        # customer images: Exports/<week>/<rider>/<rider>1.jpg ... (before approval clears the blobs)
+        # customer images: Exports/<week>/<vehicle type>/ — all riders' images in one folder,
+        # named '<rider><n>.jpg' ('<rider>-<admin><n>.jpg' when two riders share a name in the group)
         try:
-            # mirror the team's own folder path under Exports/<week>/ (e.g. "4 W Standard/01 สายยนต์ 3-9 Aug")
-            week_dir = drive.ensure_folder(exports_id, week_label(d_from))
-            db.record_drive_file(week_label(d_from), "week_folder", week_dir)
-            rider_dir = week_dir
-            for part in (meta.get("folder_name") or rider).split("/"):
-                rider_dir = drive.ensure_folder(rider_dir, part)
-            db.record_drive_file(week_label(d_from), "rider_folder", rider_dir, meta.get("folder_name"), ref=job_id)
-            imgs = list(pipeline.customer_images(job_id, rider, fetch=drive.download))
+            wk = week_label(d_from)
+            week_dir = drive.ensure_folder(exports_id, wk)
+            db.record_drive_file(wk, "week_folder", week_dir)
+            cat_dir = drive.ensure_folder(week_dir, meta.get("category") or "อัปโหลดมือ")
+            db.record_drive_file(wk, "rider_folder", cat_dir, meta.get("category"), ref=job_id)
+            display = display_names.get(job_id, rider)
+            imgs = list(pipeline.customer_images(job_id, display, fetch=drive.download))
             with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
-                list(ex.map(lambda nd: drive.upload_file(rider_dir, nd[0], nd[1], "image/jpeg"), imgs))
-            log(f"  🖼 รูปส่งลูกค้า {len(imgs)} ไฟล์ → Exports/{week_label(d_from)}/{meta.get('folder_name') or rider}/")
+                list(ex.map(lambda nd: drive.upload_file(cat_dir, nd[0], nd[1], "image/jpeg"), imgs))
+            log(f"  🖼 รูปส่งลูกค้า {len(imgs)} ไฟล์ → Exports/{wk}/{meta.get('category') or 'อัปโหลดมือ'}/ (ชื่อ {display}N.jpg)")
         except Exception as e:  # noqa: BLE001
             log(f"  ✗ customer images: {e}")
             errors += 1
