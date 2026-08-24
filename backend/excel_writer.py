@@ -171,6 +171,25 @@ def _write_analysis_row(ws, row, driver_name, t):
             cell.number_format = "HH:MM"
 
 
+def _write_zone_map(wb):
+    """Reference sheet: the district→zone rule this file was generated with (audit support)."""
+    from zones import ZONES, PROVINCE_ZONE
+    ws = wb.create_sheet("Zone Map")
+    _style_header(ws, ["โซน", "เขต/อำเภอ (กทม.และปริมณฑล)", "จังหวัดทั้งจังหวัด (fallback)"], [14, 90, 30], medium=False)
+    prov_th = {"BKK": "กรุงเทพฯ (ที่เหลือ)", "NBI": "นนทบุรี", "PTE": "ปทุมธานี", "SPK": "สมุทรปราการ",
+               "SKN": "สมุทรสาคร", "NPT": "นครปฐม", "AYA": "อยุธยา", "CBI": "ชลบุรี"}
+    rows = [(name, ", ".join(sorted(members)),
+             ", ".join(prov_th[c] for c, z in PROVINCE_ZONE.items() if z == name)) for name, members in ZONES]
+    rows.append(("Downtown", "เขตอื่นทั้งหมดในกรุงเทพฯ ที่ไม่อยู่ในโซนข้างบน", prov_th["BKK"]))
+    for i, r in enumerate(rows, start=2):
+        for c, v in enumerate(r, start=1):
+            cell = ws.cell(row=i, column=c, value=v)
+            cell.font, cell.border = _BODY_FONT, _THIN_BORDER
+            cell.alignment = Alignment(vertical="top", wrap_text=(c == 2))
+    ws.cell(row=len(rows) + 3, column=1,
+            value="ลำดับการตัดสิน: เขต/อำเภอ → คำในที่อยู่ → จังหวัด → Downtown · ที่มาของแต่ละแถวดูในชีท Analysis (District/Province/Address) · นิยามรอทีมยืนยันจากไฟล์ Zone Mapping").font = Font(name="Arial", size=9, color="666666")
+
+
 def _new_workbook():
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -180,6 +199,7 @@ def _new_workbook():
     wa = wb.create_sheet(ANALYSIS_SHEET)
     _style_header(wa, ANALYSIS_HEADERS, ANALYSIS_WIDTHS, medium=False)
     wa.freeze_panes = "A2"
+    _write_zone_map(wb)
     return wb
 
 
