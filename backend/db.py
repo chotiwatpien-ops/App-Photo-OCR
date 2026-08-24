@@ -270,7 +270,9 @@ def auto_approve_job(job_id) -> dict:
                                                    trips.c.booking_code.in_(codes))).all()}
         ok_ids = [r["id"] for r in rows
                   if r["check_status"] == "pass" and not r["duplicate_of"] and r["trip_date"]
-                  and (not r["booking_code"] or r["booking_code"] not in seen)]
+                  # no booking code = usually a stray lower half that failed to pair —
+                  # a person must look before it earns a row in the workbook
+                  and r["booking_code"] and r["booking_code"] not in seen]
         if ok_ids:
             c.execute(update(trips).where(trips.c.id.in_(ok_ids))
                       .values(committed=1, auto_approved=1, image_blob=None))
