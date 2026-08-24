@@ -151,11 +151,13 @@ def normalize_service(ai_value, category):
     wheel = "Bike" if "bike" in raw else ("Car" if ("car" in raw or "justgrab" in raw) else None)
     cat = CATEGORY_SERVICE.get(category or "")
     if cat:
-        cat_tier, cat_wheel = cat.split()
+        # team decision (2026-08-23): column D means the RIDER'S GROUP, not the trip's product —
+        # always use the folder's category; still flag a car/bike contradiction for review
+        cat_wheel = cat.split()[1]
         note = None
         if wheel and wheel != cat_wheel:
             note = f"รูปบอก {ai_value} แต่ไรเดอร์อยู่กลุ่ม {category}"
-        return f"{tier or cat_tier} {cat_wheel}", note
+        return cat, note
     if tier and wheel:
         return f"{tier} {wheel}", None
     return ai_value, None
