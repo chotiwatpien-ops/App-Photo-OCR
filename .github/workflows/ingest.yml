@@ -13,6 +13,10 @@ on:
         description: "Max images this run (blank = all)"
         type: string
         default: ""
+      exports_only:
+        description: "Regenerate Excel + customer images only (no Gemini cost)"
+        type: boolean
+        default: false
 
 concurrency:
   group: ingest
@@ -44,5 +48,6 @@ jobs:
         run: |
           ARGS=""
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ "${{ github.event.inputs.exports_only }}" = "true" ]; then ARGS="$ARGS --exports-only"; fi
           if [ -n "${{ github.event.inputs.limit }}" ]; then ARGS="$ARGS --limit ${{ github.event.inputs.limit }}"; fi
           python ingest.py $ARGS
