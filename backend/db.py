@@ -81,6 +81,7 @@ trips = Table(
     Column("committed", Integer, nullable=False, default=0),
     Column("auto_approved", Integer, nullable=False, default=0),  # 1 = committed by ingest, not a person
     Column("source_url", Text),                                   # Drive link to the original image
+    Column("customer_image", Text),       # the delivered image's file name (e.g. 'นภสิทธิ์7.jpg') — traceback from Sheet1
     Column("kind", String(8)),            # full | top | bottom — which part of the trip screen the image shows
     Column("merged_into", Integer),       # bottom half folded into this trip id (status becomes 'merged')
 )
@@ -130,7 +131,8 @@ TRIP_EDITABLE = [
     "num_stops", "app_fee", "other_adj", "fare_refund", "note",
 ]
 _SYSTEM_FIELDS = ["status", "error", "booking_code", "check_status", "duplicate_of",
-                  "grab_commission", "model", "tok_in", "tok_out", "tok_think", "kind", "merged_into"]
+                  "grab_commission", "model", "tok_in", "tok_out", "tok_think", "kind", "merged_into",
+                  "customer_image"]
 # columns returned to the API (everything except the blob)
 TRIP_COLS = [c for c in trips.c if c.name != "image_blob"]
 

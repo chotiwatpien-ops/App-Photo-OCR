@@ -31,9 +31,9 @@ HEADERS = [
     "Pick-up Location", "Drop-off Location", "Distance (km)", "Duration (mins)",
     "Net Earnings (THB)", "Base Fare (THB)", "International Fee", "Bonus",
     "Turbo Incentive (THB)", "Reimbursements / Tolls (THB)",
-    "Passenger Fare (THB)", "Grab Service Fee (THB)",
+    "Passenger Fare (THB)", "Grab Service Fee (THB)", "Image",
 ]
-COL_WIDTHS = [11.4, 9.7, 12.9, 12.5, 13.5, 12.5, 13.4, 10.5, 12.0, 14.1, 11.9, 13.2, 7.8, 16.4, 22.3, 15.9, 17.1]
+COL_WIDTHS = [11.4, 9.7, 12.9, 12.5, 13.5, 12.5, 13.4, 10.5, 12.0, 14.1, 11.9, 13.2, 7.8, 16.4, 22.3, 15.9, 17.1, 18]
 
 ANALYSIS_HEADERS = [
     "Driver Name", "Date", "Time", "Booking Code", "Week", "Pick-up Zone", "Drop-off Zone",
@@ -129,6 +129,7 @@ def _write_main_row(ws, row, driver_name, t):
         t.get("tolls") or 0,                                    # O
         pf,                                                     # P passenger fare (team convention)
         f"=P{row}-J{row}" if pf is not None else None,          # Q (template formula)
+        t.get("customer_image"),                                # R traceback to the delivered image
     ]
     for col, v in enumerate(values, start=1):
         cell = ws.cell(row=row, column=col)

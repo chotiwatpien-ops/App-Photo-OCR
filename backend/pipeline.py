@@ -133,7 +133,9 @@ def customer_images(job_id, rider, fetch=None):
         if not r["top_blob"]:
             continue
         n += 1
-        yield stitch.customer_name(rider, n), stitch.stitch(r["top_blob"], r["bottom_blob"])
+        name = stitch.customer_name(rider, n)
+        db.update_trip(r["id"], {"customer_image": name})  # so Sheet1 can trace back to this file
+        yield name, stitch.stitch(r["top_blob"], r["bottom_blob"])
 
 
 # team's vehicle groups -> template Service Type values
