@@ -591,7 +591,7 @@ def done_trips_for_pairing(job_id):
     """Minimal rows needed to pair top/bottom halves (done, not yet merged)."""
     with engine.begin() as c:
         rows = c.execute(select(trips.c.id, trips.c.file_name, trips.c.kind, trips.c.net_earnings,
-                                trips.c.base_fare, trips.c.merged_into)
+                                trips.c.base_fare, trips.c.bonus, trips.c.turbo, trips.c.merged_into)
                          .where(trips.c.job_id == job_id, trips.c.status == "done")).mappings().all()
         return [dict(r) for r in rows]
 

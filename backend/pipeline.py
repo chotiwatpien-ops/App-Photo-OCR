@@ -29,7 +29,12 @@ def _halves_match(top, bot) -> bool:
     tn, tb = _num(top["net_earnings"]), _num(top["base_fare"])
     bn, bb = _num(bot["net_earnings"]), _num(bot["base_fare"])
     def eq(a, c): return a is not None and c is not None and a > 0 and abs(a - c) <= 0.01
-    return eq(tb, bb) or eq(tn, bn) or eq(tb, bn) or eq(tn, bb)
+    # a top that shows only net gets base guessed = net — its net should equal the bottom's
+    # base + incentives (the bottom's own 'net' is usually just the base)
+    extras = (_num(bot.get("bonus")) or 0) + (_num(bot.get("turbo")) or 0)
+    return (eq(tb, bb) or eq(tn, bn) or eq(tb, bn) or eq(tn, bb)
+            or (bb is not None and eq(tn, bb + extras))
+            or (bn is not None and eq(tn, bn + extras)))
 
 
 def pair_fragments(job_id) -> int:
@@ -65,13 +70,26 @@ def pair_fragments(job_id) -> int:
             if top.get("net_earnings") is None and bot.get("net_earnings") is not None:
                 fields["net_earnings"] = bot["net_earnings"]
             merged = {**top, **fields}
-            fields["check_status"] = extractor.arithmetic_check({
-                "net_earnings": merged.get("net_earnings"), "base_fare": merged.get("base_fare"),
-                "bonus": merged.get("bonus"), "turbo": merged.get("turbo"),
-                "passenger_total": merged.get("passenger_total"),
-                "grab_commission": merged.get("grab_commission"),
-                "net_earnings_left_panel": None,
-            })
+            def _check(m):
+                return extractor.arithmetic_check({
+                    "net_earnings": m.get("net_earnings"), "base_fare": m.get("base_fare"),
+                    "bonus": m.get("bonus"), "turbo": m.get("turbo"),
+                    "passenger_total": m.get("passenger_total"),
+                    "grab_commission": m.get("grab_commission"),
+                    "net_earnings_left_panel": None,
+                })
+            fields["check_status"] = _check(merged)
+            if fields["check_status"] != "pass":
+                # the bottom's itemized breakdown is the ground truth for incentives too — the
+                # top sometimes hallucinates a bonus from a cut-off section. If ITS numbers
+                # balance the identity, trust them.
+                alt = dict(fields)
+                for k in ("bonus", "turbo"):
+                    if bot.get(k) is not None:
+                        alt[k] = bot[k]
+                if _check({**top, **alt}) == "pass":
+                    fields = alt
+                    fields["check_status"] = "pass"
             fields["kind"] = "full"
             note = f"รวม 2 รูป: {r['file_name']} + {b['file_name']}"
             prior = top.get("note") or ""
@@ -80,6 +98,47 @@ def pair_fragments(job_id) -> int:
             if top.get("duplicate_of") == b["id"]:
                 fields["duplicate_of"] = None
                 prior = " | ".join(p for p in prior.split(" | ") if "ซ้ำกับ" not in p)
+            fields["note"] = f"{note} | {prior}" if prior else note
+            db.merge_bottom_into_top(b["id"], r["id"], fields)
+            used.update({r["id"], b["id"]})
+            pairs += 1
+            break
+
+    # second pass: a bottom cropped past its base line (no readable base/net — large fonts,
+    # over-scrolled capture) can still pair with the ADJACENT unpaired top; base is then
+    # inferred as top net − the bottom's incentives
+    for i, b in enumerate(rows):
+        if b["kind"] != "bottom" or b["id"] in used or b["merged_into"]:
+            continue
+        if _num(b["base_fare"]) or _num(b["net_earnings"]):
+            continue  # readable bottoms belong to the first pass
+        extras = (_num(b.get("bonus")) or 0) + (_num(b.get("turbo")) or 0)
+        for j in (i - 1, i + 1):
+            if j < 0 or j >= len(rows):
+                continue
+            r = rows[j]
+            if r["kind"] != "top" or r["id"] in used or db.has_merged_child(r["id"]):
+                continue
+            tn = _num(r["net_earnings"])
+            if tn is None or tn <= extras:
+                continue
+            top, bot = db.get_trip(r["id"]), db.get_trip(b["id"])
+            fields = {k: bot.get(k) for k in BOTTOM_FIELDS if bot.get(k) is not None}
+            for k in BOTTOM_IF_MISSING:
+                if not top.get(k) and bot.get(k):
+                    fields[k] = bot[k]
+            fields["base_fare"] = round(tn - extras, 2)
+            merged = {**top, **fields}
+            fields["check_status"] = extractor.arithmetic_check({
+                "net_earnings": merged.get("net_earnings"), "base_fare": merged.get("base_fare"),
+                "bonus": merged.get("bonus"), "turbo": merged.get("turbo"),
+                "passenger_total": merged.get("passenger_total"),
+                "grab_commission": merged.get("grab_commission"),
+                "net_earnings_left_panel": None,
+            })
+            fields["kind"] = "full"
+            note = f"รวม 2 รูป: {r['file_name']} + {b['file_name']} (จับคู่ตามลำดับไฟล์ — รูปล่างไม่เห็นค่าโดยสารพื้นฐาน)"
+            prior = top.get("note") or ""
             fields["note"] = f"{note} | {prior}" if prior else note
             db.merge_bottom_into_top(b["id"], r["id"], fields)
             used.update({r["id"], b["id"]})
