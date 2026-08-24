@@ -212,14 +212,15 @@ def export_only(drive, exports_id):
             except Exception as e:  # noqa: BLE001
                 log(f"✗ images {j['driver_name']}: {e}")
                 errors += 1
-        rows = db.query_trips(date_from=d_from, date_to=d_to, committed_only=True)
-        try:
-            fid = drive.upload_xlsx(exports_id, f"Rider Trips {wk}.xlsx", excel_writer.build_workbook(rows))
-            db.record_drive_file(wk, "xlsx", fid, f"Rider Trips {wk}.xlsx")
-            log(f"📄 Rider Trips {wk}.xlsx: {len(rows)} แถว")
-        except Exception as e:  # noqa: BLE001
-            log(f"✗ upload xlsx {wk}: {e}")
-            errors += 1
+    rows = db.query_trips(committed_only=True)
+    try:
+        fid = drive.upload_xlsx(exports_id, "Rider Trips.xlsx", excel_writer.build_workbook(rows))
+        for (d_from, _), _js in db.jobs_by_week().items():
+            db.record_drive_file(week_label(d_from), "xlsx", fid, "Rider Trips.xlsx")
+        log(f"📄 Rider Trips.xlsx: {len(rows)} แถวรวมทุกสัปดาห์")
+    except Exception as e:  # noqa: BLE001
+        log(f"✗ upload xlsx: {e}")
+        errors += 1
     return errors
 
 
@@ -324,14 +325,15 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         touched_weeks.add((d_from, d_to))
         log(f"  ✓ อนุมัติอัตโนมัติ {stats['approved']} · รอคน {stats['flagged']} · error {results.count('error')}")
 
-    # weekly workbooks back to Drive (all riders, approved rows only)
-    for d_from, d_to in sorted(touched_weeks):
-        rows = db.query_trips(date_from=d_from, date_to=d_to, committed_only=True)
-        name = f"Rider Trips {week_label(d_from)}.xlsx"
+    # ONE continuous workbook for the whole project (all weeks appended)
+    if touched_weeks:
+        rows = db.query_trips(committed_only=True)
+        name = "Rider Trips.xlsx"
         try:
             fid = drive.upload_xlsx(exports_id, name, excel_writer.build_workbook(rows))
-            db.record_drive_file(week_label(d_from), "xlsx", fid, name)
-            log(f"📄 {name}: {len(rows)} แถว")
+            for d_from, _ in touched_weeks:
+                db.record_drive_file(week_label(d_from), "xlsx", fid, name)
+            log(f"📄 {name}: {len(rows)} แถวรวมทุกสัปดาห์")
         except Exception as e:  # noqa: BLE001
             log(f"✗ upload {name}: {e}")
             errors += 1

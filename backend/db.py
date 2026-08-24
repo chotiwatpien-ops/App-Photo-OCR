@@ -361,7 +361,8 @@ def query_trips(date_from=None, date_to=None, driver=None, committed_only=True, 
         q = q.where(trips.c.trip_date <= date_to)
     if driver:
         q = q.where(jobs.c.driver_name.ilike(f"%{driver}%"))
-    q = q.order_by(jobs.c.driver_name, trips.c.trip_date, trips.c.trip_time, trips.c.id)
+    # one continuous log: week block first, then rider, then day
+    q = q.order_by(jobs.c.date_from, jobs.c.driver_name, trips.c.trip_date, trips.c.trip_time, trips.c.id)
     with engine.begin() as c:
         return [dict(r) for r in c.execute(q).mappings().all()]
 
