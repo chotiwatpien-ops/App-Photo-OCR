@@ -55,7 +55,10 @@ def pair_fragments(job_id) -> int:
             for k in BOTTOM_IF_MISSING:
                 if not top.get(k) and bot.get(k):
                     fields[k] = bot[k]
-            if not top.get("base_fare") and bot.get("base_fare"):
+            # the bottom half carries the itemized breakdown (ค่าโดยสารพื้นฐาน) — on car trips the
+            # top shows only net and the model tends to guess base = net, so the bottom's base
+            # is the ground truth and always wins
+            if bot.get("base_fare") is not None:
                 fields["base_fare"] = bot["base_fare"]
             # the driver's net ('คุณได้รับ', incl. turbo) is only reliable on the top half; the bottom
             # half often starts below it and reports 'รวมรายได้จากรอบขับ' (= base) instead
