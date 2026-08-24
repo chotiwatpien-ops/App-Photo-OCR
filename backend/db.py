@@ -304,6 +304,17 @@ def find_job(driver_name, date_from, date_to):
         return r[0] if r else None
 
 
+def name_shared_in_group(driver_name, date_from, date_to, category, job_id):
+    """True when ANOTHER job in the same week + vehicle group carries the same display name
+    (two riders under different admins with identical names → exports need an -Admin suffix)."""
+    with engine.begin() as c:
+        n = c.execute(select(func.count()).select_from(jobs).where(
+            jobs.c.driver_name == driver_name, jobs.c.date_from == date_from,
+            jobs.c.date_to == date_to, jobs.c.category == category,
+            jobs.c.id != job_id)).scalar()
+        return bool(n)
+
+
 def get_trip(trip_id):
     with engine.begin() as c:
         r = c.execute(select(*TRIP_COLS).where(trips.c.id == trip_id)).mappings().first()
