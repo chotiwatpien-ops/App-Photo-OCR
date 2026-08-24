@@ -144,6 +144,42 @@ def pair_fragments(job_id) -> int:
             used.update({r["id"], b["id"]})
             pairs += 1
             break
+
+    # third pass: riders always send the two shots back to back (team-confirmed), and only
+    # the upper shot carries the booking code. A code-less bottom next to an unpaired coded
+    # top is that top's other half even when no amount lines match — fold ONLY the passenger-
+    # side fields (its income lines are unverified) and let the check decide what remains.
+    for i, b in enumerate(rows):
+        if b["kind"] != "bottom" or b["id"] in used or b["merged_into"] or b.get("booking_code"):
+            continue
+        for j in (i - 1, i + 1):
+            if j < 0 or j >= len(rows):
+                continue
+            r = rows[j]
+            if (r["kind"] != "top" or not r.get("booking_code")
+                    or r["id"] in used or db.has_merged_child(r["id"])):
+                continue
+            top, bot = db.get_trip(r["id"]), db.get_trip(b["id"])
+            fields = {k: bot.get(k) for k in BOTTOM_FIELDS if bot.get(k) is not None}
+            for k in BOTTOM_IF_MISSING:
+                if not top.get(k) and bot.get(k):
+                    fields[k] = bot[k]
+            merged = {**top, **fields}
+            fields["check_status"] = extractor.arithmetic_check({
+                "net_earnings": merged.get("net_earnings"), "base_fare": merged.get("base_fare"),
+                "bonus": merged.get("bonus"), "turbo": merged.get("turbo"),
+                "passenger_total": merged.get("passenger_total"),
+                "grab_commission": merged.get("grab_commission"),
+                "net_earnings_left_panel": None,
+            })
+            fields["kind"] = "full"
+            note = f"รวม 2 รูป: {r['file_name']} + {b['file_name']} (จับคู่ตามลำดับไฟล์ — รูปล่างไม่มี booking code)"
+            prior = top.get("note") or ""
+            fields["note"] = f"{note} | {prior}" if prior else note
+            db.merge_bottom_into_top(b["id"], r["id"], fields)
+            used.update({r["id"], b["id"]})
+            pairs += 1
+            break
     db.refresh_job_status(job_id)
     return pairs
 
