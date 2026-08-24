@@ -44,22 +44,17 @@
 ## โครงสร้าง
 
 ```
-backend/          FastAPI (Python) — API + Gemini + เขียน Excel
-  main.py         endpoints
-  extractor.py    Gemini vision + JSON schema + validation/retry
-  excel_writer.py build_workbook (export) + append (local mode)
-  db.py           SQLAlchemy — SQLite ในเครื่อง / Postgres บน cloud
-  pipeline.py     รูป → Gemini → ตรวจ → DB (ใช้ร่วมกันระหว่างเว็บกับ ingest)
-  ingest.py       ดูดรูปจาก Drive รายสัปดาห์ + auto-approve + Excel กลับ Drive
-  drive_client.py Google Drive API (+ โหมดโฟลเดอร์ local ไว้ทดสอบ)
-  stitch.py       ต่อรูปบน+ล่างเป็นใบเดียว + ตั้งชื่อส่งลูกค้า
-  zones.py        ตารางเขต → โซน (Downtown / North-DMK / …)
-.github/workflows/ingest.yml   ตั้งเวลาบน GitHub Actions
-  config.py       env vars + photo_ocr_config.json
-render.yaml       Render Blueprint (free web service)
-frontend/         React + Vite + Tailwind → build เป็น frontend/dist
-%LOCALAPPDATA%\photo-ocr-data\   รูปที่อัปโหลด + ฐานข้อมูล (นอก OneDrive กัน corruption)
-start_app.bat     เปิดแอป
+start_app.bat     เปิดแอป (เว็บ http://127.0.0.1:8600)
+run_ingest.bat    ดูดรูปใหม่จาก Google Drive (กดเมื่อมีรูปเพิ่ม — รันซ้ำได้ปลอดภัย)
+photo_ocr_config.json + service_account.json + oauth_client.json + drive_token.json
+                  ← กุญแจ/ตั้งค่า ห้ามย้าย/ห้ามขึ้น git
+backend/          FastAPI — API + Gemini + จับคู่รูป + เขียน Excel + ingest
+frontend/         React → build เป็น frontend/dist
+render.yaml       Render Blueprint · .github/workflows/ingest.yml  GitHub Actions
+docs/             SUGGESTIONS.md · Zone Mapping (รอทีมยืนยัน).xlsx · samples/ (ไฟล์ตัวอย่างเก่า) · poc/
+archive/          ไฟล์ Excel เดิมของทีม (Rider Project Aug-Sep 26 + backup)
+test-images/      รูปชุดทดสอบ (01 กิตติพงศ์, 01 ขวัญชัย)
+%LOCALAPPDATA%\photo-ocr-data\   ฐานข้อมูล (นอก OneDrive กัน corruption)
 ```
 
 ## API key

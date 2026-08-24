@@ -11,8 +11,9 @@ data/
 *.jpg
 *.jpeg
 *.png
-poc/poc_results.json
-01 */
+docs/poc/poc_results.json
+test-images/
+archive/
 
 # python
 __pycache__/
