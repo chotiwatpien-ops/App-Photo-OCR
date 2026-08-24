@@ -181,7 +181,16 @@ def process_trip(trip_id: int, job_id: int) -> str:
         if not img:
             raise RuntimeError("image missing")
         data = extractor.extract_image(img[0], img[1])
-        data["bonus"] = (data.get("bonus") or 0) + (data.get("tip") or 0)  # so the identity check sees the tip
+        # team rule: tip counts as Bonus (col M). The model sometimes reads the additional-income
+        # TOTAL (which already includes the tip) as bonus — re-adding the tip then double-counts
+        # it. Prefer whichever reading makes the identity net = base + bonus + turbo balance.
+        raw_bonus, tip = (data.get("bonus") or 0), (data.get("tip") or 0)
+        net, base, turbo = data.get("net_earnings"), data.get("base_fare"), (data.get("turbo") or 0)
+        data["bonus"] = raw_bonus + tip
+        if tip and net is not None and base is not None \
+                and abs(net - (base + raw_bonus + turbo)) <= 0.01 \
+                and abs(net - (base + raw_bonus + tip + turbo)) > 0.01:
+            data["bonus"] = raw_bonus  # bonus already included the tip
         check = extractor.arithmetic_check(data)
         note = data.get("confidence_note")
         dup = db.find_job_duplicate(job_id, data.get("booking_code"), trip_id)
@@ -215,7 +224,7 @@ def process_trip(trip_id: int, job_id: int) -> str:
             "duration_mins": data.get("duration_mins"),
             "net_earnings": data.get("net_earnings"),
             "base_fare": data.get("base_fare"),
-            "bonus": (data.get("bonus") or 0) + (data.get("tip") or 0),  # tip counts as Bonus (M)
+            "bonus": data.get("bonus") or 0,  # already includes the tip (resolved above)
             "tip": data.get("tip") or 0,
             "intl_fee": abs(data.get("intl_fee") or 0),
             "turbo": data.get("turbo") or 0,
