@@ -248,12 +248,10 @@ def fix_hidden_turbo() -> int:
             net, base = r["net_earnings"], r["base_fare"]
             if net is None or base is None or base <= 0:
                 continue
-            if (r["bonus"] or 0) != 0:
-                continue
             refill = "เติม Turbo" in (r["note"] or "")  # our own inference — replaceable
             if (r["turbo"] or 0) != 0 and not refill:
                 continue
-            gap = round(net - base, 2)
+            gap = round(net - base - (r["bonus"] or 0), 2)
             if not (0 < gap <= round(0.20 * base, 2)):  # same 20%-of-base cap as the pipeline
                 continue
             note = f"{note_txt} | {r['note']}" if r["note"] else note_txt
@@ -328,6 +326,10 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             flagged += st["flagged"]
             touched_weeks.add((d1, d2))
             log(f"  ♻ job #{jid}: จับคู่/อนุมัติย้อนหลัง — อนุมัติ {st['approved']} · รอคน {st['flagged']}")
+
+    # the hidden-turbo backfill now runs EVERY round (no more manual checkbox needed) —
+    # rows that slipped through under older, stricter conditions heal themselves here
+    fix_hidden_turbo()
 
     # team rule 2026-08-25: rows once held for a photo-vs-folder vehicle conflict now log
     # per the photo — convert any old-style flagged rows before the approval sweep below

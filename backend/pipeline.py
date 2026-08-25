@@ -290,13 +290,14 @@ def _fill_hidden_turbo(data):
     net, base = data.get("net_earnings"), data.get("base_fare")
     if net is None or base is None or base <= 0:
         return None
-    if (data.get("bonus") or 0) or (data.get("turbo") or 0):
-        return None
-    gap = round(net - base, 2)
+    if (data.get("turbo") or 0):
+        return None  # a turbo actually read from the photo is never overwritten here
+    bonus = data.get("bonus") or 0  # a read bonus/tip stays — the gap is what remains after it
+    gap = round(net - base - bonus, 2)
     if not (0 < gap <= round(0.20 * base, 2)):
         return None
     data["turbo"] = gap
-    return f"เติม Turbo {gap:g} จากส่วนต่าง net−base (รูปพับหัวข้อรายได้เพิ่มเติม)"
+    return f"เติม Turbo {gap:g} จากส่วนต่าง net−base−bonus (รูปพับหัวข้อรายได้เพิ่มเติม)"
 
 
 _SVC_CONFLICT_RE = re.compile(r"รูปบอก\s+(?P<ai>.+?)\s+แต่ไรเดอร์อยู่กลุ่ม\s+(?P<cat>[^|]+)")
