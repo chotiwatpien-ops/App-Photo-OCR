@@ -329,6 +329,12 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             touched_weeks.add((d1, d2))
             log(f"  ♻ job #{jid}: จับคู่/อนุมัติย้อนหลัง — อนุมัติ {st['approved']} · รอคน {st['flagged']}")
 
+    # team rule 2026-08-25: rows once held for a photo-vs-folder vehicle conflict now log
+    # per the photo — convert any old-style flagged rows before the approval sweep below
+    n_svc = pipeline.repair_service_conflicts()
+    if n_svc:
+        log(f"🔁 บันทึกตามรูปให้ {n_svc} แถวที่เคยติดธงประเภทรถขัดกับโฟลเดอร์")
+
     # rule changes apply retroactively: re-run the (idempotent) auto-approve over every job
     # still in review, so rows that meet the CURRENT criteria stop waiting on a person
     for jid, d1, d2 in db.jobs_dates(db.review_job_ids()):

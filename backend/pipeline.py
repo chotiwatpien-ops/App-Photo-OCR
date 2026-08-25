@@ -270,13 +270,13 @@ def normalize_service(ai_value, category):
     wheel = "Bike" if "bike" in raw else ("Car" if ("car" in raw or "justgrab" in raw) else None)
     cat = CATEGORY_SERVICE.get(category or "")
     if cat:
-        # team decision (2026-08-23): column D means the RIDER'S GROUP, not the trip's product —
-        # always use the folder's category; still flag a car/bike contradiction for review
-        cat_wheel = cat.split()[1]
-        note = None
+        cat_tier, cat_wheel = cat.split()
         if wheel and wheel != cat_wheel:
-            note = f"รูปบอก {ai_value} แต่ไรเดอร์อยู่กลุ่ม {category}"
-        return cat, note
+            # team rule 2026-08-25: photos landing in the wrong vehicle folder happen — the
+            # PHOTO tells the truth, so log per reality with a trace note (no more holding)
+            svc = f"{tier or cat_tier} {wheel}"
+            return svc, f"บันทึกตามรูป: {svc} (โฟลเดอร์อยู่กลุ่ม {category})"
+        return cat, None
     if tier and wheel:
         return f"{tier} {wheel}", None
     return ai_value, None
@@ -297,6 +297,39 @@ def _fill_hidden_turbo(data):
         return None
     data["turbo"] = gap
     return f"เติม Turbo {gap:g} จากส่วนต่าง net−base (รูปพับหัวข้อรายได้เพิ่มเติม)"
+
+
+_SVC_CONFLICT_RE = re.compile(r"รูปบอก\s+(?P<ai>.+?)\s+แต่ไรเดอร์อยู่กลุ่ม\s+(?P<cat>[^|]+)")
+
+
+def repair_service_conflicts() -> int:
+    """Rows held under the OLD wrong-folder rule (note 'รูปบอก X แต่ไรเดอร์อยู่กลุ่ม Y'):
+    re-derive the service from the photo per the new rule and re-judge the check on the
+    stored numbers alone."""
+    from sqlalchemy import select, update
+    fixed = 0
+    with db.engine.begin() as c:
+        t = db.trips.c
+        rows = c.execute(select(db.trips).where(
+            t.status == "done", t.committed == 0,
+            t.note.like("%รูปบอก %แต่ไรเดอร์อยู่กลุ่ม%"))).mappings().all()
+        for r in rows:
+            m = _SVC_CONFLICT_RE.search(r["note"] or "")
+            if not m:
+                continue
+            svc, new_note = normalize_service(m.group("ai").strip(), m.group("cat").strip())
+            check = extractor.arithmetic_check({
+                "net_earnings": r["net_earnings"], "base_fare": r["base_fare"],
+                "bonus": r["bonus"], "turbo": r["turbo"],
+                "passenger_total": r["passenger_total"],
+                "grab_commission": r["grab_commission"],
+                "net_earnings_left_panel": None,
+            })
+            note = _SVC_CONFLICT_RE.sub(lambda _: new_note or f"บันทึกตามรูป: {svc}", r["note"])
+            c.execute(update(db.trips).where(t.id == r["id"]).values(
+                service_type=(svc or "").strip(), check_status=check, note=note))
+            fixed += 1
+    return fixed
 
 
 def process_trip(trip_id: int, job_id: int) -> str:
@@ -341,8 +374,6 @@ def process_trip(trip_id: int, job_id: int) -> str:
             note = f"{pf_note} | {note}" if note else pf_note
         if svc_note:
             note = f"{svc_note} | {note}" if note else svc_note
-            if check == "pass":
-                check = "fail"  # car/bike contradiction — a person must look
         db.update_trip(trip_id, {
             "status": "done",
             "booking_code": data.get("booking_code"),
