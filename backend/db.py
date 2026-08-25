@@ -274,9 +274,15 @@ def auto_approve_job(job_id) -> dict:
         codes = [r["booking_code"] for r in rows if r["booking_code"]]
         seen = set()
         if codes:
-            seen = {r[0] for r in c.execute(select(trips.c.booking_code)
-                                            .where(trips.c.committed == 1,
-                                                   trips.c.booking_code.in_(codes))).all()}
+            # team rule 2026-08-25: a code approved under ANOTHER rider does not block this
+            # one — only a repeat by the SAME rider counts as a duplicate
+            job_driver = c.execute(select(jobs.c.driver_name)
+                                   .where(jobs.c.id == job_id)).scalar()
+            seen = {r[0] for r in c.execute(
+                select(trips.c.booking_code)
+                .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+                .where(trips.c.committed == 1, trips.c.booking_code.in_(codes),
+                       jobs.c.driver_name == job_driver)).all()}
         ok_ids = [r["id"] for r in rows
                   if r["check_status"] == "pass" and not r["duplicate_of"] and r["trip_date"]
                   # team rule 2026-08-25: balanced money is the bar — a missing booking code
