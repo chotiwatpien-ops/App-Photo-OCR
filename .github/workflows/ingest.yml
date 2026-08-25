@@ -22,6 +22,10 @@ on:
         description: "เติม Turbo จากส่วนต่าง (เคสรูปพับหัวข้อ) — DB only"
         type: boolean
         default: false
+      model:
+        description: "Override model THIS run only (blank = default 3.7)"
+        type: string
+        default: ""
 
 concurrency:
   group: ingest
@@ -47,7 +51,7 @@ jobs:
           DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.DRIVE_OAUTH_TOKEN_JSON }}
           DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
           DRIVE_EXPORTS_FOLDER_ID: ${{ secrets.DRIVE_EXPORTS_FOLDER_ID }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.7-flash' }}
+          GEMINI_MODEL: ${{ github.event.inputs.model || vars.GEMINI_MODEL || 'gemini-3.7-flash' }}
           INGEST_PARALLEL: "12"
           DRIVE_PARALLEL: "8"
         run: |
