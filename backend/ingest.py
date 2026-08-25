@@ -306,7 +306,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         with ThreadPoolExecutor(max_workers=INGEST_PARALLEL) as ex:
             res = list(ex.map(lambda x: pipeline.process_trip(x[0], x[1]), stuck))
         errors += res.count("error")
-    redo_jobs = {j for _, j in stuck} | set(db.stale_running_jobs())
+    redo_jobs = {j for _, j in stuck} | set(db.stale_running_jobs()) | set(db.jobs_missing_dates())
     if redo_jobs:
         for jid, d1, d2 in db.jobs_dates(redo_jobs):
             pipeline.pair_fragments(jid)

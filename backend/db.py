@@ -341,6 +341,16 @@ def stuck_pending_trips():
         return [(r[0], r[1]) for r in rows]
 
 
+def jobs_missing_dates():
+    """Jobs holding done rows with no trip_date = a cancelled round died before its
+    spread_dates step; those rows can never auto-approve until the dates are filled."""
+    with engine.begin() as c:
+        return [r[0] for r in c.execute(
+            select(func.distinct(trips.c.job_id))
+            .where(trips.c.status == "done", trips.c.committed == 0,
+                   trips.c.trip_date.is_(None))).all()]
+
+
 def stale_running_jobs():
     """Jobs still marked 'running' at the START of a round = a previous round was cancelled
     before their pair/approve steps (the concurrency lock guarantees no other round is live)."""
