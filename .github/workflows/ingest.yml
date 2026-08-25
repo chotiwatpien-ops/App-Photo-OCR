@@ -27,6 +27,10 @@ on:
         description: "Override model THIS run only (blank = default 3.7)"
         type: string
         default: ""
+      redo_lite:
+        description: "ลบผลอ่านของโมเดล lite แล้วอ่านซ้ำด้วย 3.7 ในรอบนี้"
+        type: boolean
+        default: false
 
 concurrency:
   group: ingest
@@ -60,5 +64,6 @@ jobs:
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
           if [ "${{ github.event.inputs.exports_only }}" = "true" ]; then ARGS="$ARGS --exports-only"; fi
           if [ "${{ github.event.inputs.fix_hidden_turbo }}" = "true" ]; then ARGS="$ARGS --fix-hidden-turbo"; fi
+          if [ "${{ github.event.inputs.redo_lite }}" = "true" ]; then ARGS="$ARGS --redo-model flash-lite"; fi
           if [ -n "${{ github.event.inputs.limit }}" ]; then ARGS="$ARGS --limit ${{ github.event.inputs.limit }}"; fi
           python ingest.py $ARGS

@@ -419,12 +419,18 @@ def main():
     ap.add_argument("--exports-only", action="store_true", help="regenerate Excel + customer images for existing jobs")
     ap.add_argument("--fix-hidden-turbo", action="store_true",
                     help="DB-only maintenance: fill small net-base gaps (collapsed sections) into Turbo")
+    ap.add_argument("--redo-model", metavar="SUBSTR",
+                    help="delete trips read by a model matching SUBSTR, then re-read them this run")
     ap.add_argument("--only", help="comma-separated substrings of rider folder paths to process, e.g. '01 อภิชาติ,01 ปัญญา'")
     a = ap.parse_args()
 
     db.init_db()
     if a.fix_hidden_turbo:
         sys.exit(fix_hidden_turbo())
+    if a.redo_model:
+        st = db.delete_model_trips(a.redo_model)
+        log(f"🔁 redo '{a.redo_model}': ลบ {st['trips']} แถว · {st['files']} ไฟล์บันทึก · "
+            f"{st['jobs']} job ว่าง — จะอ่านซ้ำด้วยโมเดลปัจจุบันในรอบนี้เลย")
     if a.source.startswith("local:"):
         root = a.source[6:]
         drive = LocalDrive(root)

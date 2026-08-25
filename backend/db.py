@@ -301,6 +301,28 @@ def finish_ingest_run(run_id, **stats):
                   .values(finished_at=_now(), **stats))
 
 
+def delete_model_trips(model_substring: str) -> dict:
+    """User-ordered redo: drop every trip read by the given model (plus its ingest records,
+    and any job left empty) so the next discovery re-reads those files with the current model."""
+    with engine.begin() as c:
+        ids = [r[0] for r in c.execute(select(trips.c.id)
+                                       .where(trips.c.model.ilike(f"%{model_substring}%")))]
+        if not ids:
+            return {"trips": 0, "files": 0, "jobs": 0}
+        jids = {r[0] for r in c.execute(select(trips.c.job_id)
+                                        .where(trips.c.id.in_(ids))).all()}
+        nf = c.execute(delete(ingested_files).where(ingested_files.c.trip_id.in_(ids))).rowcount
+        nt = c.execute(delete(trips).where(trips.c.id.in_(ids))).rowcount
+        nj = 0
+        for j in jids:
+            left = c.execute(select(func.count()).select_from(trips)
+                             .where(trips.c.job_id == j)).scalar()
+            if left == 0:
+                c.execute(delete(jobs).where(jobs.c.id == j))
+                nj += 1
+        return {"trips": nt, "files": nf or 0, "jobs": nj}
+
+
 def normalize_booking_codes() -> int:
     """Strip whitespace the model inserted inside stored booking codes (it breaks dedup)."""
     with engine.begin() as c:
