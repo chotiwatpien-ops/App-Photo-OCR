@@ -341,6 +341,14 @@ def stuck_pending_trips():
         return [(r[0], r[1]) for r in rows]
 
 
+def stale_running_jobs():
+    """Jobs still marked 'running' at the START of a round = a previous round was cancelled
+    before their pair/approve steps (the concurrency lock guarantees no other round is live)."""
+    with engine.begin() as c:
+        return [r[0] for r in c.execute(select(jobs.c.id)
+                                        .where(jobs.c.status == "running")).all()]
+
+
 def jobs_dates(job_ids):
     with engine.begin() as c:
         rows = c.execute(select(jobs.c.id, jobs.c.date_from, jobs.c.date_to)

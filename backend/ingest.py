@@ -297,22 +297,25 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     if n_norm:
         log(f"🧹 ตัดช่องว่างใน booking code เดิม {n_norm} แถว (กันระบบจับซ้ำพลาด)")
 
-    # a cancelled run leaves rows in 'pending' whose files are already marked ingested —
-    # reprocess them from the stored blobs (no re-download, no double billing)
+    # a cancelled run leaves damage in two shapes: rows stuck in 'pending' (reprocess them
+    # from the stored blobs — no re-download, no double billing), and jobs stuck in
+    # 'running' whose pair/spread/approve steps never happened. Fix both before new work.
     stuck = db.stuck_pending_trips()
     if stuck:
         log(f"♻ เก็บตก {len(stuck)} แถวที่ค้างจากรอบก่อนซึ่งถูกตัดกลางทาง")
         with ThreadPoolExecutor(max_workers=INGEST_PARALLEL) as ex:
             res = list(ex.map(lambda x: pipeline.process_trip(x[0], x[1]), stuck))
         errors += res.count("error")
-        for jid, d1, d2 in db.jobs_dates({j for _, j in stuck}):
+    redo_jobs = {j for _, j in stuck} | set(db.stale_running_jobs())
+    if redo_jobs:
+        for jid, d1, d2 in db.jobs_dates(redo_jobs):
             pipeline.pair_fragments(jid)
             pipeline.spread_dates(jid, d1, d2, only_missing=True)
             st = db.auto_approve_job(jid)
             approved += st["approved"]
             flagged += st["flagged"]
             touched_weeks.add((d1, d2))
-            log(f"  ♻ job #{jid}: อนุมัติอัตโนมัติ {st['approved']} · รอคน {st['flagged']}")
+            log(f"  ♻ job #{jid}: จับคู่/อนุมัติย้อนหลัง — อนุมัติ {st['approved']} · รอคน {st['flagged']}")
     for (rider, d_from, d_to), group in groups.items():
         meta = by_key[(rider, d_from, d_to)]
         job_id = db.find_job(rider, d_from, d_to)
