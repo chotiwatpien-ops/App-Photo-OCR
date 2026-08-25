@@ -90,8 +90,17 @@ def pair_fragments(job_id) -> int:
                 if _check({**top, **alt}) == "pass":
                     fields = alt
                     fields["check_status"] = "pass"
+            tnote = None
+            if fields["check_status"] != "pass":
+                m2 = {**top, **fields}
+                tnote = _fill_hidden_turbo(m2)
+                if tnote:
+                    fields["turbo"] = m2["turbo"]
+                    fields["check_status"] = _check(m2)
             fields["kind"] = "full"
             note = f"รวม 2 รูป: {r['file_name']} + {b['file_name']}"
+            if tnote:
+                note = f"{note} | {tnote}"
             prior = top.get("note") or ""
             # a bottom half that happened to show the booking code got flagged as a duplicate of
             # its own top half — once they are merged that is not a duplicate
@@ -269,6 +278,23 @@ def normalize_service(ai_value, category):
     return ai_value, None
 
 
+def _fill_hidden_turbo(data):
+    """Team rule (2026-08-24): a small positive net−base gap with bonus and turbo both read
+    as 0 is the surge hidden inside a folded section (~5% of base in practice) — fill it into
+    turbo so the identity balances. Gaps over 20% of base are NOT filled; those stay failed
+    for a person to look at. Returns an audit note when it filled something."""
+    net, base = data.get("net_earnings"), data.get("base_fare")
+    if net is None or base is None or base <= 0:
+        return None
+    if (data.get("bonus") or 0) or (data.get("turbo") or 0):
+        return None
+    gap = round(net - base, 2)
+    if not (0 < gap <= round(0.20 * base, 2)):
+        return None
+    data["turbo"] = gap
+    return f"เติม Turbo {gap:g} จากส่วนต่าง net−base (รูปพับหัวข้อรายได้เพิ่มเติม)"
+
+
 def process_trip(trip_id: int, job_id: int) -> str:
     """Extract one stored image and persist the result. Returns 'done' | 'error'."""
     try:
@@ -286,8 +312,13 @@ def process_trip(trip_id: int, job_id: int) -> str:
                 and abs(net - (base + raw_bonus + turbo)) <= 0.01 \
                 and abs(net - (base + raw_bonus + tip + turbo)) > 0.01:
             data["bonus"] = raw_bonus  # bonus already included the tip
+        turbo_note = None
+        if extractor.arithmetic_check(data) != "pass":
+            turbo_note = _fill_hidden_turbo(data)
         check = extractor.arithmetic_check(data)
         note = data.get("confidence_note")
+        if turbo_note:
+            note = f"{turbo_note} | {note}" if note else turbo_note
         dup = db.find_job_duplicate(job_id, data.get("booking_code"), trip_id)
         if dup:
             dup_msg = f"รูปนี้ซ้ำกับ {dup['file_name']} (booking code เดียวกัน)"

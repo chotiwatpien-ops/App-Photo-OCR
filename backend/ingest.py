@@ -245,7 +245,7 @@ def fix_hidden_turbo() -> int:
             if (r["bonus"] or 0) != 0 or (r["turbo"] or 0) != 0:
                 continue
             gap = round(net - base, 2)
-            if not (0 < gap <= 20):
+            if not (0 < gap <= round(0.20 * base, 2)):  # same 20%-of-base cap as the pipeline
                 continue
             note = f"{note_txt} | {r['note']}" if r["note"] else note_txt
             c.execute(update(db.trips).where(t.id == r["id"])
