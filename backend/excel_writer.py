@@ -100,12 +100,29 @@ def _style_header(ws, headers, widths, medium=True):
     ws.row_dimensions[1].height = 14.4
 
 
+# team rule 2026-08-25: when the photos carry no passenger figures at all, estimate P from
+# the driver's base fare using the median paid/base ratio measured on 2,420 real rows of
+# this project (Saver Bike 1.04 / Standard Bike 1.21 / Standard Car 1.50; overall 1.23)
+PAID_RATIO = {"Saver Bike": 1.04, "Standard Bike": 1.21, "Standard Car": 1.50}
+PAID_RATIO_DEFAULT = 1.23
+
+
 def passenger_fare(t):
-    """Column P per the team's convention; falls back to the other line (derived if needed)."""
+    """Column P per the team's convention; falls back to the other line (derived if needed),
+    then to a per-service-type estimate off the driver's base fare."""
     paid, total = t.get("passenger_paid"), t.get("passenger_total")
     if paid is None and total is not None:
         paid = total - (t.get("app_fee") or 0) - (t.get("other_adj") or 0)
-    return paid if config.PASSENGER_FARE_SOURCE == "paid" else (total if total is not None else paid)
+    val = paid if config.PASSENGER_FARE_SOURCE == "paid" else (total if total is not None else paid)
+    if val is None and t.get("base_fare"):
+        val = round(t["base_fare"] * PAID_RATIO.get(t.get("service_type") or "", PAID_RATIO_DEFAULT))
+    return val
+
+
+def passenger_fare_estimated(t) -> bool:
+    """True when passenger_fare() had to estimate (no passenger figures in the photos)."""
+    return (t.get("passenger_paid") is None and t.get("passenger_total") is None
+            and bool(t.get("base_fare")))
 
 
 def _write_main_row(ws, row, driver_name, t):
@@ -140,6 +157,11 @@ def _write_main_row(ws, row, driver_name, t):
             cell.number_format = "d-mmm-yy"
         elif col == 3:
             cell.alignment = Alignment(horizontal="center")
+    if pf is not None and passenger_fare_estimated(t):
+        # estimated P (and its Q) render italic grey so readers can tell them from read values
+        est_font = Font(name=_BODY_FONT.name, size=_BODY_FONT.size, italic=True, color="7F7F7F")
+        ws.cell(row=row, column=16).font = est_font
+        ws.cell(row=row, column=17).font = est_font
 
 
 def _write_analysis_row(ws, row, driver_name, t):

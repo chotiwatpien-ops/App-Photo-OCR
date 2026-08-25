@@ -93,7 +93,9 @@ export default function DataView({ onOpenJob }) {
                 <td className="p-2 text-right tabular-nums text-slate-500">{t.bonus ?? 0}</td>
                 <td className="p-2 text-right tabular-nums text-slate-500">{t.turbo ?? 0}</td>
                 <td className="p-2 text-right tabular-nums text-slate-500">{t.tolls ?? 0}</td>
-                <td className="p-2 text-right tabular-nums">{t.passenger_fare ?? '—'}</td>
+                <td className="p-2 text-right tabular-nums" title={t.passenger_fare_estimated ? 'ประมาณจากราคาคนขับ × ตัวคูณตามประเภท (รูปไม่มีข้อมูลผู้โดยสาร)' : undefined}>
+                  {t.passenger_fare != null ? (t.passenger_fare_estimated ? `≈${t.passenger_fare}` : t.passenger_fare) : '—'}
+                </td>
                 <td className="p-2 text-right tabular-nums text-slate-500">{t.service_fee ?? '—'}</td>
                 <td className="p-2 text-xs text-slate-500 whitespace-nowrap" title={t.file_name}>
                   {t.customer_image || t.file_name || '—'}

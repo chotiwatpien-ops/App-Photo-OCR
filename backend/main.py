@@ -378,6 +378,7 @@ def trips_view(date_from: str = None, date_to: str = None, driver: str = None,
         if r.get("base_fare") is not None:
             net = round((r.get("base_fare") or 0) + (r.get("bonus") or 0) + (r.get("turbo") or 0), 2)
         r["passenger_fare"] = pf
+        r["passenger_fare_estimated"] = excel_writer.passenger_fare_estimated(r)
         r["sheet_net"] = net
         r["service_fee"] = round(pf - net, 2) if (pf is not None and net is not None) else None
     return {"rows": rows, "total": total, "page": page, "size": size}
