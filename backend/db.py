@@ -259,7 +259,7 @@ def auto_approve_job(job_id) -> dict:
     leave the rest for a person. Returns {approved, flagged}."""
     with engine.begin() as c:
         rows = c.execute(select(trips.c.id, trips.c.check_status, trips.c.duplicate_of,
-                                trips.c.booking_code, trips.c.trip_date)
+                                trips.c.booking_code, trips.c.trip_date, trips.c.kind)
                          .where(trips.c.job_id == job_id, trips.c.status == "done",
                                 trips.c.committed == 0)).mappings().all()
         codes = [r["booking_code"] for r in rows if r["booking_code"]]
@@ -270,9 +270,12 @@ def auto_approve_job(job_id) -> dict:
                                                    trips.c.booking_code.in_(codes))).all()}
         ok_ids = [r["id"] for r in rows
                   if r["check_status"] == "pass" and not r["duplicate_of"] and r["trip_date"]
-                  # no booking code = usually a stray lower half that failed to pair —
-                  # a person must look before it earns a row in the workbook
-                  and r["booking_code"] and r["booking_code"] not in seen]
+                  # team rule 2026-08-25: balanced money is the bar — a missing booking code
+                  # (some Grab screens don't show one) or km does NOT hold a row back.
+                  # The one guard kept: a code-less UNPAIRED bottom half is usually a stray
+                  # from a failed pair — a person must look at those.
+                  and not (r["kind"] == "bottom" and not r["booking_code"])
+                  and (not r["booking_code"] or r["booking_code"] not in seen)]
         if ok_ids:
             c.execute(update(trips).where(trips.c.id.in_(ok_ids))
                       .values(committed=1, auto_approved=1, image_blob=None))
@@ -349,6 +352,12 @@ def jobs_missing_dates():
             select(func.distinct(trips.c.job_id))
             .where(trips.c.status == "done", trips.c.committed == 0,
                    trips.c.trip_date.is_(None))).all()]
+
+
+def review_job_ids():
+    with engine.begin() as c:
+        return [r[0] for r in c.execute(select(jobs.c.id)
+                                        .where(jobs.c.status == "review")).all()]
 
 
 def stale_running_jobs():

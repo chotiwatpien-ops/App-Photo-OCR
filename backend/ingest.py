@@ -319,6 +319,15 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             flagged += st["flagged"]
             touched_weeks.add((d1, d2))
             log(f"  ♻ job #{jid}: จับคู่/อนุมัติย้อนหลัง — อนุมัติ {st['approved']} · รอคน {st['flagged']}")
+
+    # rule changes apply retroactively: re-run the (idempotent) auto-approve over every job
+    # still in review, so rows that meet the CURRENT criteria stop waiting on a person
+    for jid, d1, d2 in db.jobs_dates(db.review_job_ids()):
+        st = db.auto_approve_job(jid)
+        if st["approved"]:
+            approved += st["approved"]
+            touched_weeks.add((d1, d2))
+            log(f"  ✚ job #{jid}: เกณฑ์ล่าสุดอนุมัติเพิ่ม {st['approved']} แถว")
     for (rider, d_from, d_to), group in groups.items():
         meta = by_key[(rider, d_from, d_to)]
         job_id = db.find_job(rider, d_from, d_to)
