@@ -93,6 +93,10 @@ def pair_fragments(job_id) -> int:
             tnote = None
             if fields["check_status"] != "pass":
                 m2 = {**top, **fields}
+                # a turbo we inferred BEFORE the merge was based on the guessed base — once the
+                # bottom's real base lands, that inference is stale and may be redone
+                if "เติม Turbo" in (top.get("note") or ""):
+                    m2["turbo"] = 0
                 tnote = _fill_hidden_turbo(m2)
                 if tnote:
                     fields["turbo"] = m2["turbo"]

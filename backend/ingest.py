@@ -242,7 +242,10 @@ def fix_hidden_turbo() -> int:
             net, base = r["net_earnings"], r["base_fare"]
             if net is None or base is None or base <= 0:
                 continue
-            if (r["bonus"] or 0) != 0 or (r["turbo"] or 0) != 0:
+            if (r["bonus"] or 0) != 0:
+                continue
+            refill = "เติม Turbo" in (r["note"] or "")  # our own inference — replaceable
+            if (r["turbo"] or 0) != 0 and not refill:
                 continue
             gap = round(net - base, 2)
             if not (0 < gap <= round(0.20 * base, 2)):  # same 20%-of-base cap as the pipeline
