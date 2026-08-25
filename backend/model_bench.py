@@ -87,7 +87,10 @@ def main():
             if kind == "เงิน":
                 match = new is not None and abs(float(new) - float(ref)) <= MONEY_TOL
             else:
-                match = (str(new or "").strip() == str(ref).strip())
+                # whitespace is model noise on both sides — compare compacted
+                a_ = "".join(str(new or "").split())
+                b_ = "".join(str(ref).split())
+                match = a_ == b_
             if match:
                 ok[k] += 1
             else:

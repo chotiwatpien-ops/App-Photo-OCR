@@ -293,6 +293,10 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     jobs_created = approved = flagged = errors = 0
     touched_weeks = set()
 
+    n_norm = db.normalize_booking_codes()
+    if n_norm:
+        log(f"🧹 ตัดช่องว่างใน booking code เดิม {n_norm} แถว (กันระบบจับซ้ำพลาด)")
+
     # a cancelled run leaves rows in 'pending' whose files are already marked ingested —
     # reprocess them from the stored blobs (no re-download, no double billing)
     stuck = db.stuck_pending_trips()

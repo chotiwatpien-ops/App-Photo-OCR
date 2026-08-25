@@ -302,6 +302,10 @@ def process_trip(trip_id: int, job_id: int) -> str:
         if not img:
             raise RuntimeError("image missing")
         data = extractor.extract_image(img[0], img[1])
+        # Grab codes never contain whitespace — the model sometimes inserts a space at the
+        # on-screen line wrap, which would defeat the duplicate check
+        if data.get("booking_code"):
+            data["booking_code"] = re.sub(r"\s+", "", data["booking_code"]) or None
         # team rule: tip counts as Bonus (col M). The model sometimes reads the additional-income
         # TOTAL (which already includes the tip) as bonus — re-adding the tip then double-counts
         # it. Prefer whichever reading makes the identity net = base + bonus + turbo balance.

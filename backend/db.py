@@ -301,6 +301,14 @@ def finish_ingest_run(run_id, **stats):
                   .values(finished_at=_now(), **stats))
 
 
+def normalize_booking_codes() -> int:
+    """Strip whitespace the model inserted inside stored booking codes (it breaks dedup)."""
+    with engine.begin() as c:
+        r = c.execute(update(trips).where(trips.c.booking_code.like("% %"))
+                      .values(booking_code=func.replace(trips.c.booking_code, " ", "")))
+        return r.rowcount or 0
+
+
 def stuck_pending_trips():
     """(trip_id, job_id) rows left in 'pending' by a cancelled run — their files are already
     recorded as ingested so nothing would ever retry them without this."""
