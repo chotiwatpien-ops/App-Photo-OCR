@@ -21,6 +21,7 @@ from sqlalchemy import func, select
 PRICE = {
     "gemini-3.7-flash": (0.75, 3.75),
     "gemini-3.5-flash-lite": (0.30, 2.50),
+    "gemini-3.1-flash-lite": (0.125, 0.75),
     "gemini-2.5-flash": (0.30, 2.50),
     "gemini-2.5-flash-lite": (0.10, 0.40),
 }
