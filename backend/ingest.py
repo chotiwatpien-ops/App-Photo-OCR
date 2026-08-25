@@ -224,6 +224,38 @@ def export_only(drive, exports_id):
     return errors
 
 
+def fix_hidden_turbo() -> int:
+    """Maintenance pass (no Drive, no Gemini): waiting rows that fail the check with a small
+    positive net−base gap and bonus/turbo both 0 are the 'collapsed-accordion' family — the
+    ~5% surge hidden in a folded section. Fill the gap into Turbo with an audit note; the row
+    still waits for a person to approve."""
+    from sqlalchemy import select, update
+    note_txt = "เติม Turbo จากส่วนต่าง net−base (รูปพับหัวข้อรายได้เพิ่มเติม — เลขไม่โชว์ในรูป)"
+    fixed = 0
+    with db.engine.begin() as c:
+        t = db.trips.c
+        rows = c.execute(select(t.id, t.file_name, t.net_earnings, t.base_fare, t.bonus,
+                                t.turbo, t.note)
+                         .where(t.status == "done", t.committed == 0,
+                                t.check_status == "fail")).mappings().all()
+        for r in rows:
+            net, base = r["net_earnings"], r["base_fare"]
+            if net is None or base is None or base <= 0:
+                continue
+            if (r["bonus"] or 0) != 0 or (r["turbo"] or 0) != 0:
+                continue
+            gap = round(net - base, 2)
+            if not (0 < gap <= 20):
+                continue
+            note = f"{note_txt} | {r['note']}" if r["note"] else note_txt
+            c.execute(update(db.trips).where(t.id == r["id"])
+                      .values(turbo=gap, check_status="pass", note=note))
+            log(f"  ✓ #{r['id']} {r['file_name']}: turbo 0→{gap}")
+            fixed += 1
+    log(f"เติม Turbo จากส่วนต่างให้ {fixed} แถว — รอคนกดอนุมัติในคิวตรวจ")
+    return 0
+
+
 def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     run_id = None if dry_run else db.start_ingest_run()
     t0 = time.time()
@@ -364,10 +396,14 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--exports-only", action="store_true", help="regenerate Excel + customer images for existing jobs")
+    ap.add_argument("--fix-hidden-turbo", action="store_true",
+                    help="DB-only maintenance: fill small net-base gaps (collapsed sections) into Turbo")
     ap.add_argument("--only", help="comma-separated substrings of rider folder paths to process, e.g. '01 อภิชาติ,01 ปัญญา'")
     a = ap.parse_args()
 
     db.init_db()
+    if a.fix_hidden_turbo:
+        sys.exit(fix_hidden_turbo())
     if a.source.startswith("local:"):
         root = a.source[6:]
         drive = LocalDrive(root)

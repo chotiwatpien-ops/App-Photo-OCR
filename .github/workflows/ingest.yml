@@ -18,6 +18,10 @@ on:
         description: "Regenerate Excel + customer images only (no Gemini cost)"
         type: boolean
         default: false
+      fix_hidden_turbo:
+        description: "เติม Turbo จากส่วนต่าง (เคสรูปพับหัวข้อ) — DB only"
+        type: boolean
+        default: false
 
 concurrency:
   group: ingest
@@ -50,5 +54,6 @@ jobs:
           ARGS=""
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
           if [ "${{ github.event.inputs.exports_only }}" = "true" ]; then ARGS="$ARGS --exports-only"; fi
+          if [ "${{ github.event.inputs.fix_hidden_turbo }}" = "true" ]; then ARGS="$ARGS --fix-hidden-turbo"; fi
           if [ -n "${{ github.event.inputs.limit }}" ]; then ARGS="$ARGS --limit ${{ github.event.inputs.limit }}"; fi
           python ingest.py $ARGS
