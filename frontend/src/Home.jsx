@@ -34,7 +34,7 @@ function RunStatus({ run, canTrigger, onTriggered }) {
         {msg && <p className="text-xs text-slate-600 mt-1">{msg}</p>}
       </div>
       <div className="text-right text-xs text-slate-500">
-        <p>ตั้งเวลา: ทุกวัน 07:00 / 11:30 / 18:00 / 22:00</p>
+        <p>ตั้งเวลา: ทุกวัน 05:00 / 11:30 / 18:00</p>
         <button onClick={trigger} disabled={busy || running || !canTrigger}
           title={canTrigger ? 'สั่ง GitHub Actions รันทันที' : 'ยังไม่ได้ตั้งค่า GITHUB_TOKEN — รันได้จากแท็บ Actions บน GitHub'}
           className="mt-1 bg-slate-900 hover:bg-slate-700 disabled:bg-slate-300 text-white rounded-lg px-4 py-2 text-sm font-medium">

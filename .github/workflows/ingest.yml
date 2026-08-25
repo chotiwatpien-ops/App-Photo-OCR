@@ -2,8 +2,9 @@ name: Weekly ingest (Drive → Gemini → DB → Excel)
 
 on:
   schedule:
-    - cron: "0 0,11,15 * * *"       # 07:00 18:00 22:00 Asia/Bangkok, daily (UTC+7)
+    - cron: "0 22 * * *"            # 05:00 Asia/Bangkok, daily (UTC+7)
     - cron: "30 4 * * *"            # 11:30 Asia/Bangkok
+    - cron: "0 11 * * *"            # 18:00 Asia/Bangkok
   workflow_dispatch:
     inputs:
       dry_run:
