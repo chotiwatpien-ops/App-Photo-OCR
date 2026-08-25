@@ -26,10 +26,28 @@ function RunStatus({ run, canTrigger, onTriggered }) {
         {run ? (
           <p className="text-sm text-slate-600 mt-1">
             {running ? <span className="text-amber-600 font-medium">● กำลังรัน… </span> : 'รอบล่าสุด '}
-            {(run.started_at || '').replace('T', ' ')} · รูปใหม่ {run.files_new} · อนุมัติอัตโนมัติ {run.auto_approved} · รอคน {run.flagged}
+            {(run.started_at || '').replace('T', ' ')} · รูปใหม่ {run.files_new}{running && run.files_total ? ` / ${run.files_total}` : ''} · อนุมัติอัตโนมัติ {run.auto_approved} · รอคน {run.flagged}
             {run.errors ? <span className="text-red-600"> · error {run.errors}</span> : ''}
           </p>
         ) : <p className="text-sm text-slate-400 mt-1">ยังไม่เคยรัน</p>}
+        {running && run?.files_total > 0 && (() => {
+          const done = run.files_new || 0
+          const pct = Math.min(100, Math.round(done * 100 / run.files_total))
+          let eta = ''
+          const t0 = Date.parse((run.started_at || '').replace(' ', 'T'))
+          if (done > 0 && t0) {
+            const mins = Math.round(((Date.now() - t0) / done) * (run.files_total - done) / 60000)
+            if (mins >= 0 && mins < 600) eta = mins >= 60 ? ` · เหลือ ~${Math.floor(mins / 60)} ชม. ${mins % 60} นาที` : ` · เหลือ ~${mins} นาที`
+          }
+          return (
+            <div className="mt-2 max-w-md">
+              <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                <div className="h-full bg-amber-500 rounded-full transition-all" style={{ width: pct + '%' }} />
+              </div>
+              <p className="text-xs text-slate-500 mt-1">อ่านแล้ว {done.toLocaleString()} / {run.files_total.toLocaleString()} รูป ({pct}%){eta}</p>
+            </div>
+          )
+        })()}
         {run?.notes && <p className="text-xs text-amber-700 mt-1 whitespace-pre-line">⚠ {run.notes}</p>}
         {msg && <p className="text-xs text-slate-600 mt-1">{msg}</p>}
       </div>

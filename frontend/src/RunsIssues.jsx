@@ -28,18 +28,21 @@ export function RunsOverview({ runs }) {
         <tbody>
           {shown.map((r) => {
             const running = !r.finished_at
-            const pass = !running && !r.errors
+            const cancelled = (r.notes || '').includes('ไม่จบตามปกติ')
+            const pass = !running && !cancelled && !r.errors
             return (
               <tr key={r.id} className="border-b border-slate-100">
                 <td className="py-1.5 pr-3 whitespace-nowrap">{ts(r.started_at)}</td>
                 <td className="py-1.5 pr-3">
                   {running
                     ? <span className="text-xs rounded-full px-2 py-0.5 bg-amber-100 text-amber-700">● กำลังรัน</span>
-                    : pass
-                      ? <span className="text-xs rounded-full px-2 py-0.5 bg-emerald-100 text-emerald-700">✓ ผ่าน</span>
-                      : <span className="text-xs rounded-full px-2 py-0.5 bg-red-100 text-red-700">✗ มีปัญหา</span>}
+                    : cancelled
+                      ? <span className="text-xs rounded-full px-2 py-0.5 bg-slate-200 text-slate-600" title="รอบนี้ถูกยกเลิก/ถูกตัดกลางทาง — งานที่ค้างถูกรอบถัดไปเก็บให้แล้ว">⊘ ถูกตัดกลางทาง</span>
+                      : pass
+                        ? <span className="text-xs rounded-full px-2 py-0.5 bg-emerald-100 text-emerald-700">✓ ผ่าน</span>
+                        : <span className="text-xs rounded-full px-2 py-0.5 bg-red-100 text-red-700">✗ มีปัญหา</span>}
                 </td>
-                <td className="py-1.5 pr-3 text-right tabular-nums">{r.files_new}</td>
+                <td className="py-1.5 pr-3 text-right tabular-nums">{r.files_new}{running && r.files_total ? <span className="text-slate-400">/{r.files_total}</span> : ''}</td>
                 <td className="py-1.5 pr-3 text-right tabular-nums text-emerald-700">{r.auto_approved}</td>
                 <td className={`py-1.5 pr-3 text-right tabular-nums ${r.flagged ? 'text-amber-600' : 'text-slate-400'}`}>{r.flagged}</td>
                 <td className={`py-1.5 text-right tabular-nums ${r.errors ? 'text-red-600 font-medium' : 'text-slate-400'}`}>{r.errors || '—'}</td>

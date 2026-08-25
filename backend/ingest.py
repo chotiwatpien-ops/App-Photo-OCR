@@ -282,6 +282,8 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         log("⚠ " + s)
     if limit:
         new = new[:limit]
+    if run_id is not None:
+        db.update_ingest_run_progress(run_id, files_total=len(new))
     if dry_run:
         for i in new[:50]:
             log(f"  would process [{i.get('category') or '-'}] {i['rider']} {i['date_from']}..{i['date_to']} / {i['file']['name']}")
@@ -300,6 +302,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     display_names = {}
 
     jobs_created = approved = flagged = errors = 0
+    processed_images = 0
     touched_weeks = set()
 
     n_norm = db.normalize_booking_codes()
@@ -415,6 +418,9 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         approved += stats["approved"]
         flagged += stats["flagged"]
         touched_weeks.add((d_from, d_to))
+        processed_images += len(group)
+        db.update_ingest_run_progress(run_id, files_new=processed_images,
+                                      auto_approved=approved, flagged=flagged)
         log(f"  ✓ อนุมัติอัตโนมัติ {stats['approved']} · รอคน {stats['flagged']} · error {results.count('error')}")
 
     # ONE continuous workbook for the whole project (all weeks appended). Regenerated EVERY

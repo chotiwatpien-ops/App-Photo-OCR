@@ -4,7 +4,7 @@
 Images are kept as blobs only while a job is under review and cleared on commit,
 so the database stays small enough for a free Postgres tier.
 """
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import (Column, Float, Integer, LargeBinary, MetaData, String, Table, Text,
                         case, create_engine, delete, func, insert, select, text, update)
@@ -120,6 +120,7 @@ ingest_runs = Table(
     Column("flagged", Integer, default=0),
     Column("errors", Integer, default=0),
     Column("notes", Text),
+    Column("files_total", Integer),     # target for this round — lets the UI show live progress
 )
 
 # problems seen by ingest runs — one row per distinct problem, auto-resolved (but kept as
@@ -152,8 +153,13 @@ _SYSTEM_FIELDS = ["status", "error", "booking_code", "check_status", "duplicate_
 TRIP_COLS = [c for c in trips.c if c.name != "image_blob"]
 
 
+_TZ_BKK = timezone(timedelta(hours=7))
+
+
 def _now() -> str:
-    return datetime.now().isoformat(timespec="seconds")
+    """Thai wall-clock, always — runs happen on UTC runners AND local machines, and mixed
+    zones scrambled the run-history ordering."""
+    return datetime.now(_TZ_BKK).replace(tzinfo=None).isoformat(timespec="seconds")
 
 
 def init_db():
@@ -162,13 +168,16 @@ def init_db():
         # older local DBs: add columns that appeared after they were created (safe no-op otherwise)
         with engine.begin() as c:
             c.execute(text("PRAGMA journal_mode=WAL"))
-            for tbl in (trips, jobs):
+            for tbl in (trips, jobs, ingest_runs):
                 existing = {r[1] for r in c.execute(text(f"PRAGMA table_info({tbl.name})"))}
                 for col in tbl.c:
                     if col.name not in existing:
                         typ = {"INTEGER": "INTEGER", "REAL": "REAL", "BLOB": "BLOB", "FLOAT": "REAL"}.get(
                             str(col.type).split("(")[0].upper(), "TEXT")
                         c.execute(text(f"ALTER TABLE {tbl.name} ADD COLUMN {col.name} {typ}"))
+    else:
+        with engine.begin() as c:
+            c.execute(text("ALTER TABLE ingest_runs ADD COLUMN IF NOT EXISTS files_total INTEGER"))
 
 
 # ---------- jobs ----------
@@ -296,6 +305,18 @@ def start_ingest_run() -> int:
                   .values(finished_at=_now(), errors=ingest_runs.c.errors + 1,
                           notes="รอบนี้ไม่จบตามปกติ (ระบบล่มกลางทาง) — ดู log ใน GitHub Actions"))
         return c.execute(insert(ingest_runs).values(started_at=_now())).inserted_primary_key[0]
+
+
+def update_ingest_run_progress(run_id, files_new=None, auto_approved=None, flagged=None,
+                               files_total=None):
+    """Live progress during a round (updated after every rider) — the UI polls this, and a
+    cancelled round keeps its real partial numbers instead of zeros."""
+    vals = {k: v for k, v in (("files_new", files_new), ("auto_approved", auto_approved),
+                              ("flagged", flagged), ("files_total", files_total)) if v is not None}
+    if not vals or run_id is None:
+        return
+    with engine.begin() as c:
+        c.execute(update(ingest_runs).where(ingest_runs.c.id == run_id).values(**vals))
 
 
 def finish_ingest_run(run_id, **stats):
