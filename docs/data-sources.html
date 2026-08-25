@@ -125,8 +125,8 @@ footer{margin-top:52px;border-top:1px solid var(--line);padding-top:14px;color:v
 
 <div class="col"><div class="col-head"><span class="chip">P</span><b>Passenger Fare</b><span class="th">ค่าโดยสารผู้โดยสาร</span></div>
 <dl><dt>หลัก</dt><dd>บรรทัด "<b>ยอดที่ผู้โดยสารชำระ</b>" (มติทีม — ยืนยันจากการเทียบข้อมูลจริง 21/21 แถว)</dd>
-<dt>สำรอง</dt><dd>ไม่มีบรรทัดนั้น → คำนวณ = รวมค่าโดยสารผู้โดยสาร − ค่าแอป − รายการปรับ</dd>
-<dt>เว้นว่าง</dt><dd>ไรเดอร์แคปมาแบบหัวข้อผู้โดยสารพับ/ไม่ถึงท่อนนั้น → เลขไม่อยู่ในรูป ระบบเว้นว่างตามจริง (เคส 6 ไรเดอร์ประจำ)</dd></dl></div>
+<dt>สำรอง 1</dt><dd>ไม่มีบรรทัดนั้น → คำนวณ = รวมค่าโดยสารผู้โดยสาร − ค่าแอป − รายการปรับ</dd>
+<dt>สำรอง 2</dt><dd>รูปไม่มีข้อมูลผู้โดยสารเลย → <b>ประมาณ = ราคาคนขับ × ตัวคูณตามประเภท</b> (มติทีม 25 ส.ค.: Saver Bike ×1.04 · Standard Bike ×1.21 · Standard Car ×1.50 — ค่ากลางจากงานจริง 2,420 ใบ) — ใน Excel แสดง<i>ตัวเอียงสีเทา</i> บนเว็บมี ≈ นำหน้า และข้อมูลดิบในชีท Analysis ยังว่างให้ตามรอยได้</dd></dl></div>
 
 <div class="col"><div class="col-head"><span class="chip">Q</span><b>Grab Service Fee</b><span class="th">ค่าบริการแกร็บ</span></div>
 <dl><dt>ใน Excel</dt><dd>เป็นสูตร <code>=P−J</code> ตามเทมเพลตทีม (มีค่าเมื่อ P มี)</dd>
