@@ -59,7 +59,7 @@ SCHEMA = types.Schema(
         ),
         "booking_code": types.Schema(
             type=types.Type.STRING, nullable=True,
-            description="รหัสการจอง booking code like 'A-9LO9AMUGXEO', printed near the top of the left screen. Null if not visible.",
+            description="รหัสการจอง booking code, ~15-16 chars like 'A-9L4WFXMGXXXFAV', usually ending 'AV'. On screen it often WRAPS onto a second line — read BOTH lines and join them with no space; never stop at the end of the first line. Null if not visible.",
         ),
         "pickup_district": types.Schema(
             type=types.Type.STRING, nullable=True,
@@ -216,6 +216,11 @@ def _suspect_fields(data: dict) -> list[str]:
         v = data.get(f)
         if v is None or v <= 0:
             bad.append(f)
+    # a Grab code is ~15-16 chars — a shorter read means the model stopped at the on-screen
+    # line wrap (weakens dedup); retry, but keep the short read if the retry fares no better
+    code = (data.get("booking_code") or "").replace(" ", "")
+    if code and len(code) < 14:
+        bad.append("booking_code")
     return bad
 
 
@@ -272,8 +277,17 @@ def extract_image(image_bytes: bytes, mime_type: str = "image/jpeg", model: str 
     if data is None:
         raise RuntimeError(f"Gemini extraction failed: {last_err}")
     bad = _suspect_fields(data)
+    notes = []
+    if "booking_code" in bad and data.get("booking_code"):
+        # a short (line-wrap-truncated) code retried without luck — a partial code still
+        # helps a reviewer more than a blank, so keep it but say so
+        bad.remove("booking_code")
+        notes.append("booking code อาจไม่ครบ (โมเดลอ่านสั้นกว่ารูปแบบปกติ)")
     for f in bad:
         data[f] = None
-    note = f"อ่านค่าไม่ได้ ต้องกรอกเอง: {', '.join(bad)}"
-    data["confidence_note"] = f"{note} | {data['confidence_note']}" if data.get("confidence_note") else note
+    if bad:
+        notes.append(f"อ่านค่าไม่ได้ ต้องกรอกเอง: {', '.join(bad)}")
+    if notes:
+        note = " | ".join(notes)
+        data["confidence_note"] = f"{note} | {data['confidence_note']}" if data.get("confidence_note") else note
     return data
