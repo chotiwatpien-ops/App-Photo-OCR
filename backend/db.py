@@ -301,6 +301,23 @@ def finish_ingest_run(run_id, **stats):
                   .values(finished_at=_now(), **stats))
 
 
+def stuck_pending_trips():
+    """(trip_id, job_id) rows left in 'pending' by a cancelled run — their files are already
+    recorded as ingested so nothing would ever retry them without this."""
+    with engine.begin() as c:
+        rows = c.execute(select(trips.c.id, trips.c.job_id)
+                         .where(trips.c.status == "pending",
+                                trips.c.image_blob.isnot(None))).all()
+        return [(r[0], r[1]) for r in rows]
+
+
+def jobs_dates(job_ids):
+    with engine.begin() as c:
+        rows = c.execute(select(jobs.c.id, jobs.c.date_from, jobs.c.date_to)
+                         .where(jobs.c.id.in_(list(job_ids)))).all()
+        return [(r[0], r[1], r[2]) for r in rows]
+
+
 def find_job(driver_name, date_from, date_to):
     """Existing job for this rider + week (ingest appends to it across runs)."""
     with engine.begin() as c:

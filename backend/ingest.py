@@ -292,6 +292,23 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
 
     jobs_created = approved = flagged = errors = 0
     touched_weeks = set()
+
+    # a cancelled run leaves rows in 'pending' whose files are already marked ingested —
+    # reprocess them from the stored blobs (no re-download, no double billing)
+    stuck = db.stuck_pending_trips()
+    if stuck:
+        log(f"♻ เก็บตก {len(stuck)} แถวที่ค้างจากรอบก่อนซึ่งถูกตัดกลางทาง")
+        with ThreadPoolExecutor(max_workers=INGEST_PARALLEL) as ex:
+            res = list(ex.map(lambda x: pipeline.process_trip(x[0], x[1]), stuck))
+        errors += res.count("error")
+        for jid, d1, d2 in db.jobs_dates({j for _, j in stuck}):
+            pipeline.pair_fragments(jid)
+            pipeline.spread_dates(jid, d1, d2, only_missing=True)
+            st = db.auto_approve_job(jid)
+            approved += st["approved"]
+            flagged += st["flagged"]
+            touched_weeks.add((d1, d2))
+            log(f"  ♻ job #{jid}: อนุมัติอัตโนมัติ {st['approved']} · รอคน {st['flagged']}")
     for (rider, d_from, d_to), group in groups.items():
         meta = by_key[(rider, d_from, d_to)]
         job_id = db.find_job(rider, d_from, d_to)
