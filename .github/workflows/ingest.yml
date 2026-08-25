@@ -57,8 +57,8 @@ jobs:
           DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
           DRIVE_EXPORTS_FOLDER_ID: ${{ secrets.DRIVE_EXPORTS_FOLDER_ID }}
           GEMINI_MODEL: ${{ github.event.inputs.model || vars.GEMINI_MODEL || 'gemini-3.7-flash' }}
-          INGEST_PARALLEL: "12"
-          DRIVE_PARALLEL: "8"
+          INGEST_PARALLEL: "24"
+          DRIVE_PARALLEL: "12"
         run: |
           ARGS=""
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
