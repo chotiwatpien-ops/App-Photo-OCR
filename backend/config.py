@@ -77,6 +77,9 @@ GITHUB_WORKFLOW = _setting("GITHUB_WORKFLOW", "github_workflow", "ingest.yml")
 # trips each rider owes the customer per week (3/day × 7) — Dashboard completeness check
 EXPECTED_TRIPS_PER_WEEK = int(os.environ.get("EXPECTED_TRIPS_PER_WEEK", "21"))
 
+# read-only diagnostic API key (header X-Diag-Key on /api/diag/* only); unset = feature off
+DIAG_KEY = _setting("DIAG_KEY", "diag_key", None)
+
 # --- Gemini ---
 # Audited 2026-08-21 (5 rounds x 19 images each, 100% on money fields for all three):
 #   gemini-3.7-flash  thinking=low   ฿0.09/img  (default — user's plan)

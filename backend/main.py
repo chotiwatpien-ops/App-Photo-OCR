@@ -47,9 +47,21 @@ def _logged_in(request: Request) -> bool:
         return False
 
 
+def _diag_ok(request: Request) -> bool:
+    """Read-only diagnostic access via header key — valid ONLY for /api/diag/* paths."""
+    import hmac
+    key = config.DIAG_KEY or ""
+    given = request.headers.get("x-diag-key") or ""
+    return bool(key) and hmac.compare_digest(given, key)
+
+
 @app.middleware("http")
 async def auth_gate(request: Request, call_next):
     p = request.url.path
+    if p.startswith("/api/diag/"):
+        if _diag_ok(request) or _logged_in(request):
+            return await call_next(request)
+        return JSONResponse({"detail": "diag_key_required"}, status_code=401)
     if p.startswith("/api/") and p not in PUBLIC_API and not _logged_in(request):
         return JSONResponse({"detail": "login_required"}, status_code=401)
     return await call_next(request)
@@ -382,6 +394,49 @@ def approve_trip(trip_id: int):
     if "error" in r:
         raise HTTPException(400, r["error"])
     return r
+
+
+# ---------- read-only diagnostics (header X-Diag-Key; see auth_gate) ----------
+
+@app.get("/api/diag/summary")
+def diag_summary():
+    from sqlalchemy import case, func, select
+    with db.engine.begin() as c:
+        t = db.trips.c
+        r = c.execute(select(
+            func.sum(case((t.status == "done", 1), else_=0)),
+            func.sum(case(((t.status == "done") & (t.committed == 1), 1), else_=0)),
+            func.sum(case(((t.status == "done") & (t.committed == 0), 1), else_=0)),
+            func.sum(case((t.status == "error", 1), else_=0)),
+            func.sum(case((t.status == "pending", 1), else_=0)),
+            func.count(func.distinct(t.job_id)))).first()
+    return {"done": r[0] or 0, "approved": r[1] or 0, "waiting": r[2] or 0,
+            "errors": r[3] or 0, "pending": r[4] or 0, "jobs": r[5] or 0,
+            "runs": db.list_ingest_runs(10), "issues": db.list_ingest_issues(30)}
+
+
+@app.get("/api/diag/waiting")
+def diag_waiting(job_id: int = None, limit: int = 500):
+    rows = db.review_queue()
+    if job_id is not None:
+        rows = [r for r in rows if r["job_id"] == job_id]
+    return {"total": len(rows), "rows": rows[:max(1, min(limit, 1000))]}
+
+
+@app.get("/api/diag/job/{job_id}")
+def diag_job(job_id: int):
+    j = db.get_job(job_id)
+    if not j:
+        raise HTTPException(404, "ไม่พบ job")
+    return j
+
+
+@app.get("/api/diag/trip/{trip_id}/image")
+def diag_trip_image(trip_id: int, part: int = 1):
+    img = db.get_trip_image(trip_id, part)
+    if not img:
+        raise HTTPException(404, "ไม่มีรูป (ถูกลบหลังอนุมัติ)")
+    return Response(content=img[0], media_type=img[1])
 
 
 # ---------- frontend ----------
