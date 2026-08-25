@@ -354,6 +354,21 @@ def jobs_missing_dates():
                    trips.c.trip_date.is_(None))).all()]
 
 
+def open_image_issue_jobs():
+    """Job ids whose customer-image upload failed and was never retried successfully."""
+    with engine.begin() as c:
+        rows = c.execute(select(ingest_issues.c.key)
+                         .where(ingest_issues.c.resolved_run.is_(None),
+                                ingest_issues.c.kind == "images")).all()
+    out = []
+    for (k,) in rows:
+        try:
+            out.append(int(k.split(":", 1)[1]))
+        except (IndexError, ValueError):
+            pass
+    return out
+
+
 def review_job_ids():
     with engine.begin() as c:
         return [r[0] for r in c.execute(select(jobs.c.id)

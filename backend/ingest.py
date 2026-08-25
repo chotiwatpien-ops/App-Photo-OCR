@@ -192,12 +192,16 @@ def discover(drive, inbox_id):
     return items, skipped
 
 
-def export_only(drive, exports_id):
-    """Regenerate Excel + customer images for every job already in the database (no reading)."""
+def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True):
+    """Regenerate Excel + customer images for jobs already in the database (no reading).
+    only_job_ids limits the sweep; returns (error_count, failed_job_ids)."""
     errors = 0
+    failed = []
     for (d_from, d_to), js in sorted(db.jobs_by_week().items()):
         wk = week_label(d_from)
         for j in js:
+            if only_job_ids is not None and j["id"] not in only_job_ids:
+                continue
             try:
                 week_dir = drive.ensure_folder(exports_id, wk)
                 db.record_drive_file(wk, "week_folder", week_dir)
@@ -212,16 +216,18 @@ def export_only(drive, exports_id):
             except Exception as e:  # noqa: BLE001
                 log(f"✗ images {j['driver_name']}: {e}")
                 errors += 1
-    rows = db.query_trips(committed_only=True)
-    try:
-        fid = drive.upload_xlsx(exports_id, "Rider Trips.xlsx", excel_writer.build_workbook(rows))
-        for (d_from, _), _js in db.jobs_by_week().items():
-            db.record_drive_file(week_label(d_from), "xlsx", fid, "Rider Trips.xlsx")
-        log(f"📄 Rider Trips.xlsx: {len(rows)} แถวรวมทุกสัปดาห์")
-    except Exception as e:  # noqa: BLE001
-        log(f"✗ upload xlsx: {e}")
-        errors += 1
-    return errors
+                failed.append(j["id"])
+    if with_xlsx:
+        rows = db.query_trips(committed_only=True)
+        try:
+            fid = drive.upload_xlsx(exports_id, "Rider Trips.xlsx", excel_writer.build_workbook(rows))
+            for (d_from, _), _js in db.jobs_by_week().items():
+                db.record_drive_file(week_label(d_from), "xlsx", fid, "Rider Trips.xlsx")
+            log(f"📄 Rider Trips.xlsx: {len(rows)} แถวรวมทุกสัปดาห์")
+        except Exception as e:  # noqa: BLE001
+            log(f"✗ upload xlsx: {e}")
+            errors += 1
+    return errors, failed
 
 
 def fix_hidden_turbo() -> int:
@@ -328,6 +334,16 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             approved += st["approved"]
             touched_weeks.add((d1, d2))
             log(f"  ✚ job #{jid}: เกณฑ์ล่าสุดอนุมัติเพิ่ม {st['approved']} แถว")
+
+    # customer-image uploads that failed earlier (network blips) — the issue log promises the
+    # next round retries them, so it does; still-failing jobs stay on the issue list
+    retry_jobs = set(db.open_image_issue_jobs())
+    if retry_jobs:
+        log(f"🖼 ลองอัพโหลดรูปส่งลูกค้าซ้ำ {len(retry_jobs)} job ที่ค้างจากรอบก่อน")
+        errs, still_failed = export_only(drive, exports_id, only_job_ids=retry_jobs, with_xlsx=False)
+        errors += errs
+        for jid in still_failed:
+            issues.append((f"images:{jid}", "images", f"อัพโหลดรูปส่งลูกค้า job #{jid} ยังไม่สำเร็จ (ลองซ้ำแล้ว)"))
     for (rider, d_from, d_to), group in groups.items():
         meta = by_key[(rider, d_from, d_to)]
         job_id = db.find_job(rider, d_from, d_to)
@@ -460,7 +476,7 @@ def main():
         inbox = config.DRIVE_INBOX_FOLDER_ID
         exports = a.exports or config.DRIVE_EXPORTS_FOLDER_ID
     if a.exports_only:
-        errors = export_only(drive, exports)
+        errors, _ = export_only(drive, exports)
     else:
         errors = run(drive, inbox, exports, dry_run=a.dry_run, limit=a.limit, only=a.only)
     sys.exit(1 if errors else 0)
