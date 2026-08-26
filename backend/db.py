@@ -263,9 +263,46 @@ def record_ingested(drive_id, name, job_id, trip_id):
             drive_id=drive_id, name=name, job_id=job_id, trip_id=trip_id, ingested_at=_now()))
 
 
+def mark_orphan_bottom_duplicates(job_id) -> int:
+    """A code-less lower half that never paired is either (a) the other half of a trip already
+    counted — its amount matches an approved row in the same job, so flag it as a duplicate for
+    a person to delete — or (b) a genuine trip whose upper half is missing, which may pass.
+    Team rule 2026-08-25: separate the two automatically instead of holding both."""
+    with engine.begin() as c:
+        orphans = c.execute(select(trips.c.id, trips.c.file_name, trips.c.net_earnings,
+                                   trips.c.base_fare, trips.c.note)
+                            .where(trips.c.job_id == job_id, trips.c.status == "done",
+                                   trips.c.committed == 0, trips.c.kind == "bottom",
+                                   trips.c.merged_into.is_(None),
+                                   trips.c.booking_code.is_(None),
+                                   trips.c.duplicate_of.is_(None))).mappings().all()
+        if not orphans:
+            return 0
+        approved = c.execute(select(trips.c.id, trips.c.file_name, trips.c.net_earnings,
+                                    trips.c.base_fare)
+                             .where(trips.c.job_id == job_id, trips.c.committed == 1)).mappings().all()
+        n = 0
+        for o in orphans:
+            amt = o["net_earnings"] if o["net_earnings"] is not None else o["base_fare"]
+            if amt is None:
+                continue
+            twin = next((a for a in approved
+                         if (a["net_earnings"] is not None and abs(a["net_earnings"] - amt) <= 0.01)
+                         or (a["base_fare"] is not None and abs(a["base_fare"] - amt) <= 0.01)), None)
+            if not twin:
+                continue  # no counted twin — a real trip missing its upper half; let it pass
+            msg = f"ครึ่งล่างของงานที่อนุมัติแล้ว ({twin['file_name']}) — รูปเกิน ลบได้"
+            note = f"{msg} | {o['note']}" if o["note"] else msg
+            c.execute(update(trips).where(trips.c.id == o["id"])
+                      .values(duplicate_of=twin["id"], note=note))
+            n += 1
+        return n
+
+
 def auto_approve_job(job_id) -> dict:
     """Commit rows that passed every check (✓, not a duplicate, booking code unseen);
     leave the rest for a person. Returns {approved, flagged}."""
+    mark_orphan_bottom_duplicates(job_id)
     with engine.begin() as c:
         rows = c.execute(select(trips.c.id, trips.c.check_status, trips.c.duplicate_of,
                                 trips.c.booking_code, trips.c.trip_date, trips.c.kind)
@@ -286,10 +323,9 @@ def auto_approve_job(job_id) -> dict:
         ok_ids = [r["id"] for r in rows
                   if r["check_status"] == "pass" and not r["duplicate_of"] and r["trip_date"]
                   # team rule 2026-08-25: balanced money is the bar — a missing booking code
-                  # (some Grab screens don't show one) or km does NOT hold a row back.
-                  # The one guard kept: a code-less UNPAIRED bottom half is usually a stray
-                  # from a failed pair — a person must look at those.
-                  and not (r["kind"] == "bottom" and not r["booking_code"])
+                  # (some Grab screens don't show one) or km does NOT hold a row back. Stray
+                  # lower halves are handled by mark_orphan_bottom_duplicates() above: the
+                  # ones matching a counted trip carry duplicate_of and are excluded here.
                   and (not r["booking_code"] or r["booking_code"] not in seen)]
         if ok_ids:
             c.execute(update(trips).where(trips.c.id.in_(ok_ids))
