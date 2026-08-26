@@ -293,17 +293,17 @@ def dedupe_approved_trips() -> list:
     removed = []
     with engine.begin() as c:
         dups = c.execute(
-            select(trips.c.booking_code, jobs.c.driver_name)
+            select(trips.c.booking_code, jobs.c.driver_name, jobs.c.date_from)
             .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
             .where(trips.c.committed == 1, trips.c.booking_code.isnot(None))
-            .group_by(trips.c.booking_code, jobs.c.driver_name)
+            .group_by(trips.c.booking_code, jobs.c.driver_name, jobs.c.date_from)
             .having(func.count() > 1)).all()
-        for code, driver in dups:
+        for code, driver, week in dups:
             rows = c.execute(
                 select(trips.c.id, trips.c.job_id, trips.c.file_name, trips.c.net_earnings)
                 .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
                 .where(trips.c.committed == 1, trips.c.booking_code == code,
-                       jobs.c.driver_name == driver)
+                       jobs.c.driver_name == driver, jobs.c.date_from == week)
                 .order_by(trips.c.id)).mappings().all()
             for r in rows[1:]:  # keep the first, drop the rest
                 kids = c.execute(delete(trips).where(trips.c.merged_into == r["id"])).rowcount
@@ -372,15 +372,17 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
         codes = [r["booking_code"] for r in rows if r["booking_code"]]
         seen = set()
         if codes:
-            # team rule 2026-08-25: a code approved under ANOTHER rider does not block this
-            # one — only a repeat by the SAME rider counts as a duplicate
-            job_driver = c.execute(select(jobs.c.driver_name)
-                                   .where(jobs.c.id == job_id)).scalar()
+            # team rules: a code approved under ANOTHER rider never blocks, and neither does
+            # the same rider in ANOTHER week (Ops: slips get reused across weeks — let them
+            # flow). Only a repeat by the same rider within the same week is a duplicate.
+            jm = c.execute(select(jobs.c.driver_name, jobs.c.date_from)
+                           .where(jobs.c.id == job_id)).mappings().first()
             seen = {r[0] for r in c.execute(
                 select(trips.c.booking_code)
                 .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
                 .where(trips.c.committed == 1, trips.c.booking_code.in_(codes),
-                       jobs.c.driver_name == job_driver)).all()}
+                       jobs.c.driver_name == jm["driver_name"],
+                       jobs.c.date_from == jm["date_from"])).all()}
         ok_ids = [r["id"] for r in rows
                   if r["check_status"] == "pass" and not r["duplicate_of"] and r["trip_date"]
                   # team rule 2026-08-25: balanced money is the bar — a missing booking code
@@ -537,11 +539,13 @@ def find_same_rider_code_conflicts(job_id, codes):
     if not codes:
         return []
     with engine.begin() as c:
-        driver = c.execute(select(jobs.c.driver_name).where(jobs.c.id == job_id)).scalar()
+        jm = c.execute(select(jobs.c.driver_name, jobs.c.date_from)
+                       .where(jobs.c.id == job_id)).mappings().first()
         rows = c.execute(select(trips.c.booking_code, trips.c.file_name, trips.c.job_id)
                          .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
                          .where(trips.c.committed == 1, trips.c.booking_code.in_(codes),
-                                jobs.c.driver_name == driver,
+                                jobs.c.driver_name == jm["driver_name"],
+                                jobs.c.date_from == jm["date_from"],
                                 trips.c.job_id != job_id)).mappings().all()
         return [dict(r) for r in rows]
 
@@ -775,16 +779,18 @@ def approve_trip(trip_id) -> dict:
         # money guard: this rider already has this trip approved — approving it again is the
         # exact path that put 52 duplicate rows in the workbook
         if t["booking_code"]:
-            driver = c.execute(select(jobs.c.driver_name)
-                               .where(jobs.c.id == t["job_id"])).scalar()
+            jm = c.execute(select(jobs.c.driver_name, jobs.c.date_from)
+                           .where(jobs.c.id == t["job_id"])).mappings().first()
             twin = c.execute(select(trips.c.file_name)
                              .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
                              .where(trips.c.committed == 1,
                                     trips.c.booking_code == t["booking_code"],
-                                    jobs.c.driver_name == driver,
+                                    jobs.c.driver_name == jm["driver_name"],
+                                    jobs.c.date_from == jm["date_from"],
                                     trips.c.id != trip_id).limit(1)).scalar()
             if twin:
-                return {"error": f"เที่ยวนี้อนุมัติไปแล้ว ({twin}) — ถ้าเป็นรูปซ้ำให้กดลบแทน"}
+                return {"error": f"เที่ยวนี้อนุมัติไปแล้วในสัปดาห์เดียวกัน ({twin}) — "
+                                 f"ถ้าเป็นรูปซ้ำให้กดลบแทน"}
         c.execute(update(trips).where(trips.c.id == trip_id)
                   .values(committed=1, auto_approved=0, image_blob=None))
         c.execute(update(trips).where(trips.c.merged_into == trip_id).values(image_blob=None))
