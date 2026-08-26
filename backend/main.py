@@ -440,6 +440,45 @@ def diag_trip_image(trip_id: int, part: int = 1):
     return Response(content=img[0], media_type=img[1])
 
 
+@app.get("/api/diag/audit")
+def diag_audit():
+    """System-wide double-count audit: same file ingested twice inside a job, a rider holding
+    more than one job in a week, and the same booking code approved more than once."""
+    from sqlalchemy import func, select
+    out = {}
+    with db.engine.begin() as c:
+        t, j = db.trips.c, db.jobs.c
+        dup_files = c.execute(
+            select(t.job_id, j.driver_name, t.file_name, func.count().label("n"))
+            .select_from(db.trips.join(db.jobs, j.id == t.job_id))
+            .group_by(t.job_id, j.driver_name, t.file_name)
+            .having(func.count() > 1)).mappings().all()
+        agg = {}
+        for r in dup_files:
+            k = (r["job_id"], r["driver_name"])
+            agg[k] = agg.get(k, 0) + 1
+        out["jobs_with_repeated_files"] = [
+            {"job_id": k[0], "driver_name": k[1], "files": v} for k, v in sorted(agg.items())]
+
+        rows = c.execute(select(j.driver_name, j.date_from, func.count().label("n"),
+                                func.min(j.id), func.max(j.id))
+                         .group_by(j.driver_name, j.date_from)
+                         .having(func.count() > 1)).all()
+        out["riders_with_multiple_jobs"] = [
+            {"driver_name": r[0], "week_from": r[1], "jobs": r[2]} for r in rows]
+
+        codes = c.execute(select(t.booking_code, j.driver_name, func.count().label("n"))
+                          .select_from(db.trips.join(db.jobs, j.id == t.job_id))
+                          .where(t.committed == 1, t.booking_code.isnot(None))
+                          .group_by(t.booking_code, j.driver_name)
+                          .having(func.count() > 1)).mappings().all()
+        out["approved_code_repeats_same_rider"] = len(codes)
+        out["approved_code_repeat_sample"] = [
+            {"code": r["booking_code"], "driver_name": r["driver_name"], "times": r["n"]}
+            for r in codes[:15]]
+    return out
+
+
 # ---------- frontend ----------
 
 if config.FRONTEND_DIST.exists():
