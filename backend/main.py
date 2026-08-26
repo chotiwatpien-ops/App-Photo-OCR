@@ -519,6 +519,32 @@ def diag_audit():
                              .order_by(t.id)).all()
             money += sum((v[1] or 0) for v in vals[1:])  # everything past the first is extra
         out["extra_approved_baht"] = round(money, 2)
+
+        # slips reused ACROSS riders or ACROSS weeks — the team allows these (different
+        # riders may legitimately hold the same code), so they are reported, never blocked
+        cross = c.execute(select(t.booking_code,
+                                 func.count(func.distinct(j.driver_name)).label("riders"),
+                                 func.count(func.distinct(j.date_from)).label("weeks"),
+                                 func.count().label("rows"))
+                          .select_from(db.trips.join(db.jobs, j.id == t.job_id))
+                          .where(t.committed == 1, t.booking_code.isnot(None))
+                          .group_by(t.booking_code)
+                          .having(func.count() > 1)).mappings().all()
+        multi_rider = [r for r in cross if r["riders"] > 1]
+        multi_week = [r for r in cross if r["weeks"] > 1]
+        out["code_used_by_multiple_riders"] = len(multi_rider)
+        out["code_used_in_multiple_weeks"] = len(multi_week)
+        sample = []
+        for r in (multi_week or multi_rider)[:12]:
+            who = c.execute(select(j.driver_name, j.date_from, t.file_name, t.net_earnings)
+                            .select_from(db.trips.join(db.jobs, j.id == t.job_id))
+                            .where(t.committed == 1, t.booking_code == r["booking_code"])
+                            .order_by(t.id)).mappings().all()
+            sample.append({"code": r["booking_code"], "rows": r["rows"],
+                           "where": [{"driver_name": w["driver_name"], "week_from": w["date_from"],
+                                      "file_name": w["file_name"], "net": w["net_earnings"]}
+                                     for w in who]})
+        out["cross_use_sample"] = sample
         out["approved_code_repeat_sample"] = [
             {"code": r["booking_code"], "driver_name": r["driver_name"], "times": r["n"]}
             for r in codes[:15]]
