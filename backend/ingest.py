@@ -18,6 +18,7 @@ Usage:
     python ingest.py --limit 20           # cap images this run
 """
 import argparse
+import hashlib
 import os
 import re
 import sys
@@ -385,7 +386,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             issues.append((f"images:{jid}", "images", f"อัพโหลดรูปส่งลูกค้า job #{jid} ยังไม่สำเร็จ (ลองซ้ำแล้ว)"))
     for (rider, d_from, d_to), group in groups.items():
         meta = by_key[(rider, d_from, d_to)]
-        job_id = db.find_job(rider, d_from, d_to)
+        job_id = db.find_job(rider, d_from, d_to, meta.get("category"), meta.get("admin"))
         if job_id is None:
             job_id = db.create_job(rider, excel_writer.SHEET, d_from, d_to,
                                    category=meta.get("category"), folder_name=meta.get("folder_name"),
@@ -405,6 +406,8 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
             downloads = list(ex.map(_dl, group))
         trip_ids = []
+        seen_hashes = db.seen_image_hashes(rider, d_from, d_to)
+        n_same = 0
         for i, data, err in downloads:
             f = i["file"]
             if err is not None:
@@ -412,12 +415,24 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
                 issues.append((f"download:{f['id']}", "download", f"{rider}: โหลดรูป {f['name']} ไม่สำเร็จ ({err})"))
                 errors += 1
                 continue
-            tid = db.create_trip(job_id, f["name"], data, f["mime"], source_url=f.get("url"))
+            digest = hashlib.sha1(data).hexdigest()
+            if digest in seen_hashes:
+                # the very same picture already read for this rider this week (re-upload under a
+                # new Drive id, or the same shot dropped in two folders) — record it as ingested
+                # so it never comes back, but do not pay to read it again
+                db.record_ingested(f["id"], f["name"], job_id, None)
+                n_same += 1
+                continue
+            seen_hashes[digest] = f["name"]
+            tid = db.create_trip(job_id, f["name"], data, f["mime"], source_url=f.get("url"),
+                                 image_hash=digest)
             if i["trip_date"]:
                 db.update_trip(tid, {"trip_date": i["trip_date"]})
             db.record_ingested(f["id"], f["name"], job_id, tid)
             trip_ids.append(tid)
 
+        if n_same:
+            log(f"  ⏭ ข้ามรูปที่เนื้อหาซ้ำกับที่อ่านไปแล้ว {n_same} ใบ (ไม่เสียค่าอ่านซ้ำ)")
         with ThreadPoolExecutor(max_workers=INGEST_PARALLEL) as ex:
             results = list(ex.map(lambda tid: pipeline.process_trip(tid, job_id), trip_ids))
         errors += results.count("error")

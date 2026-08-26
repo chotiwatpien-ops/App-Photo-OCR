@@ -124,7 +124,11 @@ async def create_job(
 ):
     if not files:
         raise HTTPException(400, "ไม่มีไฟล์รูป")
-    job_id = db.create_job(driver_name.strip(), excel_writer.SHEET, date_from, date_to)
+    # re-uploading the same rider+week must land in the SAME job — a second job would double
+    # every trip in the workbook (this is exactly how สุรวิทย์ ended up counted three times)
+    name = driver_name.strip()
+    job_id = (db.find_job(name, date_from, date_to)
+              or db.create_job(name, excel_writer.SHEET, date_from, date_to))
     for f in files:
         ext = Path(f.filename or "img.jpg").suffix.lower() or ".jpg"
         mime = MIME_BY_EXT.get(ext)
@@ -196,6 +200,11 @@ def commit(job_id: int, force: bool = False):
         raise HTTPException(400, f"ยังไม่ได้ระบุวันที่: {', '.join(missing[:5])}")
     if any(t["status"] == "pending" for t in j["trips"]):
         raise HTTPException(400, "ยังอ่านไม่เสร็จ")
+    same_rider = db.find_same_rider_code_conflicts(job_id, [t["booking_code"] for t in done])
+    if same_rider:
+        names = [f"{d['file_name']} (job #{d['job_id']})" for d in same_rider[:5]]
+        raise HTTPException(409, f"เที่ยวเหล่านี้ของไรเดอร์คนนี้อนุมัติไปแล้ว: {', '.join(names)} — "
+                                 f"ลบรูปที่ซ้ำออกก่อน (กดยืนยันข้ามไม่ได้ เพราะจะทำให้เงินซ้ำ)")
     if not force:
         dup_in_job = [t["file_name"] for t in done if t["duplicate_of"]]
         if dup_in_job:
@@ -387,6 +396,23 @@ def trips_view(date_from: str = None, date_to: str = None, driver: str = None,
 @app.get("/api/review-queue")
 def review_queue():
     return {"rows": db.review_queue(), "issues": db.list_ingest_issues(50)}
+
+
+@app.post("/api/review-queue/approve-passing")
+def approve_passing():
+    """One click for the whole queue: approve every waiting row that passed the checks, is not
+    a duplicate, and has a date. Anything the system is unsure about stays put."""
+    rows = db.review_queue()
+    ok = [r for r in rows if r.get("check_status") == "pass" and not r.get("duplicate_of")
+          and r.get("trip_date") and not r.get("seen_in_job")]
+    done, failed = 0, []
+    for r in ok:
+        res = db.approve_trip(r["id"])
+        if "error" in res:
+            failed.append({"file_name": r["file_name"], "error": res["error"]})
+        else:
+            done += 1
+    return {"approved": done, "skipped": len(rows) - len(ok), "failed": failed}
 
 
 @app.post("/api/trips/{trip_id}/approve")

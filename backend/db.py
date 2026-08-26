@@ -84,6 +84,7 @@ trips = Table(
     Column("customer_image", Text),       # the delivered image's file name (e.g. 'นภสิทธิ์7.jpg') — traceback from Sheet1
     Column("kind", String(8)),            # full | top | bottom — which part of the trip screen the image shows
     Column("merged_into", Integer),       # bottom half folded into this trip id (status becomes 'merged')
+    Column("image_hash", String(40), index=True),  # sha1 of the image — catches re-uploaded duplicates
 )
 
 # Drive files already pulled in — makes every ingest run idempotent
@@ -146,7 +147,7 @@ TRIP_EDITABLE = [
     "pickup_district", "dropoff_district", "surge", "queue_type",
     "num_stops", "app_fee", "other_adj", "fare_refund", "note",
 ]
-_SYSTEM_FIELDS = ["status", "error", "booking_code", "check_status", "duplicate_of",
+_SYSTEM_FIELDS = ["status", "error", "booking_code", "check_status", "duplicate_of", "image_hash",
                   "grab_commission", "model", "tok_in", "tok_out", "tok_think", "kind", "merged_into",
                   "customer_image"]
 # columns returned to the API (everything except the blob)
@@ -178,6 +179,7 @@ def init_db():
     else:
         with engine.begin() as c:
             c.execute(text("ALTER TABLE ingest_runs ADD COLUMN IF NOT EXISTS files_total INTEGER"))
+            c.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS image_hash VARCHAR(40)"))
 
 
 # ---------- jobs ----------
@@ -238,11 +240,13 @@ def mark_committed(job_id):
 
 # ---------- trips ----------
 
-def create_trip(job_id, file_name, image_bytes: bytes, mime: str, source_url: str = None) -> int:
+def create_trip(job_id, file_name, image_bytes: bytes, mime: str, source_url: str = None,
+                image_hash: str = None) -> int:
     with engine.begin() as c:
         r = c.execute(insert(trips).values(
             job_id=job_id, file_name=file_name, image_blob=image_bytes, image_mime=mime,
-            status="pending", committed=0, auto_approved=0, source_url=source_url))
+            status="pending", committed=0, auto_approved=0, source_url=source_url,
+            image_hash=image_hash))
         return r.inserted_primary_key[0]
 
 
@@ -501,14 +505,46 @@ def jobs_dates(job_ids):
         return [(r[0], r[1], r[2]) for r in rows]
 
 
-def find_job(driver_name, date_from, date_to):
-    """Existing job for this rider + week (ingest appends to it across runs)."""
+def find_job(driver_name, date_from, date_to, category=None, admin=None):
+    """Existing job for this rider + week FROM THE SAME SOURCE FOLDER (ingest appends to it
+    across runs). The folder identity matters: the same name can appear under several vehicle
+    groups/admins — merging those into one job lost the group and mixed riders who share a name."""
     with engine.begin() as c:
-        r = c.execute(select(jobs.c.id).where(jobs.c.driver_name == driver_name,
-                                              jobs.c.date_from == date_from,
-                                              jobs.c.date_to == date_to)
-                      .order_by(jobs.c.id.desc()).limit(1)).first()
+        q = select(jobs.c.id).where(jobs.c.driver_name == driver_name,
+                                    jobs.c.date_from == date_from,
+                                    jobs.c.date_to == date_to)
+        q = q.where(jobs.c.category.is_(None) if category is None else jobs.c.category == category)
+        q = q.where(jobs.c.admin.is_(None) if admin is None else jobs.c.admin == admin)
+        r = c.execute(q.order_by(jobs.c.id.desc()).limit(1)).first()
         return r[0] if r else None
+
+
+def find_same_rider_code_conflicts(job_id, codes):
+    """Approved trips of the SAME rider (any job) already carrying one of these booking codes.
+    Blocks a repeat even when a person forces the approval — this is the money guard."""
+    codes = [c for c in codes if c]
+    if not codes:
+        return []
+    with engine.begin() as c:
+        driver = c.execute(select(jobs.c.driver_name).where(jobs.c.id == job_id)).scalar()
+        rows = c.execute(select(trips.c.booking_code, trips.c.file_name, trips.c.job_id)
+                         .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+                         .where(trips.c.committed == 1, trips.c.booking_code.in_(codes),
+                                jobs.c.driver_name == driver,
+                                trips.c.job_id != job_id)).mappings().all()
+        return [dict(r) for r in rows]
+
+
+def seen_image_hashes(driver_name, date_from, date_to):
+    """sha1 -> file_name of images already read for this rider+week (any folder) — lets ingest
+    skip a byte-identical re-upload instead of paying to read it twice."""
+    with engine.begin() as c:
+        rows = c.execute(select(trips.c.image_hash, trips.c.file_name)
+                         .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+                         .where(jobs.c.driver_name == driver_name,
+                                jobs.c.date_from == date_from, jobs.c.date_to == date_to,
+                                trips.c.image_hash.isnot(None))).all()
+        return {r[0]: r[1] for r in rows}
 
 
 def name_shared_in_group(driver_name, date_from, date_to, category, job_id):

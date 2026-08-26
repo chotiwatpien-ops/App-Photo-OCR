@@ -15,6 +15,7 @@ export default function ReviewQueue({ onOpenJob }) {
   const [rows, setRows] = useState(null)
   const [issues, setIssues] = useState([])
   const [msg, setMsg] = useState('')
+  const [busy, setBusy] = useState(false)
   const [modal, setModal] = useState(null)
 
   const load = useCallback(() => {
@@ -37,6 +38,23 @@ export default function ReviewQueue({ onOpenJob }) {
       setRows(rows.filter((r) => r.id !== t.id))
     } catch (e) {
       setMsg(e.message)
+    }
+  }
+
+  const approveAllPassing = async () => {
+    const n = rows.filter((t) => t.check_status === 'pass' && !t.duplicate_of && t.trip_date && !t.seen_in_job).length
+    if (!n) return setMsg('ไม่มีแถวที่ผ่านเช็คให้อนุมัติ')
+    if (!confirm(`อนุมัติ ${n} แถวที่ผ่านการตรวจเลขทั้งหมด?
+(แถวที่ระบบไม่ชัวร์ เช่น เลขขัดกัน/ซ้ำ/ไม่มีวันที่ จะยังคงอยู่)`)) return
+    setBusy(true)
+    try {
+      const res = await api.approvePassing()
+      setMsg(`อนุมัติ ${res.approved} แถวแล้ว ✅ เหลือรอตรวจ ${res.skipped} แถว`)
+      load()
+    } catch (e) {
+      setMsg(e.message)
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -71,7 +89,14 @@ export default function ReviewQueue({ onOpenJob }) {
           แถวที่ระบบไม่กล้าอนุมัติเอง — <strong>{rows.length}</strong> รายการจากทุก job ·
           ดูรูปเทียบ แก้ตัวเลขใน job แล้วกดอนุมัติ หรือลบถ้าเป็นรูปซ้ำ
         </p>
-        <button onClick={load} className="text-sm text-blue-600 hover:underline">รีเฟรช</button>
+        <div className="flex items-center gap-3">
+          <button onClick={approveAllPassing} disabled={busy}
+            className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-lg px-4 py-2 text-sm font-medium"
+            title="อนุมัติทุกแถวที่ผ่านการตรวจเลขในครั้งเดียว">
+            {busy ? 'กำลังอนุมัติ…' : '✓ อนุมัติทุกแถวที่ผ่านเช็ค'}
+          </button>
+          <button onClick={load} className="text-sm text-blue-600 hover:underline">รีเฟรช</button>
+        </div>
       </div>
       {msg && <p className="text-sm text-red-600">⚠️ {msg}</p>}
 
