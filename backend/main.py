@@ -473,6 +473,18 @@ def diag_audit():
                           .group_by(t.booking_code, j.driver_name)
                           .having(func.count() > 1)).mappings().all()
         out["approved_code_repeats_same_rider"] = len(codes)
+        extra_rows = sum(r["n"] - 1 for r in codes)
+        out["extra_approved_rows"] = extra_rows
+        pairs = [(r["booking_code"], r["driver_name"]) for r in codes]
+        money = 0.0
+        for code, drv in pairs:
+            vals = c.execute(select(t.id, t.net_earnings)
+                             .select_from(db.trips.join(db.jobs, j.id == t.job_id))
+                             .where(t.committed == 1, t.booking_code == code,
+                                    j.driver_name == drv)
+                             .order_by(t.id)).all()
+            money += sum((v[1] or 0) for v in vals[1:])  # everything past the first is extra
+        out["extra_approved_baht"] = round(money, 2)
         out["approved_code_repeat_sample"] = [
             {"code": r["booking_code"], "driver_name": r["driver_name"], "times": r["n"]}
             for r in codes[:15]]
