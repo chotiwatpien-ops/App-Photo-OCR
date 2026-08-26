@@ -74,15 +74,34 @@ class DriveClient:
         return [{"id": r["id"], "name": r["name"], "mime": r["mimeType"], "url": r.get("webViewLink")}
                 for r in rows if r["mimeType"] in IMAGE_MIMES]
 
+    def _retry(self, fn, tries=3):
+        """Transient Drive faults (timeouts, half-reads, 502s) killed 32 files in one stormy
+        round — one attempt per file is not enough. Retry with backoff and a fresh API client
+        (a broken SSL session lives inside the cached per-thread client)."""
+        import time
+        last = None
+        for attempt in range(tries):
+            try:
+                return fn()
+            except Exception as e:  # noqa: BLE001 - network faults come in many shapes
+                last = e
+                self._local.svc = None  # rebuild the thread's client on next use
+                time.sleep(2 * (attempt + 1))
+        raise last
+
     def download(self, file_id) -> bytes:
         from googleapiclient.http import MediaIoBaseDownload
-        buf = io.BytesIO()
-        req = self.svc.files().get_media(fileId=file_id, supportsAllDrives=True)
-        dl = MediaIoBaseDownload(buf, req)
-        done = False
-        while not done:
-            _, done = dl.next_chunk()
-        return buf.getvalue()
+
+        def _dl():
+            buf = io.BytesIO()
+            req = self.svc.files().get_media(fileId=file_id, supportsAllDrives=True)
+            dl = MediaIoBaseDownload(buf, req)
+            done = False
+            while not done:
+                _, done = dl.next_chunk()
+            return buf.getvalue()
+
+        return self._retry(_dl)
 
     def ensure_folder(self, parent_id, name) -> str:
         """Id of child folder `name`, created if missing."""
@@ -97,15 +116,19 @@ class DriveClient:
     def upload_file(self, parent_id, name, data: bytes, mime: str) -> str:
         """Create or overwrite `name` inside the folder."""
         from googleapiclient.http import MediaIoBaseUpload
-        media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime, resumable=False)
-        existing = self._list(f"'{parent_id}' in parents and name='{name}' and trashed=false", "id")
-        if existing:
-            fid = existing[0]["id"]
-            self.svc.files().update(fileId=fid, media_body=media, supportsAllDrives=True).execute()
-            return fid
-        meta = {"name": name, "parents": [parent_id], "mimeType": mime}
-        return self.svc.files().create(body=meta, media_body=media, fields="id",
-                                       supportsAllDrives=True).execute()["id"]
+
+        def _up():
+            media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime, resumable=False)
+            existing = self._list(f"'{parent_id}' in parents and name='{name}' and trashed=false", "id")
+            if existing:
+                fid = existing[0]["id"]
+                self.svc.files().update(fileId=fid, media_body=media, supportsAllDrives=True).execute()
+                return fid
+            meta = {"name": name, "parents": [parent_id], "mimeType": mime}
+            return self.svc.files().create(body=meta, media_body=media, fields="id",
+                                           supportsAllDrives=True).execute()["id"]
+
+        return self._retry(_up)
 
     def upload_xlsx(self, parent_id, name, data: bytes) -> str:
         return self.upload_file(parent_id, name, data, XLSX_MIME)
