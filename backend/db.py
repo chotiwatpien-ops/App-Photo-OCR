@@ -351,15 +351,24 @@ def mark_orphan_bottom_duplicates(job_id) -> int:
         return n
 
 
-def auto_approve_job(job_id) -> dict:
+def auto_approve_job(job_id, fresh_ids=()) -> dict:
     """Commit rows that passed every check (✓, not a duplicate, booking code unseen);
-    leave the rest for a person. Returns {approved, flagged}."""
+    leave the rest for a person. Returns {approved, flagged}.
+
+    fresh_ids = trips read in THIS round. A top half among them that has no lower half yet is
+    held back for one round: Ops often drops the second screenshot moments later, and approving
+    the lone top first writes a guessed base fare (and an estimated passenger fare) into the
+    workbook. Anything older than this round is approved as usual, so nothing sticks."""
     mark_orphan_bottom_duplicates(job_id)
+    fresh_ids = set(fresh_ids or ())
     with engine.begin() as c:
         rows = c.execute(select(trips.c.id, trips.c.check_status, trips.c.duplicate_of,
                                 trips.c.booking_code, trips.c.trip_date, trips.c.kind)
                          .where(trips.c.job_id == job_id, trips.c.status == "done",
                                 trips.c.committed == 0)).mappings().all()
+        paired = {r[0] for r in c.execute(select(trips.c.merged_into)
+                                          .where(trips.c.job_id == job_id,
+                                                 trips.c.merged_into.isnot(None))).all()}
         codes = [r["booking_code"] for r in rows if r["booking_code"]]
         seen = set()
         if codes:
@@ -378,7 +387,9 @@ def auto_approve_job(job_id) -> dict:
                   # (some Grab screens don't show one) or km does NOT hold a row back. Stray
                   # lower halves are handled by mark_orphan_bottom_duplicates() above: the
                   # ones matching a counted trip carry duplicate_of and are excluded here.
-                  and (not r["booking_code"] or r["booking_code"] not in seen)]
+                  and (not r["booking_code"] or r["booking_code"] not in seen)
+                  # a top half read this very round with no lower half yet: wait one round
+                  and not (r["kind"] == "top" and r["id"] in fresh_ids and r["id"] not in paired)]
         if ok_ids:
             c.execute(update(trips).where(trips.c.id.in_(ok_ids))
                       .values(committed=1, auto_approved=1, image_blob=None))

@@ -465,7 +465,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             issues.append((f"images:{job_id}", "images", f"อัพโหลดรูปส่งลูกค้าของ {rider} ไม่สำเร็จ: {e}"))
             errors += 1
 
-        stats = db.auto_approve_job(job_id)
+        stats = db.auto_approve_job(job_id, fresh_ids=trip_ids)
         approved += stats["approved"]
         flagged += stats["flagged"]
         touched_weeks.add((d_from, d_to))
