@@ -263,6 +263,54 @@ def record_ingested(drive_id, name, job_id, trip_id):
             drive_id=drive_id, name=name, job_id=job_id, trip_id=trip_id, ingested_at=_now()))
 
 
+def delete_jobs(job_ids) -> list:
+    """User-ordered removal of whole jobs (e.g. duplicate manual uploads). Returns a log."""
+    out = []
+    with engine.begin() as c:
+        for jid in job_ids:
+            j = c.execute(select(jobs.c.id, jobs.c.driver_name, jobs.c.date_from)
+                          .where(jobs.c.id == jid)).mappings().first()
+            if not j:
+                out.append({"job_id": jid, "found": False})
+                continue
+            n = c.execute(select(func.count()).select_from(trips)
+                          .where(trips.c.job_id == jid)).scalar()
+            c.execute(delete(ingested_files).where(ingested_files.c.job_id == jid))
+            c.execute(delete(trips).where(trips.c.job_id == jid))
+            c.execute(delete(jobs).where(jobs.c.id == jid))
+            out.append({"job_id": jid, "found": True, "driver_name": j["driver_name"],
+                        "date_from": j["date_from"], "trips": n})
+    return out
+
+
+def dedupe_approved_trips() -> list:
+    """Same booking code approved more than once for the SAME rider: keep the earliest row,
+    delete the extras (and any half merged into them). Returns a log of what went."""
+    removed = []
+    with engine.begin() as c:
+        dups = c.execute(
+            select(trips.c.booking_code, jobs.c.driver_name)
+            .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+            .where(trips.c.committed == 1, trips.c.booking_code.isnot(None))
+            .group_by(trips.c.booking_code, jobs.c.driver_name)
+            .having(func.count() > 1)).all()
+        for code, driver in dups:
+            rows = c.execute(
+                select(trips.c.id, trips.c.job_id, trips.c.file_name, trips.c.net_earnings)
+                .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+                .where(trips.c.committed == 1, trips.c.booking_code == code,
+                       jobs.c.driver_name == driver)
+                .order_by(trips.c.id)).mappings().all()
+            for r in rows[1:]:  # keep the first, drop the rest
+                kids = c.execute(delete(trips).where(trips.c.merged_into == r["id"])).rowcount
+                c.execute(delete(ingested_files).where(ingested_files.c.trip_id == r["id"]))
+                c.execute(delete(trips).where(trips.c.id == r["id"]))
+                removed.append({"driver_name": driver, "code": code, "trip_id": r["id"],
+                                "job_id": r["job_id"], "file_name": r["file_name"],
+                                "net": r["net_earnings"] or 0, "merged_children": kids})
+    return removed
+
+
 def mark_orphan_bottom_duplicates(job_id) -> int:
     """A code-less lower half that never paired is either (a) the other half of a trip already
     counted — its amount matches an approved row in the same job, so flag it as a duplicate for

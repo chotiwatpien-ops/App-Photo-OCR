@@ -230,6 +230,34 @@ def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True):
     return errors, failed
 
 
+def cleanup(drive, exports_id, delete_job_ids=None, dedupe=False) -> int:
+    """User-ordered data cleanup: drop whole jobs (duplicate manual uploads) and/or remove
+    approved rows that repeat a booking code for the same rider. Rewrites the workbook after."""
+    if delete_job_ids:
+        for r in db.delete_jobs(delete_job_ids):
+            if r["found"]:
+                log(f"🗑 ลบ job #{r['job_id']} {r['driver_name']} ({r['date_from']}) — {r['trips']} แถว")
+            else:
+                log(f"   (ไม่พบ job #{r['job_id']})")
+    if dedupe:
+        removed = db.dedupe_approved_trips()
+        baht = sum(r["net"] for r in removed)
+        for r in removed[:60]:
+            log(f"🗑 ซ้ำ: {r['driver_name']} {r['file_name']} (job #{r['job_id']}, "
+                f"code {r['code']}, ฿{r['net']:g})")
+        if len(removed) > 60:
+            log(f"   ... และอีก {len(removed) - 60} แถว")
+        log(f"🧹 ลบแถวที่อนุมัติซ้ำของไรเดอร์คนเดียวกัน {len(removed)} แถว (฿{baht:,.0f})")
+    rows = db.query_trips(committed_only=True)
+    try:
+        drive.upload_xlsx(exports_id, "Rider Trips.xlsx", excel_writer.build_workbook(rows))
+        log(f"📄 อัพเดต Rider Trips.xlsx: เหลือ {len(rows)} แถว")
+    except Exception as e:  # noqa: BLE001
+        log(f"✗ upload xlsx: {e}")
+        return 1
+    return 0
+
+
 def fix_hidden_turbo() -> int:
     """Maintenance pass (no Drive, no Gemini): waiting rows that fail the check with a small
     positive net−base gap and bonus/turbo both 0 are the 'collapsed-accordion' family — the
@@ -464,6 +492,9 @@ def main():
     ap.add_argument("--exports-only", action="store_true", help="regenerate Excel + customer images for existing jobs")
     ap.add_argument("--fix-hidden-turbo", action="store_true",
                     help="DB-only maintenance: fill small net-base gaps (collapsed sections) into Turbo")
+    ap.add_argument("--delete-jobs", metavar="IDS", help="comma-separated job ids to delete")
+    ap.add_argument("--dedupe-approved", action="store_true",
+                    help="delete approved rows repeating a booking code for the same rider")
     ap.add_argument("--redo-model", metavar="SUBSTR",
                     help="delete trips read by a model matching SUBSTR, then re-read them this run")
     ap.add_argument("--only", help="comma-separated substrings of rider folder paths to process, e.g. '01 อภิชาติ,01 ปัญญา'")
@@ -489,6 +520,9 @@ def main():
         log(f"Drive auth: {drive.mode}" + ("" if drive.mode == "oauth" else "  (service account = อ่านได้ เขียนไม่ได้ — รัน drive_auth.py เพื่อเขียนกลับ)"))
         inbox = config.DRIVE_INBOX_FOLDER_ID
         exports = a.exports or config.DRIVE_EXPORTS_FOLDER_ID
+    if a.delete_jobs or a.dedupe_approved:
+        ids = [int(x) for x in (a.delete_jobs or "").replace(" ", "").split(",") if x]
+        sys.exit(cleanup(drive, exports, delete_job_ids=ids, dedupe=a.dedupe_approved))
     if a.exports_only:
         errors, _ = export_only(drive, exports)
     else:
