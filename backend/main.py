@@ -205,6 +205,14 @@ def commit(job_id: int, force: bool = False):
         names = [f"{d['file_name']} (job #{d['job_id']})" for d in same_rider[:5]]
         raise HTTPException(409, f"เที่ยวเหล่านี้ของไรเดอร์คนนี้อนุมัติไปแล้ว: {', '.join(names)} — "
                                  f"ลบรูปที่ซ้ำออกก่อน (กดยืนยันข้ามไม่ได้ เพราะจะทำให้เงินซ้ำ)")
+    from collections import Counter
+    repeats = [c for c, n in Counter(t["booking_code"] for t in done if t["booking_code"]).items()
+               if n > 1]
+    if repeats:
+        files = [t["file_name"] for t in done if t["booking_code"] in repeats]
+        raise HTTPException(409, f"ชุดนี้มีเที่ยวเดียวกันซ้ำกันเอง {len(repeats)} รหัส "
+                                 f"({', '.join(files[:5])}) — ลบรูปซ้ำออกก่อน "
+                                 f"(กดยืนยันข้ามไม่ได้ เพราะจะทำให้เงินซ้ำ)")
     if not force:
         dup_in_job = [t["file_name"] for t in done if t["duplicate_of"]]
         if dup_in_job:

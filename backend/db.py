@@ -752,7 +752,8 @@ def review_queue():
 def approve_trip(trip_id) -> dict:
     """Approve a single row (after a person looked at it) and sync its job's status."""
     with engine.begin() as c:
-        t = c.execute(select(trips.c.job_id, trips.c.status, trips.c.trip_date)
+        t = c.execute(select(trips.c.job_id, trips.c.status, trips.c.trip_date,
+                             trips.c.booking_code)
                       .where(trips.c.id == trip_id)).mappings().first()
         if not t:
             return {"error": "not found"}
@@ -760,6 +761,19 @@ def approve_trip(trip_id) -> dict:
             return {"error": "ยังอ่านไม่เสร็จ"}
         if not t["trip_date"]:
             return {"error": "ยังไม่ได้ระบุวันที่"}
+        # money guard: this rider already has this trip approved — approving it again is the
+        # exact path that put 52 duplicate rows in the workbook
+        if t["booking_code"]:
+            driver = c.execute(select(jobs.c.driver_name)
+                               .where(jobs.c.id == t["job_id"])).scalar()
+            twin = c.execute(select(trips.c.file_name)
+                             .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+                             .where(trips.c.committed == 1,
+                                    trips.c.booking_code == t["booking_code"],
+                                    jobs.c.driver_name == driver,
+                                    trips.c.id != trip_id).limit(1)).scalar()
+            if twin:
+                return {"error": f"เที่ยวนี้อนุมัติไปแล้ว ({twin}) — ถ้าเป็นรูปซ้ำให้กดลบแทน"}
         c.execute(update(trips).where(trips.c.id == trip_id)
                   .values(committed=1, auto_approved=0, image_blob=None))
         c.execute(update(trips).where(trips.c.merged_into == trip_id).values(image_blob=None))
