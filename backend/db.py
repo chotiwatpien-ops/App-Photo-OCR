@@ -422,7 +422,9 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
     fresh_ids = set(fresh_ids or ())
     with engine.begin() as c:
         rows = c.execute(select(trips.c.id, trips.c.check_status, trips.c.duplicate_of,
-                                trips.c.booking_code, trips.c.trip_date, trips.c.kind)
+                                trips.c.booking_code, trips.c.trip_date, trips.c.kind,
+                                trips.c.net_earnings, trips.c.base_fare, trips.c.file_name,
+                                trips.c.note)
                          .where(trips.c.job_id == job_id, trips.c.status == "done",
                                 trips.c.committed == 0)).mappings().all()
         paired = {r[0] for r in c.execute(select(trips.c.merged_into)
@@ -451,6 +453,35 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
                   and (not r["booking_code"] or r["booking_code"] not in seen)
                   # a top half read this very round with no lower half yet: wait one round
                   and not (r["kind"] == "top" and r["id"] in fresh_ids and r["id"] not in paired)]
+        # A code-less lower half whose amount equals a full/top row approved in the SAME batch is
+        # that trip's other half, not a second trip. mark_orphan_bottom_duplicates() only compares
+        # against rows already committed, so a pair arriving together walked straight past it and
+        # the money landed in the workbook twice. Measured 2026-08-27, when a weaker model read
+        # every upper half as a whole screenshot: 25 such pairs, ฿7,258, in a single round.
+        by_id = {r["id"]: r for r in rows}
+
+        def _amount(r):
+            return r["net_earnings"] if r["net_earnings"] is not None else r["base_fare"]
+
+        kept = []
+        for tid in ok_ids:
+            r = by_id[tid]
+            a = _amount(r)
+            twin = None
+            if r["kind"] == "bottom" and not r["booking_code"] and tid not in paired and a is not None:
+                twin = next((by_id[o] for o in ok_ids
+                             if o != tid and by_id[o]["kind"] in ("full", "top")
+                             and _amount(by_id[o]) is not None
+                             and abs(_amount(by_id[o]) - a) <= 0.01), None)
+            if twin is None:
+                kept.append(tid)
+                continue
+            msg = f"ครึ่งล่างของ {twin['file_name']} ที่อนุมัติในรอบเดียวกัน (ยอด {a:,.0f} ตรงกัน) — ไม่นับซ้ำ"
+            c.execute(update(trips).where(trips.c.id == tid)
+                      .values(duplicate_of=twin["id"],
+                              note=f"{msg} | {r['note']}" if r["note"] else msg))
+        ok_ids = kept
+
         if ok_ids:
             c.execute(update(trips).where(trips.c.id.in_(ok_ids))
                       .values(committed=1, auto_approved=1, image_blob=None))
