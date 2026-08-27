@@ -2,10 +2,10 @@ name: Weekly ingest (Drive → Gemini → DB → Excel)
 
 on:
   schedule:
-    # GitHub queues scheduled runs and drops them under load; the top of the hour is the
-    # busiest slot, so both rounds sit at :23 (history showed 16-31 min slips at :00)
-    - cron: "23 22 * * *"           # 05:23 Asia/Bangkok, daily (UTC+7)
-    - cron: "23 8 * * *"            # 15:23 Asia/Bangkok
+    # Every 4 hours. A batch round only submits and collects, so six rounds a day cost less
+    # runner time than the two live rounds did — and the shorter gap is what hides the batch
+    # queue's own delay from Ops. :23 because GitHub drops scheduled runs at busy o'clock slots.
+    - cron: "23 1,5,9,13,17,21 * * *"   # 08:23 12:23 16:23 20:23 00:23 04:23 Asia/Bangkok
   workflow_dispatch:
     inputs:
       dry_run:
@@ -40,6 +40,10 @@ on:
         description: "ลบแถวอนุมัติซ้ำ (booking code ซ้ำของไรเดอร์คนเดียวกัน)"
         type: boolean
         default: false
+      live_read:
+        description: "อ่านสดรอบนี้ (ไม่ใช้ batch) — ผลมาทันทีแต่จ่ายเต็มราคา"
+        type: boolean
+        default: false
       redo_model:
         description: "อ่านใหม่เฉพาะงานที่โมเดลนี้เคยอ่าน เช่น flash-lite (ตั้งช่อง model ข้างบนเป็นตัวที่จะใช้อ่านแทน)"
         type: string
@@ -70,6 +74,7 @@ jobs:
           DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
           DRIVE_EXPORTS_FOLDER_ID: ${{ secrets.DRIVE_EXPORTS_FOLDER_ID }}
           GEMINI_MODEL: ${{ github.event.inputs.model || vars.GEMINI_MODEL || 'gemini-3.7-flash' }}
+          INGEST_BATCH: ${{ github.event.inputs.live_read == 'true' && '0' || '1' }}
           INGEST_PARALLEL: "24"
           DRIVE_PARALLEL: "8"
         run: |

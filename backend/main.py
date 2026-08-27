@@ -288,8 +288,11 @@ def job_images_zip(job_id: int):
 
 @app.get("/api/weeks")
 def weeks():
+    open_b = db.open_batches()
     return {"weeks": db.weeks_overview(), "last_run": db.latest_ingest_run(),
             "runs": db.list_ingest_runs(10), "issues": db.list_ingest_issues(50),
+            "batch_waiting": sum(b.get("n_trips") or 0 for b in open_b),
+            "batch_since": (open_b[0]["created_at"] if open_b else None),
             "can_trigger": bool(config.GITHUB_TOKEN and config.GITHUB_REPO),
             "exports_folder": config.DRIVE_EXPORTS_FOLDER_ID, "inbox_folder": config.DRIVE_INBOX_FOLDER_ID}
 

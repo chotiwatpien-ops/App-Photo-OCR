@@ -113,6 +113,10 @@ _tb = _setting("GEMINI_THINKING_BUDGET", "thinking_budget", 0)
 GEMINI_THINKING_BUDGET = int(_tb) if _tb not in (None, "") else None
 MAX_PARALLEL_EXTRACTIONS = int(_setting("MAX_PARALLEL", "max_parallel", 4))      # web app
 INGEST_PARALLEL = int(_setting("INGEST_PARALLEL", "ingest_parallel", 12))        # Gemini calls in ingest
+# Batch API for scheduled rounds: half the token price, and a round submits instead of waiting
+# for Gemini (30 min of GitHub runner per round became ~3). Results arrive the FOLLOWING round.
+# The web app's manual upload always reads live — Ops is standing there waiting for it.
+INGEST_BATCH = str(_setting("INGEST_BATCH", "ingest_batch", "1")).lower() in ("1", "true", "yes")
 DRIVE_PARALLEL = int(_setting("DRIVE_PARALLEL", "drive_parallel", 8))            # Drive uploads/downloads
 
 # Sheet1 "Time" band source. The Grab trip screen has NO trip time — only the phone clock at

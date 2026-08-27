@@ -399,7 +399,20 @@ def process_trip(trip_id: int, job_id: int) -> str:
         img = db.get_trip_image(trip_id)
         if not img:
             raise RuntimeError("image missing")
-        data = extractor.extract_image(img[0], img[1])
+        return apply_extraction(trip_id, job_id, extractor.extract_image(img[0], img[1]))
+    except Exception as e:  # noqa: BLE001 - surface any failure on the trip row
+        db.update_trip(trip_id, {"status": "error", "error": str(e)[:500]})
+        db.refresh_job_status(job_id)
+        return "error"
+
+
+def apply_extraction(trip_id: int, job_id: int, data: dict) -> str:
+    """Persist one model reading, whatever produced it — a live call or a batch result.
+
+    Everything between the raw reading and the stored row lives here: the tip/bonus untangling,
+    the money repairs, the service rule, the duplicate check. A batch result must go through
+    exactly the same steps as a live one, or the two paths would drift apart."""
+    try:
         # Grab codes never contain whitespace — the model sometimes inserts a space at the
         # on-screen line wrap, which would defeat the duplicate check
         if data.get("booking_code"):
@@ -483,3 +496,9 @@ def process_trip(trip_id: int, job_id: int) -> str:
         return "error"
     finally:
         db.refresh_job_status(job_id)
+
+
+def mark_trip_error(trip_id: int, job_id: int, message: str) -> str:
+    db.update_trip(trip_id, {"status": "error", "error": str(message)[:500]})
+    db.refresh_job_status(job_id)
+    return "error"

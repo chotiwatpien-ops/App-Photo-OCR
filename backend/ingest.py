@@ -18,6 +18,7 @@ Usage:
     python ingest.py --limit 20           # cap images this run
 """
 import argparse
+import collections
 import hashlib
 import os
 import re
@@ -26,6 +27,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
+import batch_client
 import db
 import excel_writer
 import pipeline
@@ -193,6 +195,68 @@ def discover(drive, inbox_id):
     return items, skipped
 
 
+def collect_batches(drive, exports_id):
+    """Pick up whatever the batch queue has finished since the last round.
+
+    Everything downstream of the reading — pairing, dates, customer images, auto-approve — runs
+    here, because until the answers arrive there is nothing to pair or approve. A batch that
+    failed or expired hands its images back as ordinary pending rows, which the next round
+    reads the live way, so a bad batch costs time and not data."""
+    open_jobs = db.open_batches()
+    if not open_jobs:
+        return 0, 0, set(), []
+    done_trips = errors = 0
+    issues, touched_jobs, waiting = [], set(), 0
+    fresh_by_job = collections.defaultdict(list)   # read THIS round — a lone top waits one more
+    for b in open_jobs:
+        try:
+            state, data, errs = batch_client.collect(b["name"])
+        except Exception as e:  # noqa: BLE001
+            log(f"  ✗ อ่านสถานะ batch {b['name'][-12:]} ไม่ได้: {str(e)[:120]}")
+            errors += 1
+            continue
+        if not state.endswith(("SUCCEEDED", "FAILED", "CANCELLED", "EXPIRED")):
+            db.touch_batch(b["name"], state)
+            waiting += b["n_trips"] or 0
+            continue
+        pairs = dict(db.batch_trip_jobs(b["name"]))
+        for tid, jid in pairs.items():
+            if tid in data:
+                if pipeline.apply_extraction(tid, jid, data[tid]) == "done":
+                    done_trips += 1
+                else:
+                    errors += 1
+                fresh_by_job[jid].append(tid)
+                touched_jobs.add(jid)
+            elif tid in errs:
+                pipeline.mark_trip_error(tid, jid, errs[tid])
+                errors += 1
+                issues.append((f"batch:{tid}", "process", f"batch อ่านรูป #{tid} ไม่สำเร็จ: {errs[tid]}"))
+                touched_jobs.add(jid)
+        left = [t for t in pairs if t not in data and t not in errs]
+        note = None
+        if left:
+            # no answer for these — hand them back for the ordinary path to read next round
+            note = f"ไม่ได้คำตอบ {len(left)} รูป — จะอ่านแบบปกติในรอบถัดไป"
+            log(f"  ⚠ batch {b['name'][-12:]}: {note}")
+        db.close_batch(b["name"], state, note)
+        log(f"  📥 เก็บผล batch {b['name'][-12:]} ({state.replace('JOB_STATE_', '')}): "
+            f"อ่านสำเร็จ {len(data)} · พลาด {len(errs)}")
+    if waiting:
+        log(f"  ⏳ ยังรอผล batch อีก {waiting} รูป — รอบถัดไปมาเก็บ")
+    if touched_jobs:
+        for jid, d1, d2 in db.jobs_dates(touched_jobs):
+            pairs_n = pipeline.pair_fragments(jid)
+            pipeline.spread_dates(jid, d1, d2, only_missing=True)
+            st = db.auto_approve_job(jid, fresh_ids=fresh_by_job.get(jid, []))
+            log(f"  ✓ job #{jid}: จับคู่ {pairs_n} · อนุมัติอัตโนมัติ {st['approved']} · รอคน {st['flagged']}")
+        errs2, failed = export_only(drive, exports_id, only_job_ids=touched_jobs, with_xlsx=False)
+        errors += errs2
+        for jid in failed:
+            issues.append((f"images:{jid}", "images", f"อัพโหลดรูปส่งลูกค้า job #{jid} ไม่สำเร็จ"))
+    return done_trips, errors, touched_jobs, issues
+
+
 def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True):
     """Regenerate Excel + customer images for jobs already in the database (no reading).
     only_job_ids limits the sweep; returns (error_count, failed_job_ids)."""
@@ -339,9 +403,17 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         name_count[kk] = name_count.get(kk, 0) + 1
     display_names = {}
 
-    jobs_created = approved = flagged = errors = 0
+    jobs_created = approved = flagged = errors = submitted = 0
     processed_images = 0
     touched_weeks = set()
+
+    if config.INGEST_BATCH or db.open_batches():
+        got, errs, jobs_touched, batch_issues = collect_batches(drive, exports_id)
+        errors += errs
+        issues.extend(batch_issues)
+        if got or jobs_touched:
+            log(f"📥 เก็บผล batch รอบก่อน: อ่านได้ {got} รูป · {len(jobs_touched)} job")
+            touched_weeks.update((d1, d2) for _j, d1, d2 in db.jobs_dates(jobs_touched))
 
     n_norm = db.normalize_booking_codes()
     if n_norm:
@@ -452,6 +524,26 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
 
         if n_same:
             log(f"  ⏭ ข้ามรูปที่เนื้อหาซ้ำกับที่อ่านไปแล้ว {n_same} ใบ (ไม่เสียค่าอ่านซ้ำ)")
+
+        if config.INGEST_BATCH and trip_ids:
+            # hand the pile over and move on — the next round collects the answers and does the
+            # pairing, images and approvals for this job
+            try:
+                items = [(tid, *db.get_trip_image(tid)) for tid in trip_ids]
+                for b in batch_client.submit(items, display_name=f"job{job_id}"):
+                    db.record_batch(b["name"], b["model"], b["trips"], run_id)
+                    submitted += len(b["trips"])
+                log(f"  📤 ส่งเข้า batch {len(trip_ids)} รูป (ครึ่งราคา · ผลมารอบหน้า)")
+            except Exception as e:  # noqa: BLE001
+                log(f"  ✗ ส่ง batch ไม่สำเร็จ: {str(e)[:150]} — อ่านแบบปกติแทน")
+                issues.append((f"batch:{job_id}", "process", f"ส่ง batch ของ {rider} ไม่สำเร็จ: {str(e)[:200]}"))
+                with ThreadPoolExecutor(max_workers=INGEST_PARALLEL) as ex:
+                    ex.map(lambda tid: pipeline.process_trip(tid, job_id), trip_ids)
+            processed_images += len(group)
+            db.update_ingest_run_progress(run_id, files_new=processed_images,
+                                          auto_approved=approved, flagged=flagged)
+            continue
+
         with ThreadPoolExecutor(max_workers=INGEST_PARALLEL) as ex:
             results = list(ex.map(lambda tid: pipeline.process_trip(tid, job_id), trip_ids))
         errors += results.count("error")
@@ -514,7 +606,9 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     db.finish_ingest_run(run_id, files_new=len(new), files_skipped=len(items) - len(new),
                          jobs_created=jobs_created, auto_approved=approved, flagged=flagged,
                          errors=errors, notes="\n".join(skipped) or None)
-    log(f"เสร็จใน {time.time() - t0:.0f}s — ใหม่ {len(new)} · อนุมัติอัตโนมัติ {approved} · รอคน {flagged} · error {errors}")
+    sub = f" · ส่งเข้า batch {submitted} (ผลมารอบหน้า)" if submitted else ""
+    log(f"เสร็จใน {time.time() - t0:.0f}s — ใหม่ {len(new)} · อนุมัติอัตโนมัติ {approved} · "
+        f"รอคน {flagged}{sub} · error {errors}")
     return errors
 
 

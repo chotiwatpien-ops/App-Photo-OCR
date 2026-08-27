@@ -7,7 +7,7 @@ const fmt = (n) => (n ?? 0).toLocaleString('th-TH', { maximumFractionDigits: 0 }
 const driveFile = (id) => `https://drive.google.com/file/d/${id}/view`
 const driveFolder = (id) => `https://drive.google.com/drive/folders/${id}`
 
-function RunStatus({ run, canTrigger, onTriggered }) {
+function RunStatus({ run, canTrigger, onTriggered, batchWaiting = 0, batchSince = null }) {
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
   const running = run && !run.finished_at
@@ -49,11 +49,11 @@ function RunStatus({ run, canTrigger, onTriggered }) {
           )
         })()}
         {(() => {
-          // rounds are ~10h and ~14h apart; nothing for 16h means a schedule was skipped
+          // rounds are 4h apart now; nothing for 9h means at least two slots were skipped
           const last = run?.finished_at || run?.started_at
           if (!last || running) return null
           const hrs = (Date.now() - Date.parse(last.replace(' ', 'T'))) / 36e5
-          if (hrs < 16) return null
+          if (hrs < 9) return null
           return (
             <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
               ⏰ ไม่มีรอบดูดรูปมา {Math.floor(hrs)} ชั่วโมงแล้ว — รอบตามตารางอาจถูกข้าม
@@ -61,11 +61,17 @@ function RunStatus({ run, canTrigger, onTriggered }) {
             </p>
           )
         })()}
+        {batchWaiting > 0 && (
+          <p className="text-xs text-sky-800 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2 mt-2">
+            📤 ส่งรูปให้ AI อ่านแบบประหยัด (ครึ่งราคา) {batchWaiting.toLocaleString()} รูป — ผลจะเข้ามาในรอบถัดไป
+            {batchSince ? ` · ส่งเมื่อ ${batchSince.replace('T', ' ').slice(5, 16)}` : ''}
+          </p>
+        )}
         {run?.notes && <p className="text-xs text-amber-700 mt-1 whitespace-pre-line">⚠ {run.notes}</p>}
         {msg && <p className="text-xs text-slate-600 mt-1">{msg}</p>}
       </div>
       <div className="text-right text-xs text-slate-500">
-        <p>ตั้งเวลา: ทุกวัน 05:23 / 15:23</p>
+        <p>ตั้งเวลา: ทุก 4 ชม. (08:23 12:23 16:23 20:23 00:23 04:23)</p>
         <button onClick={trigger} disabled={busy || running || !canTrigger}
           title={canTrigger ? 'สั่ง GitHub Actions รันทันที' : 'ยังไม่ได้ตั้งค่า GITHUB_TOKEN — รันได้จากแท็บ Actions บน GitHub'}
           className="mt-1 bg-slate-900 hover:bg-slate-700 disabled:bg-slate-300 text-white rounded-lg px-4 py-2 text-sm font-medium">
@@ -120,7 +126,8 @@ export default function Home({ onOpenJob, onJobCreated }) {
 
   return (
     <div className="space-y-6">
-      <RunStatus run={data.last_run} canTrigger={data.can_trigger} onTriggered={() => setTimeout(load, 3000)} />
+      <RunStatus run={data.last_run} canTrigger={data.can_trigger} batchWaiting={data.batch_waiting}
+        batchSince={data.batch_since} onTriggered={() => setTimeout(load, 3000)} />
       <IssuesPanel issues={data.issues} />
       <RunsOverview runs={data.runs} />
 

@@ -84,7 +84,8 @@ trips = Table(
     Column("customer_image", Text),       # the delivered image's file name (e.g. 'นภสิทธิ์7.jpg') — traceback from Sheet1
     Column("kind", String(8)),            # full | top | bottom — which part of the trip screen the image shows
     Column("merged_into", Integer),       # bottom half folded into this trip id (status becomes 'merged')
-    Column("image_hash", String(40), index=True),  # sha1 of the image — catches re-uploaded duplicates
+    Column("image_hash", String(40), index=True),    # sha1 of the image — catches re-uploaded duplicates
+    Column("batch_name", String(200), index=True),   # set while a batch holds this image
 )
 
 # Drive files already pulled in — makes every ingest run idempotent
@@ -107,6 +108,19 @@ drive_files = Table(
     Column("drive_id", Text, nullable=False),
     Column("name", Text),
     Column("updated_at", String(19), nullable=False),
+)
+
+# batches handed to Gemini and not yet collected — a round submits, the next one picks up
+batch_jobs = Table(
+    "batch_jobs", meta,
+    Column("name", String(200), primary_key=True),   # "batches/xxxx" from the API
+    Column("model", Text),
+    Column("run_id", Integer),
+    Column("n_trips", Integer, default=0),
+    Column("state", String(32)),
+    Column("created_at", String(19), nullable=False),
+    Column("finished_at", String(19)),
+    Column("note", Text),
 )
 
 ingest_runs = Table(
@@ -180,6 +194,7 @@ def init_db():
         with engine.begin() as c:
             c.execute(text("ALTER TABLE ingest_runs ADD COLUMN IF NOT EXISTS files_total INTEGER"))
             c.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS image_hash VARCHAR(40)"))
+            c.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS batch_name VARCHAR(200)"))
 
 
 # ---------- jobs ----------
@@ -514,6 +529,43 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
                 "discarded": discarded}
 
 
+def record_batch(name, model, trip_ids, run_id=None) -> None:
+    """Remember a batch and mark the trips it holds, so nothing else touches them meanwhile."""
+    with engine.begin() as c:
+        c.execute(insert(batch_jobs).values(
+            name=name, model=model, run_id=run_id, n_trips=len(trip_ids),
+            state="JOB_STATE_PENDING", created_at=_now()))
+        if trip_ids:
+            c.execute(update(trips).where(trips.c.id.in_(trip_ids)).values(batch_name=name))
+
+
+def open_batches():
+    """Batches submitted and not yet collected, oldest first."""
+    with engine.begin() as c:
+        return [dict(r) for r in c.execute(
+            select(batch_jobs).where(batch_jobs.c.finished_at.is_(None))
+            .order_by(batch_jobs.c.created_at)).mappings().all()]
+
+
+def close_batch(name, state, note=None) -> None:
+    with engine.begin() as c:
+        c.execute(update(batch_jobs).where(batch_jobs.c.name == name)
+                  .values(state=state, finished_at=_now(), note=note))
+        c.execute(update(trips).where(trips.c.batch_name == name).values(batch_name=None))
+
+
+def touch_batch(name, state) -> None:
+    with engine.begin() as c:
+        c.execute(update(batch_jobs).where(batch_jobs.c.name == name).values(state=state))
+
+
+def batch_trip_jobs(name):
+    """(trip_id, job_id) still pending under this batch — what a collected result maps onto."""
+    with engine.begin() as c:
+        return [(r[0], r[1]) for r in c.execute(
+            select(trips.c.id, trips.c.job_id).where(trips.c.batch_name == name)).all()]
+
+
 def start_ingest_run() -> int:
     with engine.begin() as c:
         # a run that never finished = the previous job crashed mid-way — close it out so the
@@ -574,11 +626,15 @@ def normalize_booking_codes() -> int:
 
 def stuck_pending_trips():
     """(trip_id, job_id) rows left in 'pending' by a cancelled run — their files are already
-    recorded as ingested so nothing would ever retry them without this."""
+    recorded as ingested so nothing would ever retry them without this.
+
+    Rows a batch is still holding are NOT stuck: they carry batch_name and are waiting for an
+    answer that has been paid for. Re-reading those live would pay twice."""
     with engine.begin() as c:
         rows = c.execute(select(trips.c.id, trips.c.job_id)
                          .where(trips.c.status == "pending",
-                                trips.c.image_blob.isnot(None))).all()
+                                trips.c.image_blob.isnot(None),
+                                trips.c.batch_name.is_(None))).all()
         return [(r[0], r[1]) for r in rows]
 
 
