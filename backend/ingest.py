@@ -505,6 +505,14 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
                                    admin=meta.get("admin"))
             jobs_created += 1
         db.set_job_status(job_id, "running")
+        if re.fullmatch(r"\d+", rider or ""):
+            # the folder is a bare number — Ops made it and never typed the name. The money is
+            # real so it still gets read, but a rider called "01" ends up in Sheet1 and in the
+            # customer image names, and renaming the folder later starts a SECOND job.
+            msg = (f"โฟลเดอร์ '{meta.get('folder_name')}' ไม่มีชื่อไรเดอร์ (เป็นเลข '{rider}') — "
+                   f"แก้ชื่อโฟลเดอร์บน Drive ให้มีชื่อคนก่อนรอบหน้า ไม่งั้นชื่อนี้จะไปโผล่ใน Excel")
+            log(f"  ⚠ {msg}")
+            issues.append((f"noname:{job_id}", "folder", msg))
         kk = (d_from, d_to, meta.get("category"), rider)
         dup_here = name_count.get(kk, 0) > 1 or db.name_shared_in_group(rider, d_from, d_to, meta.get("category"), job_id)
         display_names[job_id] = f"{rider}-{meta.get('admin')}" if (dup_here and meta.get("admin")) else rider

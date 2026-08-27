@@ -74,6 +74,7 @@ jobs:
           DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
           DRIVE_EXPORTS_FOLDER_ID: ${{ secrets.DRIVE_EXPORTS_FOLDER_ID }}
           GEMINI_MODEL: ${{ github.event.inputs.model || vars.GEMINI_MODEL || 'gemini-3.7-flash' }}
+          TZ: Asia/Bangkok        # runner clock is UTC; the app stamps Bangkok — keep logs comparable
           INGEST_BATCH: ${{ github.event.inputs.live_read == 'true' && '0' || '1' }}
           INGEST_PARALLEL: "24"
           DRIVE_PARALLEL: "8"
