@@ -219,6 +219,26 @@ def get_job(job_id):
         return {**dict(j), "trips": [dict(r) for r in rows]}
 
 
+def rename_job(job_id, new_name):
+    """Put the rider's real name on a job — for folders Ops created as a bare number.
+
+    Only the job carries the name; the trips point at it, so one update fixes Sheet1, the
+    customer image names and the duplicate checks at once. Renaming BEFORE the folder is fixed
+    on Drive is safe: the next round matches on rider+week+category+admin, so once the Drive
+    folder says the same name it lands back on this job instead of starting a second one."""
+    name = (new_name or "").strip()
+    if not name:
+        raise ValueError("ต้องมีชื่อ")
+    with engine.begin() as c:
+        old = c.execute(select(jobs.c.driver_name).where(jobs.c.id == job_id)).scalar()
+        if old is None:
+            return None
+        c.execute(update(jobs).where(jobs.c.id == job_id).values(driver_name=name))
+        n = c.execute(select(func.count()).select_from(trips)
+                      .where(trips.c.job_id == job_id)).scalar()
+    return {"job_id": job_id, "old": old, "new": name, "trips": n}
+
+
 def set_job_status(job_id, status):
     with engine.begin() as c:
         c.execute(update(jobs).where(jobs.c.id == job_id).values(status=status))

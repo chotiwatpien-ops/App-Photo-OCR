@@ -43,6 +43,7 @@ export const api = {
   weeks: () => fetch('/api/weeks').then(handle),
   batches: () => fetch('/api/batches').then(handle),
   collectBatches: () => fetch('/api/batches/collect', { method: 'POST' }).then(handle),
+  renameJobRider: (jobId, name) => fetch(`/api/jobs/${jobId}/rider`, json('PATCH', { name })).then(handle),
   triggerIngest: () => fetch('/api/ingest/trigger', { method: 'POST' }).then(handle),
   summary: (params = {}) => fetch(`/api/summary?${new URLSearchParams(params)}`).then(handle),
   trips: (params = {}) => fetch(`/api/trips?${new URLSearchParams(params)}`).then(handle),

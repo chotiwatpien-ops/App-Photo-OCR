@@ -82,7 +82,18 @@ function RunStatus({ run, canTrigger, onTriggered, batchWaiting = 0, batchSince 
   )
 }
 
-function JobRow({ j, onOpen }) {
+function JobRow({ j, onOpen, onRenamed }) {
+  const rename = async () => {
+    const name = prompt(`ชื่อไรเดอร์ของ job #${j.id}
+(โฟลเดอร์บน Drive ควรใช้ชื่อเดียวกัน ไม่งั้นรอบหน้าจะสร้าง job ใหม่)`, j.driver_name)
+    if (!name || name.trim() === j.driver_name) return
+    try {
+      const r = await api.renameJobRider(j.id, name.trim())
+      alert(`เปลี่ยนชื่อ ${r.old} → ${r.new} แล้ว (${r.trips} แถว)`)
+      onRenamed && onRenamed()
+    } catch (e) { alert(e.message) }
+  }
+
   const st = j.pending ? ['กำลังอ่าน', 'bg-amber-100 text-amber-700']
     : j.waiting ? [`รอคน ${j.waiting}`, 'bg-red-100 text-red-700']
     : j.done ? ['ครบ', 'bg-emerald-100 text-emerald-700'] : ['ว่าง', 'bg-slate-100 text-slate-500']
@@ -90,6 +101,12 @@ function JobRow({ j, onOpen }) {
     <tr className="border-b border-slate-100 hover:bg-slate-50">
       <td className="py-1.5 pr-3 font-medium">{j.driver_name}
         {!j.category && <span className="ml-2 text-[10px] text-slate-400 border border-slate-200 rounded px-1">มือ</span>}
+        {/^\d+$/.test(j.driver_name || '') && (
+          <span className="ml-2 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1"
+            title="โฟลเดอร์บน Drive ไม่มีชื่อคน — แก้ก่อนแถวเข้า Excel">ไม่มีชื่อ</span>
+        )}
+        <button onClick={rename} title="เปลี่ยนชื่อไรเดอร์ของ job นี้"
+          className="ml-2 text-slate-300 hover:text-blue-600 text-xs">✎</button>
       </td>
       <td className="py-1.5 pr-3 text-right tabular-nums text-slate-500">{j.images}</td>
       <td className="py-1.5 pr-3 text-right tabular-nums">{j.done}</td>
@@ -286,7 +303,7 @@ export default function Home({ onOpenJob, onJobCreated }) {
                       <th className="py-1 pr-3">ไรเดอร์</th><th className="py-1 pr-3 text-right">รูป</th><th className="py-1 pr-3 text-right">งาน</th>
                       <th className="py-1 pr-3 text-right">อนุมัติ</th><th className="py-1 pr-3 text-right">รายได้</th><th className="py-1 pr-3">สถานะ</th><th></th>
                     </tr></thead>
-                    <tbody>{g.jobs.map((j) => <JobRow key={j.id} j={j} onOpen={onOpenJob} />)}</tbody>
+                    <tbody>{g.jobs.map((j) => <JobRow key={j.id} j={j} onOpen={onOpenJob} onRenamed={load} />)}</tbody>
                   </table>
                 </div>
               ))}

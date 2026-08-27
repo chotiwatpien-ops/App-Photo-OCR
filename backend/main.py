@@ -419,6 +419,18 @@ def cron_ingest(min_gap_hours: float = 4.0):
     return {"ok": _dispatch_ingest(), "dispatched_at": db._now()}
 
 
+@app.patch("/api/jobs/{job_id}/rider")
+async def rename_job_rider(job_id: int, body: dict):
+    """Rename the rider on a job — for a Drive folder that arrived without a name."""
+    try:
+        r = db.rename_job(job_id, body.get("name"))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not r:
+        raise HTTPException(404, f"ไม่พบ job #{job_id}")
+    return r
+
+
 @app.get("/api/drivers")
 def drivers():
     return {"drivers": db.list_drivers()}
