@@ -58,7 +58,7 @@ def _diag_ok(request: Request) -> bool:
 @app.middleware("http")
 async def auth_gate(request: Request, call_next):
     p = request.url.path
-    if p.startswith("/api/diag/"):
+    if p.startswith("/api/diag/") or p == "/api/ingest/cron":
         if _diag_ok(request) or _logged_in(request):
             return await call_next(request)
         return JSONResponse({"detail": "diag_key_required"}, status_code=401)
@@ -329,9 +329,7 @@ def completeness():
     return {"weeks": out, "expected": exp}
 
 
-@app.post("/api/ingest/trigger")
-def trigger_ingest():
-    """Kick the GitHub Actions ingest workflow (workflow_dispatch)."""
+def _dispatch_ingest():
     if not (config.GITHUB_TOKEN and config.GITHUB_REPO):
         raise HTTPException(501, "ยังไม่ได้ตั้งค่า GITHUB_TOKEN / GITHUB_REPO — ตั้งแล้วปุ่มนี้จะสั่งรันได้")
     import urllib.request
@@ -342,10 +340,39 @@ def trigger_ingest():
         "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
-            status = r.status
+            return r.status in (200, 204)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"สั่ง GitHub ไม่สำเร็จ: {str(e)[:200]}")
-    return {"ok": status in (200, 204), "url": f"https://github.com/{config.GITHUB_REPO}/actions"}
+
+
+@app.post("/api/ingest/trigger")
+def trigger_ingest():
+    """Kick the GitHub Actions ingest workflow (workflow_dispatch)."""
+    return {"ok": _dispatch_ingest(), "url": f"https://github.com/{config.GITHUB_REPO}/actions"}
+
+
+@app.get("/api/ingest/cron")
+@app.post("/api/ingest/cron")
+def cron_ingest(min_gap_hours: float = 4.0):
+    """Start a round from OUTSIDE GitHub, for a free external cron service to call.
+
+    GitHub's own scheduler is the weak link: it silently dropped both of 2026-08-27's rounds
+    and habitually runs 27-31 minutes late. This endpoint takes the diag key instead of a
+    login, refuses to pile a second round on top of a running one, and ignores calls that
+    come too soon after the last round — so a pinger firing more often than intended, or
+    twice by accident, costs nothing."""
+    runs = db.list_ingest_runs(1)
+    last = runs[0] if runs else None
+    if last and not last.get("finished_at"):
+        return {"ok": False, "skipped": "มีรอบกำลังรันอยู่", "run": last.get("started_at")}
+    if last and last.get("started_at"):
+        from datetime import datetime
+        age = (datetime.now(db._TZ_BKK).replace(tzinfo=None)
+               - datetime.fromisoformat(last["started_at"])).total_seconds() / 3600
+        if age < min_gap_hours:
+            return {"ok": False, "skipped": f"รอบล่าสุดเพิ่งจบไป {age:.1f} ชม.",
+                    "run": last.get("started_at")}
+    return {"ok": _dispatch_ingest(), "dispatched_at": db._now()}
 
 
 @app.get("/api/drivers")
