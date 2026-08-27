@@ -6,7 +6,7 @@ Cloud (Render) env vars:
   GEMINI_API_KEY    Gemini key                      — default: photo_ocr_config.json / Voice QA config
   APP_PASSWORD      shared login password           — default: no login (local dev)
   SECRET_KEY        cookie signing secret           — default: generated once into DATA_DIR
-  GEMINI_MODEL      e.g. gemini-3.7-flash
+  GEMINI_MODEL      e.g. gemini-3.5-flash-lite (team choice 2026-08-27; 3.7-flash is the accurate/pricier option)
 """
 import json
 import os
@@ -85,7 +85,7 @@ DIAG_KEY = _setting("DIAG_KEY", "diag_key", None)
 #   gemini-3.7-flash  thinking=low   ฿0.09/img  (default — user's plan)
 #   gemini-2.5-flash  thinking=0     ฿0.03/img  (cheapest; set "model": "gemini-2.5-flash")
 #   gemini-2.5-flash  thinking=auto  ฿0.13/img  (never use — ~1,000 hidden thinking tokens/img)
-GEMINI_MODEL = _setting("GEMINI_MODEL", "model", "gemini-3.7-flash")
+GEMINI_MODEL = _setting("GEMINI_MODEL", "model", "gemini-3.5-flash-lite")
 GEMINI_THINKING_LEVEL = _setting("GEMINI_THINKING_LEVEL", "thinking_level", "low")
 _tb = _setting("GEMINI_THINKING_BUDGET", "thinking_budget", 0)
 GEMINI_THINKING_BUDGET = int(_tb) if _tb not in (None, "") else None

@@ -65,7 +65,7 @@ jobs:
           DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.DRIVE_OAUTH_TOKEN_JSON }}
           DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
           DRIVE_EXPORTS_FOLDER_ID: ${{ secrets.DRIVE_EXPORTS_FOLDER_ID }}
-          GEMINI_MODEL: ${{ github.event.inputs.model || vars.GEMINI_MODEL || 'gemini-3.7-flash' }}
+          GEMINI_MODEL: ${{ github.event.inputs.model || vars.GEMINI_MODEL || 'gemini-3.5-flash-lite' }}
           INGEST_PARALLEL: "24"
           DRIVE_PARALLEL: "8"
         run: |
