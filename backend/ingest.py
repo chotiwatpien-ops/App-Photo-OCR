@@ -128,7 +128,8 @@ def _rider_items(drive, folder, name, week_label_, d_from, d_to, category, skipp
     items = []
     for img in drive.list_images(folder["id"]):
         items.append({"file": img, "rider": name, "week": week_label_, "category": category, "admin": admin,
-                      "folder_name": folder_name, "date_from": d_from, "date_to": d_to, "trip_date": None})
+                      "folder_name": folder_name, "folder_id": folder["id"],
+                      "date_from": d_from, "date_to": d_to, "trip_date": None})
     for day in drive.list_folders(folder["id"]):
         dm = DATE_RE.match(day["name"].strip())
         if not dm:
@@ -136,7 +137,8 @@ def _rider_items(drive, folder, name, week_label_, d_from, d_to, category, skipp
             continue
         for img in drive.list_images(day["id"]):
             items.append({"file": img, "rider": name, "week": week_label_, "category": category, "admin": admin,
-                          "folder_name": folder_name, "date_from": d_from, "date_to": d_to,
+                          "folder_name": folder_name, "folder_id": folder["id"],
+                          "date_from": d_from, "date_to": d_to,
                           "trip_date": day["name"].strip()})
     return items
 
@@ -498,12 +500,20 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             issues.append((f"images:{jid}", "images", f"อัพโหลดรูปส่งลูกค้า job #{jid} ยังไม่สำเร็จ (ลองซ้ำแล้ว)"))
     for (rider, d_from, d_to), group in groups.items():
         meta = by_key[(rider, d_from, d_to)]
-        job_id = db.find_job(rider, d_from, d_to, meta.get("category"), meta.get("admin"))
+        folder_id = meta.get("folder_id")
+        job_id = (db.find_job_by_folder(folder_id, d_from)
+                  or db.find_job(rider, d_from, d_to, meta.get("category"), meta.get("admin")))
         if job_id is None:
             job_id = db.create_job(rider, excel_writer.SHEET, d_from, d_to,
                                    category=meta.get("category"), folder_name=meta.get("folder_name"),
-                                   admin=meta.get("admin"))
+                                   admin=meta.get("admin"), drive_folder_id=folder_id)
             jobs_created += 1
+        else:
+            moved = db.attach_folder(job_id, folder_id, rider, meta.get("folder_name"))
+            if moved.get("renamed"):
+                old_name, new_name = moved["renamed"]
+                log(f"  ✎ โฟลเดอร์ถูกเปลี่ยนชื่อที่ต้นทาง: '{old_name}' → '{new_name}' "
+                    f"— job #{job_id} ใช้ชื่อใหม่แล้ว (Excel/รูปส่งลูกค้าจะตามให้เอง)")
         db.set_job_status(job_id, "running")
         if re.fullmatch(r"\d+", rider or ""):
             # the folder is a bare number — Ops made it and never typed the name. The money is

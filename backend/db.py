@@ -30,6 +30,7 @@ jobs = Table(
     Column("category", String(32)),      # team's vehicle group: 4 W Standard | 4 W Saver | 2 W Standard | 2 W Saver
     Column("folder_name", Text),         # original rider folder path on Drive (mirrored into Exports)
     Column("admin", String(64)),         # which admin's folder the photos came from
+    Column("drive_folder_id", String(64), index=True),  # the rider folder itself — survives renames
 )
 
 trips = Table(
@@ -197,15 +198,18 @@ def init_db():
             c.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS image_hash VARCHAR(40)"))
             c.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS batch_name VARCHAR(200)"))
             c.execute(text("ALTER TABLE batch_jobs ADD COLUMN IF NOT EXISTS job_ids TEXT"))
+            c.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS drive_folder_id VARCHAR(64)"))
 
 
 # ---------- jobs ----------
 
-def create_job(driver_name, sheet, date_from, date_to, category=None, folder_name=None, admin=None) -> int:
+def create_job(driver_name, sheet, date_from, date_to, category=None, folder_name=None, admin=None,
+               drive_folder_id=None) -> int:
     with engine.begin() as c:
         r = c.execute(insert(jobs).values(
             driver_name=driver_name, sheet=sheet, date_from=date_from, date_to=date_to,
-            status="running", created_at=_now(), category=category, folder_name=folder_name, admin=admin))
+            status="running", created_at=_now(), category=category, folder_name=folder_name,
+            admin=admin, drive_folder_id=drive_folder_id))
         return r.inserted_primary_key[0]
 
 
@@ -739,6 +743,46 @@ def find_job(driver_name, date_from, date_to, category=None, admin=None):
         q = q.where(jobs.c.admin.is_(None) if admin is None else jobs.c.admin == admin)
         r = c.execute(q.order_by(jobs.c.id.desc()).limit(1)).first()
         return r[0] if r else None
+
+
+def find_job_by_folder(drive_folder_id, date_from):
+    """The job built from THIS Drive folder in this week — the identity that survives a rename.
+
+    Ops fixes a mis-named folder at the source ('01' becomes '01 สมชาย'), and a name-only match
+    would treat that as a new rider: a second job, the old one stuck with the wrong name, and
+    the rider's week split in two."""
+    if not drive_folder_id:
+        return None
+    with engine.begin() as c:
+        r = c.execute(select(jobs.c.id).where(jobs.c.drive_folder_id == drive_folder_id,
+                                              jobs.c.date_from == date_from)
+                      .order_by(jobs.c.id.desc()).limit(1)).first()
+        return r[0] if r else None
+
+
+def attach_folder(job_id, drive_folder_id, driver_name=None, folder_name=None):
+    """Record which Drive folder a job came from, and follow the folder's current name.
+
+    Returns {"renamed": (old, new)} when the folder has been renamed since last round, so the
+    round can say so — the workbook is rebuilt from these rows, so the fix reaches Sheet1 and
+    the customer image names by itself."""
+    out = {}
+    with engine.begin() as c:
+        j = c.execute(select(jobs.c.driver_name, jobs.c.drive_folder_id)
+                      .where(jobs.c.id == job_id)).mappings().first()
+        if not j:
+            return out
+        vals = {}
+        if drive_folder_id and j["drive_folder_id"] != drive_folder_id:
+            vals["drive_folder_id"] = drive_folder_id
+        if driver_name and driver_name != j["driver_name"]:
+            vals["driver_name"] = driver_name
+            out["renamed"] = (j["driver_name"], driver_name)
+        if folder_name:
+            vals["folder_name"] = folder_name
+        if vals:
+            c.execute(update(jobs).where(jobs.c.id == job_id).values(**vals))
+    return out
 
 
 def find_same_rider_code_conflicts(job_id, codes):
