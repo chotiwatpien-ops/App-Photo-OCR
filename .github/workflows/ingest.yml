@@ -25,7 +25,7 @@ on:
         type: boolean
         default: false
       model:
-        description: "Override model THIS run only (blank = default 3.7)"
+        description: "Override model THIS run only (blank = default 3.5-flash-lite)"
         type: string
         default: ""
       delete_jobs:
@@ -36,10 +36,10 @@ on:
         description: "ลบแถวอนุมัติซ้ำ (booking code ซ้ำของไรเดอร์คนเดียวกัน)"
         type: boolean
         default: false
-      redo_lite:
-        description: "ลบผลอ่านของโมเดล lite แล้วอ่านซ้ำด้วย 3.7 ในรอบนี้"
-        type: boolean
-        default: false
+      redo_model:
+        description: "อ่านใหม่เฉพาะงานที่โมเดลนี้เคยอ่าน เช่น flash-lite (ตั้งช่อง model ข้างบนเป็นตัวที่จะใช้อ่านแทน)"
+        type: string
+        default: ""
 
 concurrency:
   group: ingest
@@ -73,7 +73,7 @@ jobs:
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
           if [ "${{ github.event.inputs.exports_only }}" = "true" ]; then ARGS="$ARGS --exports-only"; fi
           if [ "${{ github.event.inputs.fix_hidden_turbo }}" = "true" ]; then ARGS="$ARGS --fix-hidden-turbo"; fi
-          if [ "${{ github.event.inputs.redo_lite }}" = "true" ]; then ARGS="$ARGS --redo-model flash-lite"; fi
+          if [ -n "${{ github.event.inputs.redo_model }}" ]; then ARGS="$ARGS --redo-model ${{ github.event.inputs.redo_model }}"; fi
           if [ -n "${{ github.event.inputs.delete_jobs }}" ]; then ARGS="$ARGS --delete-jobs ${{ github.event.inputs.delete_jobs }}"; fi
           if [ "${{ github.event.inputs.dedupe_approved }}" = "true" ]; then ARGS="$ARGS --dedupe-approved"; fi
           if [ -n "${{ github.event.inputs.limit }}" ]; then ARGS="$ARGS --limit ${{ github.event.inputs.limit }}"; fi
