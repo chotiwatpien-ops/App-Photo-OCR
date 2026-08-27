@@ -17,15 +17,8 @@ import extractor
 from drive_client import DriveClient
 from sqlalchemy import func, select
 
-# $/1M tokens (in, out) — thinking bills as output
-PRICE = {
-    "gemini-3.7-flash": (0.75, 3.75),
-    "gemini-3.5-flash-lite": (0.30, 2.50),
-    "gemini-3.1-flash-lite": (0.125, 0.75),
-    "gemini-2.5-flash": (0.30, 2.50),
-    "gemini-2.5-flash-lite": (0.10, 0.40),
-}
-THB = 35.0
+PRICE = config.GEMINI_PRICE
+THB = config.USD_THB
 MONEY_TOL = 0.01
 
 

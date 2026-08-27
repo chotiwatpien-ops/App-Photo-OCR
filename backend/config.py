@@ -86,6 +86,16 @@ DIAG_KEY = _setting("DIAG_KEY", "diag_key", None)
 #   gemini-2.5-flash  thinking=0     ฿0.03/img  (cheapest; set "model": "gemini-2.5-flash")
 #   gemini-2.5-flash  thinking=auto  ฿0.13/img  (never use — ~1,000 hidden thinking tokens/img)
 GEMINI_MODEL = _setting("GEMINI_MODEL", "model", "gemini-3.5-flash-lite")
+
+# $/1M tokens (in, out); thinking bills as output. Used by /api/diag/models and model_bench.
+GEMINI_PRICE = {
+    "gemini-3.7-flash": (0.75, 3.75),
+    "gemini-3.5-flash-lite": (0.30, 2.50),
+    "gemini-3.1-flash-lite": (0.125, 0.75),
+    "gemini-2.5-flash": (0.30, 2.50),
+    "gemini-2.5-flash-lite": (0.10, 0.40),
+}
+USD_THB = 35.0
 GEMINI_THINKING_LEVEL = _setting("GEMINI_THINKING_LEVEL", "thinking_level", "low")
 _tb = _setting("GEMINI_THINKING_BUDGET", "thinking_budget", 0)
 GEMINI_THINKING_BUDGET = int(_tb) if _tb not in (None, "") else None

@@ -450,6 +450,33 @@ def diag_summary():
             "runs": db.list_ingest_runs(10), "issues": db.list_ingest_issues(30)}
 
 
+@app.get("/api/diag/models")
+def diag_models(recent: int = 500):
+    """Which model actually read the trips, and what it cost — the check after a model switch."""
+    from sqlalchemy import func, select
+    t = db.trips.c
+
+    def rows(where=None):
+        q = select(t.model, func.count(), func.sum(t.tok_in), func.sum(t.tok_out),
+                   func.sum(t.tok_think), func.max(t.id)).group_by(t.model)
+        if where is not None:
+            q = q.where(where)
+        with db.engine.begin() as c:
+            out = []
+            for m, n, ti, to, tk, last in c.execute(q).all():
+                pin, pout = config.GEMINI_PRICE.get(m or "", (0.30, 2.50))
+                cost = ((ti or 0) * pin + ((to or 0) + (tk or 0)) * pout) / 1e6 * config.USD_THB
+                out.append({"model": m, "trips": n, "tok_in": ti or 0, "tok_out": to or 0,
+                            "tok_think": tk or 0, "baht": round(cost, 2),
+                            "baht_per_trip": round(cost / n, 4) if n else 0, "last_trip_id": last})
+            return sorted(out, key=lambda r: r["last_trip_id"] or 0, reverse=True)
+
+    with db.engine.begin() as c:
+        newest = c.execute(select(func.max(t.id))).scalar() or 0
+    return {"configured": config.GEMINI_MODEL, "all_time": rows(),
+            "recent": {"since_trip_id": max(0, newest - recent), "by_model": rows(t.id > newest - recent)}}
+
+
 @app.get("/api/diag/waiting")
 def diag_waiting(job_id: int = None, limit: int = 500):
     rows = db.review_queue()
