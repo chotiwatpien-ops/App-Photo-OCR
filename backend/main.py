@@ -321,6 +321,23 @@ def batches(limit: int = 20):
             "mode": "batch" if config.INGEST_BATCH else "live"}
 
 
+@app.post("/api/batches/collect")
+def collect_batches_now():
+    """Pull in whatever the batch reader has finished, without waiting for the next round.
+
+    Runs in the web app, which has no Drive credentials, so the customer images and the Drive
+    workbook still wait for a proper round — but the trips, the pairing and the approvals land
+    immediately, which is what Ops is looking at."""
+    import ingest
+    try:
+        got, errs, jobs_touched, _issues = ingest.collect_batches(None)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"เก็บผล batch ไม่สำเร็จ: {str(e)[:200]}")
+    still = db.open_batches()
+    return {"ok": True, "trips": got, "errors": errs, "jobs": len(jobs_touched),
+            "waiting": sum(b.get("n_trips") or 0 for b in still)}
+
+
 @app.get("/api/completeness")
 def completeness():
     """Per-week rider check: who is short of the expected trips, who sent nothing at all.

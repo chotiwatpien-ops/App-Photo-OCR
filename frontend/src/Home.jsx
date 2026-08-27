@@ -73,7 +73,7 @@ function RunStatus({ run, canTrigger, onTriggered, batchWaiting = 0, batchSince 
       <div className="text-right text-xs text-slate-500">
         <p>ตั้งเวลา: ทุก 4 ชม. (08:23 12:23 16:23 20:23 00:23 04:23)</p>
         <button onClick={trigger} disabled={busy || running || !canTrigger}
-          title={canTrigger ? 'สั่ง GitHub Actions รันทันที' : 'ยังไม่ได้ตั้งค่า GITHUB_TOKEN — รันได้จากแท็บ Actions บน GitHub'}
+          title={canTrigger ? 'สั่งรันรอบทันที: เก็บผล batch ที่อ่านเสร็จ แล้วส่งรูปใหม่เข้า batch (ผลของรูปใหม่จะมารอบถัดไป)' : 'ยังไม่ได้ตั้งค่า GITHUB_TOKEN — รันได้จากแท็บ Actions บน GitHub'}
           className="mt-1 bg-slate-900 hover:bg-slate-700 disabled:bg-slate-300 text-white rounded-lg px-4 py-2 text-sm font-medium">
           {busy ? 'กำลังสั่ง…' : running ? 'กำลังรันอยู่' : '▶ ดูดรูปตอนนี้'}
         </button>
@@ -123,9 +123,11 @@ function since(ts) {
   return h < 24 ? `${h} ชม. ${mins % 60} นาทีที่แล้ว` : `${Math.floor(h / 24)} วันที่แล้ว`
 }
 
-function BatchPanel() {
+function BatchPanel({ onCollected }) {
   const [data, setData] = useState(null)
   const [open, setOpen] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
   const load = useCallback(() => api.batches().then(setData).catch(() => {}), [])
   useEffect(() => { load() }, [load])
   useEffect(() => {
@@ -137,19 +139,44 @@ function BatchPanel() {
   if (rows.length === 0) return null
   const pending = rows.filter((b) => !b.finished_at)
   const waiting = pending.reduce((n, b) => n + (b.n_trips || 0), 0)
+  const ready = pending.filter((b) => b.state === 'JOB_STATE_SUCCEEDED')
+    .reduce((n, b) => n + (b.n_trips || 0), 0)
+
+  const collect = async () => {
+    setBusy(true); setMsg('')
+    try {
+      const r = await api.collectBatches()
+      setMsg(r.trips
+        ? `เก็บผลแล้ว ${r.trips} รูป · ${r.jobs} ไรเดอร์${r.waiting ? ` · ยังรออีก ${r.waiting} รูป` : ''} — รูปส่งลูกค้า/Excel บน Drive จะอัพเดตในรอบถัดไป`
+        : 'ยังไม่มีก้อนไหนอ่านเสร็จ — รอสักครู่แล้วลองใหม่')
+      load(); onCollected && onCollected()
+    } catch (err) { setMsg(err.message) } finally { setBusy(false) }
+  }
 
   return (
     <section className="bg-white rounded-xl border border-slate-200">
-      <button onClick={() => setOpen(!open)} className="w-full text-left px-5 py-3 text-sm flex flex-wrap items-center gap-2">
-        <span className="text-slate-400">{open ? '▾' : '▸'}</span>
-        <span className="text-slate-700 font-medium">งานที่ส่งให้ AI อ่าน (batch · ครึ่งราคา)</span>
+      <div className="px-5 py-3 text-sm flex flex-wrap items-center gap-2">
+        <button onClick={() => setOpen(!open)} className="text-left flex items-center gap-2">
+          <span className="text-slate-400">{open ? '▾' : '▸'}</span>
+          <span className="text-slate-700 font-medium">งานที่ส่งให้ AI อ่าน (batch · ครึ่งราคา)</span>
+        </button>
         {waiting > 0
           ? <span className="text-sky-700 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5 text-xs">
               กำลังรอผล {pending.length} ก้อน · {waiting.toLocaleString()} รูป
             </span>
           : <span className="text-slate-400 text-xs">ไม่มีก้อนที่ค้าง — ผลเข้าครบแล้ว</span>}
-        <span className="ml-auto text-xs text-slate-400">{rows.length} ก้อนล่าสุด</span>
-      </button>
+        <div className="ml-auto flex items-center gap-3">
+          {pending.length > 0 && (
+            <button onClick={collect} disabled={busy}
+              title="ดึงผลที่ AI อ่านเสร็จแล้วเข้าระบบทันที ไม่ต้องรอรอบถัดไป (รูปส่งลูกค้า/Excel บน Drive ยังต้องรอรอบ)"
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium ${busy ? 'bg-slate-300 text-white' : ready > 0 ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'border border-slate-300 text-slate-600 hover:bg-slate-50'}`}>
+              {busy ? 'กำลังเก็บ…' : ready > 0 ? `📥 เก็บผลตอนนี้ (${ready.toLocaleString()} รูปพร้อมแล้ว)` : '📥 เก็บผลตอนนี้'}
+            </button>
+          )}
+          <span className="text-xs text-slate-400">{rows.length} ก้อนล่าสุด</span>
+        </div>
+      </div>
+      {msg && <p className="px-5 pb-2 text-xs text-slate-600">{msg}</p>}
       {open && (
         <div className="px-5 pb-4 overflow-x-auto">
           <table className="w-full text-sm min-w-[720px]">
@@ -215,7 +242,7 @@ export default function Home({ onOpenJob, onJobCreated }) {
     <div className="space-y-6">
       <RunStatus run={data.last_run} canTrigger={data.can_trigger} batchWaiting={data.batch_waiting}
         batchSince={data.batch_since} onTriggered={() => setTimeout(load, 3000)} />
-      <BatchPanel />
+      <BatchPanel onCollected={load} />
       <IssuesPanel issues={data.issues} />
       <RunsOverview runs={data.runs} />
 

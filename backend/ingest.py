@@ -50,7 +50,17 @@ CATEGORIES = {"4 w standard", "4 w saver", "2 w standard", "2 w saver"}
 
 
 def log(msg):
-    print(time.strftime("%H:%M:%S"), msg, flush=True)
+    """Never let a log line kill a round. The web app collects batches through this same code,
+    and a uvicorn console on Windows is cp874 — one emoji there raised UnicodeEncodeError and
+    took the whole collection down with it."""
+    line = f"{time.strftime('%H:%M:%S')} {msg}"
+    try:
+        print(line, flush=True)
+    except UnicodeEncodeError:
+        enc = getattr(sys.stdout, "encoding", None) or "ascii"
+        print(line.encode(enc, "replace").decode(enc, "replace"), flush=True)
+    except Exception:  # noqa: BLE001 - logging must never be the thing that fails
+        pass
 
 
 def week_bounds(folder_name):
@@ -195,8 +205,11 @@ def discover(drive, inbox_id):
     return items, skipped
 
 
-def collect_batches(drive, exports_id):
+def collect_batches(drive, exports_id=None):
     """Pick up whatever the batch queue has finished since the last round.
+
+    drive=None collects without touching Drive — that is the web app's "เก็บผลตอนนี้" button,
+    which can put the readings in front of Ops even when GitHub is not running rounds at all.
 
     Everything downstream of the reading — pairing, dates, customer images, auto-approve — runs
     here, because until the answers arrive there is nothing to pair or approve. A batch that
@@ -250,10 +263,15 @@ def collect_batches(drive, exports_id):
             pipeline.spread_dates(jid, d1, d2, only_missing=True)
             st = db.auto_approve_job(jid, fresh_ids=fresh_by_job.get(jid, []))
             log(f"  ✓ job #{jid}: จับคู่ {pairs_n} · อนุมัติอัตโนมัติ {st['approved']} · รอคน {st['flagged']}")
-        errs2, failed = export_only(drive, exports_id, only_job_ids=touched_jobs, with_xlsx=False)
-        errors += errs2
-        for jid in failed:
-            issues.append((f"images:{jid}", "images", f"อัพโหลดรูปส่งลูกค้า job #{jid} ไม่สำเร็จ"))
+        if drive is None:
+            # collected from the web app, which has no Drive credentials — the numbers are in,
+            # the customer images and workbook follow on the next proper round
+            log("  ℹ เก็บผลจากหน้าเว็บ: รูปส่งลูกค้า/Excel บน Drive จะอัพเดตในรอบถัดไป")
+        else:
+            errs2, failed = export_only(drive, exports_id, only_job_ids=touched_jobs, with_xlsx=False)
+            errors += errs2
+            for jid in failed:
+                issues.append((f"images:{jid}", "images", f"อัพโหลดรูปส่งลูกค้า job #{jid} ไม่สำเร็จ"))
     return done_trips, errors, touched_jobs, issues
 
 
