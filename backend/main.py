@@ -304,17 +304,21 @@ def batches(limit: int = 20):
     The stored state only moves when a round collects, so an open batch is asked directly —
     otherwise the page would show 'รอคิว' for four hours after the work was actually done."""
     rows = db.recent_batches(limit)
-    for r in rows:
-        if not r.get("finished_at"):
-            try:
-                import batch_client
-                live = batch_client.state(r["name"])
-                if live and live != r["state"]:
-                    db.touch_batch(r["name"], live)
-                    r["state"] = live
-            except Exception as e:  # noqa: BLE001
-                r["state_error"] = str(e)[:120]
-    return {"batches": rows, "mode": "batch" if config.INGEST_BATCH else "live"}
+    open_rows = [r for r in rows if not r.get("finished_at")]
+    # a busy round leaves dozens of batches open; refreshing every one of them would make this
+    # page as slow as the queue is long, so only the newest few are asked
+    for r in open_rows[:8]:
+        try:
+            import batch_client
+            live = batch_client.state(r["name"])
+            if live and live != r["state"]:
+                db.touch_batch(r["name"], live)
+                r["state"] = live
+        except Exception as e:  # noqa: BLE001
+            r["state_error"] = str(e)[:120]
+    return {"batches": rows, "open": len(open_rows),
+            "waiting_images": sum(r.get("n_trips") or 0 for r in open_rows),
+            "mode": "batch" if config.INGEST_BATCH else "live"}
 
 
 @app.get("/api/completeness")

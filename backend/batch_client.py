@@ -11,6 +11,7 @@ trips are still there to read the ordinary way.
 """
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import config
 import extractor
@@ -39,7 +40,7 @@ def _chunks(items):
         yield chunk
 
 
-def submit(items, model=None, display_name="ingest") -> list:
+def submit(items, model=None, display_name="ingest", workers=4) -> list:
     """Hand images to the batch queue. items = [(trip_id, image_bytes, mime)].
 
     Returns [{"name": job name, "trips": [trip_id, ...]}] — one entry per chunk. The trip id
@@ -48,8 +49,9 @@ def submit(items, model=None, display_name="ingest") -> list:
     model = model or config.GEMINI_MODEL
     cl = _client()
     cfg = extractor._gen_config(model)
-    out = []
-    for i, chunk in enumerate(_chunks(items)):
+
+    def one(numbered):
+        i, chunk = numbered
         requests = [
             types.InlinedRequest(
                 model=model,
@@ -62,8 +64,14 @@ def submit(items, model=None, display_name="ingest") -> list:
         ]
         job = cl.batches.create(model=model, src=requests,
                                 config={"display_name": f"{display_name}-{i + 1}"})
-        out.append({"name": job.name, "trips": [t for t, _, _ in chunk], "model": model})
-    return out
+        return {"name": job.name, "trips": [t for t, _, _ in chunk], "model": model}
+
+    chunks = list(enumerate(_chunks(items)))
+    if len(chunks) <= 1:
+        return [one(c) for c in chunks]
+    # each create uploads its images, so a big round is worth sending in parallel
+    with ThreadPoolExecutor(max_workers=max(1, min(workers, len(chunks)))) as ex:
+        return list(ex.map(one, chunks))
 
 
 def state(name) -> str:

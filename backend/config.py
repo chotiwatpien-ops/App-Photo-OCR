@@ -117,6 +117,10 @@ INGEST_PARALLEL = int(_setting("INGEST_PARALLEL", "ingest_parallel", 12))       
 # for Gemini (30 min of GitHub runner per round became ~3). Results arrive the FOLLOWING round.
 # The web app's manual upload always reads live — Ops is standing there waiting for it.
 INGEST_BATCH = str(_setting("INGEST_BATCH", "ingest_batch", "1")).lower() in ("1", "true", "yes")
+# Images wait in the DB (blob and all) while a batch reads them, so one round must not park
+# more than the free Neon tier can hold: ~131 KB a slip, 500 MB the ceiling. 1,500 keeps a
+# round near 200 MB, and six rounds a day still clear 9,000 images — more than a full week's.
+MAX_NEW_PER_ROUND = int(_setting("MAX_NEW_PER_ROUND", "max_new_per_round", 1500))
 DRIVE_PARALLEL = int(_setting("DRIVE_PARALLEL", "drive_parallel", 8))            # Drive uploads/downloads
 
 # Sheet1 "Time" band source. The Grab trip screen has NO trip time — only the phone clock at

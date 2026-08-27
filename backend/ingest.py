@@ -382,8 +382,11 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     log(f"พบรูป {len(items)} · ใหม่ {len(new)} · เคยอ่านแล้ว {len(items) - len(new)}")
     for s in skipped:
         log("⚠ " + s)
-    if limit:
-        new = new[:limit]
+    cap = limit or config.MAX_NEW_PER_ROUND
+    if cap and len(new) > cap:
+        log(f"📦 รอบนี้รับ {cap} รูปก่อน (เหลือ {len(new) - cap} ใบให้รอบถัดไป — "
+            f"กันไม่ให้รูปที่รอ batch กินพื้นที่ฐานข้อมูลเกินโควตา)")
+        new = new[:cap]
     if run_id is not None:
         db.update_ingest_run_progress(run_id, files_total=len(new))
     if dry_run:
@@ -530,7 +533,8 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             # pairing, images and approvals for this job
             try:
                 items = [(tid, *db.get_trip_image(tid)) for tid in trip_ids]
-                for b in batch_client.submit(items, display_name=f"job{job_id}"):
+                for b in batch_client.submit(items, display_name=f"job{job_id}",
+                                             workers=DRIVE_PARALLEL):
                     db.record_batch(b["name"], b["model"], b["trips"], run_id)
                     submitted += len(b["trips"])
                 log(f"  📤 ส่งเข้า batch {len(trip_ids)} รูป (ครึ่งราคา · ผลมารอบหน้า)")
