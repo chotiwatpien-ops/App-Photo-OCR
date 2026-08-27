@@ -105,6 +105,93 @@ function JobRow({ j, onOpen }) {
   )
 }
 
+const BATCH_STATE = {
+  JOB_STATE_PENDING: ['รอคิว', 'bg-slate-100 text-slate-600'],
+  JOB_STATE_RUNNING: ['กำลังอ่าน', 'bg-amber-100 text-amber-700'],
+  JOB_STATE_SUCCEEDED: ['อ่านเสร็จ', 'bg-emerald-100 text-emerald-700'],
+  JOB_STATE_FAILED: ['ล้มเหลว', 'bg-red-100 text-red-700'],
+  JOB_STATE_CANCELLED: ['ถูกยกเลิก', 'bg-red-100 text-red-700'],
+  JOB_STATE_EXPIRED: ['หมดอายุ', 'bg-red-100 text-red-700'],
+}
+
+function since(ts) {
+  if (!ts) return ''
+  const mins = Math.round((Date.now() - Date.parse(ts.replace(' ', 'T'))) / 60000)
+  if (mins < 1) return 'เมื่อครู่'
+  if (mins < 60) return `${mins} นาทีที่แล้ว`
+  const h = Math.floor(mins / 60)
+  return h < 24 ? `${h} ชม. ${mins % 60} นาทีที่แล้ว` : `${Math.floor(h / 24)} วันที่แล้ว`
+}
+
+function BatchPanel() {
+  const [data, setData] = useState(null)
+  const [open, setOpen] = useState(false)
+  const load = useCallback(() => api.batches().then(setData).catch(() => {}), [])
+  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    const t = setInterval(load, 60000)
+    return () => clearInterval(t)
+  }, [load])
+
+  const rows = data?.batches || []
+  if (rows.length === 0) return null
+  const pending = rows.filter((b) => !b.finished_at)
+  const waiting = pending.reduce((n, b) => n + (b.n_trips || 0), 0)
+
+  return (
+    <section className="bg-white rounded-xl border border-slate-200">
+      <button onClick={() => setOpen(!open)} className="w-full text-left px-5 py-3 text-sm flex flex-wrap items-center gap-2">
+        <span className="text-slate-400">{open ? '▾' : '▸'}</span>
+        <span className="text-slate-700 font-medium">งานที่ส่งให้ AI อ่าน (batch · ครึ่งราคา)</span>
+        {waiting > 0
+          ? <span className="text-sky-700 bg-sky-50 border border-sky-200 rounded-full px-2 py-0.5 text-xs">
+              กำลังรอผล {pending.length} ก้อน · {waiting.toLocaleString()} รูป
+            </span>
+          : <span className="text-slate-400 text-xs">ไม่มีก้อนที่ค้าง — ผลเข้าครบแล้ว</span>}
+        <span className="ml-auto text-xs text-slate-400">{rows.length} ก้อนล่าสุด</span>
+      </button>
+      {open && (
+        <div className="px-5 pb-4 overflow-x-auto">
+          <table className="w-full text-sm min-w-[720px]">
+            <thead><tr className="text-left text-slate-500 border-b border-slate-200 text-xs">
+              <th className="py-1 pr-3">ส่งเมื่อ</th><th className="py-1 pr-3 text-right">รูป</th>
+              <th className="py-1 pr-3">สถานะ</th><th className="py-1 pr-3">ไรเดอร์</th>
+              <th className="py-1 pr-3">โมเดล</th><th className="py-1">รหัสก้อน</th>
+            </tr></thead>
+            <tbody>
+              {rows.map((b) => {
+                const st = BATCH_STATE[b.state] || [b.state || '-', 'bg-slate-100 text-slate-600']
+                return (
+                  <tr key={b.name} className="border-b border-slate-100">
+                    <td className="py-1.5 pr-3 whitespace-nowrap">
+                      {(b.created_at || '').replace('T', ' ').slice(5, 16)}
+                      <span className="text-slate-400 text-xs ml-1">({since(b.created_at)})</span>
+                    </td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums">{b.n_trips}</td>
+                    <td className="py-1.5 pr-3">
+                      <span className={`text-xs rounded-full px-2 py-0.5 ${st[1]}`}>{st[0]}</span>
+                      {b.finished_at && <span className="text-slate-400 text-xs ml-1">เก็บผลแล้ว</span>}
+                      {b.state_error && <span className="text-red-600 text-xs ml-1" title={b.state_error}>เช็คสถานะไม่ได้</span>}
+                    </td>
+                    <td className="py-1.5 pr-3 text-slate-600">{(b.riders || []).join(', ') || '-'}</td>
+                    <td className="py-1.5 pr-3 text-slate-500 text-xs">{(b.model || '').replace('gemini-', '')}</td>
+                    <td className="py-1.5 text-slate-400 text-xs font-mono">{(b.name || '').slice(-10)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          {rows.some((b) => b.note) && (
+            <p className="text-xs text-amber-700 mt-2">
+              ⚠ {rows.filter((b) => b.note).map((b) => `${(b.name || '').slice(-10)}: ${b.note}`).join(' · ')}
+            </p>
+          )}
+        </div>
+      )}
+    </section>
+  )
+}
+
 export default function Home({ onOpenJob, onJobCreated }) {
   const [data, setData] = useState(null)
   const [err, setErr] = useState('')
@@ -128,6 +215,7 @@ export default function Home({ onOpenJob, onJobCreated }) {
     <div className="space-y-6">
       <RunStatus run={data.last_run} canTrigger={data.can_trigger} batchWaiting={data.batch_waiting}
         batchSince={data.batch_since} onTriggered={() => setTimeout(load, 3000)} />
+      <BatchPanel />
       <IssuesPanel issues={data.issues} />
       <RunsOverview runs={data.runs} />
 

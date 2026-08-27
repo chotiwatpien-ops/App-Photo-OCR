@@ -297,6 +297,26 @@ def weeks():
             "exports_folder": config.DRIVE_EXPORTS_FOLDER_ID, "inbox_folder": config.DRIVE_INBOX_FOLDER_ID}
 
 
+@app.get("/api/batches")
+def batches(limit: int = 20):
+    """What is out with the batch reader right now, and what came back lately.
+
+    The stored state only moves when a round collects, so an open batch is asked directly —
+    otherwise the page would show 'รอคิว' for four hours after the work was actually done."""
+    rows = db.recent_batches(limit)
+    for r in rows:
+        if not r.get("finished_at"):
+            try:
+                import batch_client
+                live = batch_client.state(r["name"])
+                if live and live != r["state"]:
+                    db.touch_batch(r["name"], live)
+                    r["state"] = live
+            except Exception as e:  # noqa: BLE001
+                r["state_error"] = str(e)[:120]
+    return {"batches": rows, "mode": "batch" if config.INGEST_BATCH else "live"}
+
+
 @app.get("/api/completeness")
 def completeness():
     """Per-week rider check: who is short of the expected trips, who sent nothing at all.

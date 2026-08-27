@@ -41,6 +41,7 @@ export const api = {
   patchTrip: (id, fields) => fetch(`/api/trips/${id}`, json('PATCH', fields)).then(handle),
   deleteTrip: (id) => fetch(`/api/trips/${id}`, { method: 'DELETE' }).then(handle),
   weeks: () => fetch('/api/weeks').then(handle),
+  batches: () => fetch('/api/batches').then(handle),
   triggerIngest: () => fetch('/api/ingest/trigger', { method: 'POST' }).then(handle),
   summary: (params = {}) => fetch(`/api/summary?${new URLSearchParams(params)}`).then(handle),
   trips: (params = {}) => fetch(`/api/trips?${new URLSearchParams(params)}`).then(handle),

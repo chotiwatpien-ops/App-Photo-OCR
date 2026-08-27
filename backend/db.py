@@ -118,6 +118,7 @@ batch_jobs = Table(
     Column("run_id", Integer),
     Column("n_trips", Integer, default=0),
     Column("state", String(32)),
+    Column("job_ids", Text),                         # kept so a finished batch still names its riders
     Column("created_at", String(19), nullable=False),
     Column("finished_at", String(19)),
     Column("note", Text),
@@ -183,7 +184,7 @@ def init_db():
         # older local DBs: add columns that appeared after they were created (safe no-op otherwise)
         with engine.begin() as c:
             c.execute(text("PRAGMA journal_mode=WAL"))
-            for tbl in (trips, jobs, ingest_runs):
+            for tbl in (trips, jobs, ingest_runs, batch_jobs):
                 existing = {r[1] for r in c.execute(text(f"PRAGMA table_info({tbl.name})"))}
                 for col in tbl.c:
                     if col.name not in existing:
@@ -195,6 +196,7 @@ def init_db():
             c.execute(text("ALTER TABLE ingest_runs ADD COLUMN IF NOT EXISTS files_total INTEGER"))
             c.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS image_hash VARCHAR(40)"))
             c.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS batch_name VARCHAR(200)"))
+            c.execute(text("ALTER TABLE batch_jobs ADD COLUMN IF NOT EXISTS job_ids TEXT"))
 
 
 # ---------- jobs ----------
@@ -532,11 +534,32 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
 def record_batch(name, model, trip_ids, run_id=None) -> None:
     """Remember a batch and mark the trips it holds, so nothing else touches them meanwhile."""
     with engine.begin() as c:
+        jids = sorted({r[0] for r in c.execute(
+            select(trips.c.job_id).where(trips.c.id.in_(trip_ids))).all()}) if trip_ids else []
         c.execute(insert(batch_jobs).values(
             name=name, model=model, run_id=run_id, n_trips=len(trip_ids),
-            state="JOB_STATE_PENDING", created_at=_now()))
+            state="JOB_STATE_PENDING", created_at=_now(),
+            job_ids=",".join(str(j) for j in jids) or None))
         if trip_ids:
             c.execute(update(trips).where(trips.c.id.in_(trip_ids)).values(batch_name=name))
+
+
+def recent_batches(limit=20):
+    """Every batch we have sent lately, newest first, with the riders each one carries — the
+    page should be able to say which pile is where, not just how many images are out."""
+    with engine.begin() as c:
+        rows = [dict(r) for r in c.execute(
+            select(batch_jobs).order_by(batch_jobs.c.created_at.desc()).limit(limit)
+        ).mappings().all()]
+        ids = sorted({int(j) for r in rows for j in (r.get("job_ids") or "").split(",") if j.strip()})
+        names = {}
+        if ids:
+            names = {r[0]: r[1] for r in c.execute(
+                select(jobs.c.id, jobs.c.driver_name).where(jobs.c.id.in_(ids))).all()}
+    for r in rows:
+        jids = [int(j) for j in (r.get("job_ids") or "").split(",") if j.strip()]
+        r["riders"] = [names.get(j, f"job #{j}") for j in jids]
+    return rows
 
 
 def open_batches():
