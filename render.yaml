@@ -22,7 +22,7 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: GEMINI_MODEL
-        value: gemini-3.5-flash-lite
+        value: gemini-3.7-flash
       - key: MAX_PARALLEL
         value: "4"
       - key: DRIVE_INBOX_FOLDER_ID

@@ -6,7 +6,7 @@ Cloud (Render) env vars:
   GEMINI_API_KEY    Gemini key                      — default: photo_ocr_config.json / Voice QA config
   APP_PASSWORD      shared login password           — default: no login (local dev)
   SECRET_KEY        cookie signing secret           — default: generated once into DATA_DIR
-  GEMINI_MODEL      e.g. gemini-3.5-flash-lite (team choice 2026-08-27; 3.7-flash is the accurate/pricier option)
+  GEMINI_MODEL      e.g. gemini-3.7-flash (3.5-flash-lite reads upper halves as whole screens — see below)
 """
 import json
 import os
@@ -85,7 +85,12 @@ DIAG_KEY = _setting("DIAG_KEY", "diag_key", None)
 #   gemini-3.7-flash  thinking=low   ฿0.09/img  (default — user's plan)
 #   gemini-2.5-flash  thinking=0     ฿0.03/img  (cheapest; set "model": "gemini-2.5-flash")
 #   gemini-2.5-flash  thinking=auto  ฿0.13/img  (never use — ~1,000 hidden thinking tokens/img)
-GEMINI_MODEL = _setting("GEMINI_MODEL", "model", "gemini-3.5-flash-lite")
+# 2026-08-27: gemini-3.5-flash-lite was tried live at ฿0.055/img and pulled the same day. It
+# reads every UPPER half of a split screenshot as a whole screen (84 images: 42 full, 42 bottom,
+# 0 top), so halves never pair and both rows get approved — 25 trips counted twice, ฿7,258, in
+# one round. The batch guard in auto_approve_job now catches that shape, but the readings would
+# still be wrong (base guessed = net, passenger fare empty). Cheaper is not cheaper here.
+GEMINI_MODEL = _setting("GEMINI_MODEL", "model", "gemini-3.7-flash")
 
 # $/1M tokens (in, out); thinking bills as output. Used by /api/diag/models and model_bench.
 GEMINI_PRICE = {
