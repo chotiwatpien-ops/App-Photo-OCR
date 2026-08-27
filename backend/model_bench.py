@@ -27,6 +27,24 @@ FIELDS = [("net_earnings", "เงิน"), ("base_fare", "เงิน"), ("dis
           ("booking_code", "ข้อความ")]
 
 
+def shrink(data, width):
+    """Gemini bills an image by 768x768 tiles: a 869x1882 slip is 2x3 = 6 tiles = 1,548 tokens.
+    Narrowing it to 768 makes that 1x3 = 774. Whether the text survives is what --resize tests."""
+    if not width or not data:
+        return data
+    from io import BytesIO
+
+    from PIL import Image
+    im = Image.open(BytesIO(data))
+    if im.width <= width:
+        return data
+    im = im.convert("RGB")
+    im.thumbnail((width, width * 10), Image.LANCZOS)
+    buf = BytesIO()
+    im.save(buf, "JPEG", quality=88)
+    return buf.getvalue()
+
+
 def _download(drive, drive_id):
     try:
         return drive.download(drive_id)
@@ -140,6 +158,8 @@ def main():
     ap.add_argument("--sample", type=int, default=100)
     ap.add_argument("--images", type=int, default=8, help="parallel Gemini calls")
     ap.add_argument("--project", type=int, default=8000, help="image count for the projected total")
+    ap.add_argument("--resize", type=int, default=0,
+                    help="narrow every image to this width before sending (0 = original)")
     ap.add_argument("--halves", action="store_true",
                     help="judge split screenshots instead: can the model tell a half from a whole?")
     a = ap.parse_args()
@@ -166,10 +186,11 @@ def main():
     with ThreadPoolExecutor(max_workers=a.images) as ex:
         for r, img in zip(rows, ex.map(lambda r: _download(drive, r["drive_id"]), rows)):
             if img:
-                images[r["id"]] = img
+                images[r["id"]] = shrink(img, a.resize)
     rows = [r for r in rows if r["id"] in images]
     print(f"ตัวอย่างร่วม {len(rows)} รูป (เฉลย = ค่าที่ผ่านเช็คและอนุมัติแล้ว) · "
-          f"ผู้เข้าแข่ง {len(models)} ตัว")
+          f"ผู้เข้าแข่ง {len(models)} ตัว"
+          + (f" · ย่อรูปเหลือกว้าง {a.resize}px" if a.resize else " · รูปขนาดเดิม"))
     print()
 
     table = [run_model(m, rows, images, a.images) for m in models]
@@ -221,8 +242,8 @@ def _halves_main(a, models):
                                      _download(drive, r["bottom_drive"])), rows))
     for r, top_img, bot_img in got:
         if top_img and bot_img:
-            images[r["top_id"]] = top_img
-            images[r["bottom_id"]] = bot_img
+            images[r["top_id"]] = shrink(top_img, a.resize)
+            images[r["bottom_id"]] = shrink(bot_img, a.resize)
             pairs.append(dict(r))
     print(f"คู่รูปที่ทดสอบ {len(pairs)} คู่ ({len(pairs) * 2} ใบ) · ผู้เข้าแข่ง {len(models)} ตัว")
     print("ถ้าโมเดลอ่านครึ่งบนว่าเป็น 'รูปเต็ม' = จับคู่ไม่ติด = เงินถูกนับสองรอบ")

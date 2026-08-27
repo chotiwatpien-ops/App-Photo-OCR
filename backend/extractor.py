@@ -224,8 +224,18 @@ def _suspect_fields(data: dict) -> list[str]:
     return bad
 
 
-def _gen_config(model: str) -> types.GenerateContentConfig:
-    cfg = dict(response_mime_type="application/json", response_schema=SCHEMA, temperature=0)
+def _schema_without(drop):
+    """The same schema minus some properties — output tokens are the expensive half of a read,
+    so a field nobody uses is worth measuring before paying for it on every image."""
+    if not drop:
+        return SCHEMA
+    kept = {k: v for k, v in SCHEMA.properties.items() if k not in set(drop)}
+    return types.Schema(type=types.Type.OBJECT, properties=kept, required=SCHEMA.required)
+
+
+def _gen_config(model: str, drop=()) -> types.GenerateContentConfig:
+    cfg = dict(response_mime_type="application/json", response_schema=_schema_without(drop),
+               temperature=0)
     if "2.5-pro" in model:
         # 2.5 Pro is the one model that cannot switch thinking off — 128 is its floor
         cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=128)
@@ -238,10 +248,10 @@ def _gen_config(model: str) -> types.GenerateContentConfig:
     return types.GenerateContentConfig(**cfg)
 
 
-def _call_gemini(img, model: str = None) -> dict:
+def _call_gemini(img, model: str = None, drop=()) -> dict:
     model = model or GEMINI_MODEL
     resp = client().models.generate_content(
-        model=model, contents=[PROMPT, img], config=_gen_config(model),
+        model=model, contents=[PROMPT, img], config=_gen_config(model, drop),
     )
     data = json.loads(resp.text)
     u = resp.usage_metadata
@@ -254,7 +264,8 @@ def _call_gemini(img, model: str = None) -> dict:
     return data
 
 
-def extract_image(image_bytes: bytes, mime_type: str = "image/jpeg", model: str = None) -> dict:
+def extract_image(image_bytes: bytes, mime_type: str = "image/jpeg", model: str = None,
+                  drop=()) -> dict:
     """Returns extracted dict (with '_usage' token info); raises after 3 failed API attempts.
 
     A response whose critical numbers are 0/missing counts as a bad read and is
@@ -268,7 +279,7 @@ def extract_image(image_bytes: bytes, mime_type: str = "image/jpeg", model: str 
     spent = {"tok_in": 0, "tok_out": 0, "tok_think": 0}
     for attempt in range(3):
         try:
-            data = _call_gemini(img, model)
+            data = _call_gemini(img, model, drop)
             for k in spent:
                 spent[k] += data["_usage"][k]
             data["_usage"].update(spent)
