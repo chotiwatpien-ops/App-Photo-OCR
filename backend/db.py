@@ -717,6 +717,30 @@ def delete_trip(trip_id):
         c.execute(delete(trips).where(trips.c.id == trip_id))
 
 
+def delete_trips(trip_ids):
+    """Remove specific approved rows the team has judged to be repeats, with their merged halves.
+    Used for the shapes no rule can settle safely — e.g. a lower half counted as its own trip,
+    where only the picture proves it belongs to the trip beside it. Returns what was removed."""
+    out = []
+    with engine.begin() as c:
+        for tid in trip_ids:
+            r = c.execute(select(trips.c.id, trips.c.job_id, trips.c.file_name, trips.c.net_earnings,
+                                 trips.c.committed, jobs.c.driver_name)
+                          .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+                          .where(trips.c.id == tid)).mappings().first()
+            if not r:
+                out.append({"id": tid, "found": False})
+                continue
+            kids = [x[0] for x in c.execute(select(trips.c.id)
+                                            .where(trips.c.merged_into == tid)).all()]
+            c.execute(delete(trips).where(trips.c.id.in_([tid, *kids])))
+            c.execute(delete(ingested_files).where(ingested_files.c.trip_id.in_([tid, *kids])))
+            out.append({"id": tid, "found": True, "driver_name": r["driver_name"],
+                        "file_name": r["file_name"], "net": r["net_earnings"] or 0,
+                        "job_id": r["job_id"], "halves": len(kids)})
+    return out
+
+
 def find_job_duplicate(job_id, booking_code, exclude_id):
     """Earlier trip in the same job with the same booking code, or None."""
     if not booking_code:

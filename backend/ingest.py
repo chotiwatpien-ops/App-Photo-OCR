@@ -231,7 +231,7 @@ def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True):
     return errors, failed
 
 
-def cleanup(drive, exports_id, delete_job_ids=None, dedupe=False) -> int:
+def cleanup(drive, exports_id, delete_job_ids=None, dedupe=False, delete_trip_ids=None) -> int:
     """User-ordered data cleanup: drop whole jobs (duplicate manual uploads) and/or remove
     approved rows that repeat a booking code for the same rider. Rewrites the workbook after."""
     if delete_job_ids:
@@ -240,6 +240,17 @@ def cleanup(drive, exports_id, delete_job_ids=None, dedupe=False) -> int:
                 log(f"🗑 ลบ job #{r['job_id']} {r['driver_name']} ({r['date_from']}) — {r['trips']} แถว")
             else:
                 log(f"   (ไม่พบ job #{r['job_id']})")
+    if delete_trip_ids:
+        gone = db.delete_trips(delete_trip_ids)
+        baht = sum(r.get("net", 0) for r in gone if r["found"])
+        for r in gone:
+            if r["found"]:
+                log(f"🗑 ลบแถว #{r['id']} {r['driver_name']} {r['file_name']} "
+                    f"(job #{r['job_id']}, ฿{r['net']:g}" +
+                    (f", ครึ่งที่รวมไว้ {r['halves']} รูป)" if r["halves"] else ")"))
+            else:
+                log(f"   (ไม่พบแถว #{r['id']})")
+        log(f"🧹 ลบแถวที่สั่งไว้ {sum(1 for r in gone if r['found'])} แถว (฿{baht:,.0f})")
     if dedupe:
         removed = db.dedupe_approved_trips()
         baht = sum(r["net"] for r in removed)
@@ -516,6 +527,8 @@ def main():
     ap.add_argument("--delete-jobs", metavar="IDS", help="comma-separated job ids to delete")
     ap.add_argument("--dedupe-approved", action="store_true",
                     help="delete approved rows repeating a booking code for the same rider")
+    ap.add_argument("--delete-trips", metavar="IDS",
+                    help="comma-separated trip ids to delete (team-verified repeats), then rewrite the xlsx")
     ap.add_argument("--redo-model", metavar="SUBSTR",
                     help="delete trips read by a model matching SUBSTR, then re-read them this run")
     ap.add_argument("--only", help="comma-separated substrings of rider folder paths to process, e.g. '01 อภิชาติ,01 ปัญญา'")
@@ -541,9 +554,11 @@ def main():
         log(f"Drive auth: {drive.mode}" + ("" if drive.mode == "oauth" else "  (service account = อ่านได้ เขียนไม่ได้ — รัน drive_auth.py เพื่อเขียนกลับ)"))
         inbox = config.DRIVE_INBOX_FOLDER_ID
         exports = a.exports or config.DRIVE_EXPORTS_FOLDER_ID
-    if a.delete_jobs or a.dedupe_approved:
+    if a.delete_jobs or a.dedupe_approved or a.delete_trips:
         ids = [int(x) for x in (a.delete_jobs or "").replace(" ", "").split(",") if x]
-        sys.exit(cleanup(drive, exports, delete_job_ids=ids, dedupe=a.dedupe_approved))
+        tids = [int(x) for x in (a.delete_trips or "").replace(" ", "").split(",") if x]
+        sys.exit(cleanup(drive, exports, delete_job_ids=ids, dedupe=a.dedupe_approved,
+                         delete_trip_ids=tids))
     if a.exports_only:
         errors, _ = export_only(drive, exports)
     else:

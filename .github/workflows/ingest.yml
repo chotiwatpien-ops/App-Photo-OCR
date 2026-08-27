@@ -32,6 +32,10 @@ on:
         description: "ลบ job ตาม id (คั่นด้วยจุลภาค) เช่น 167,168"
         type: string
         default: ""
+      delete_trips:
+        description: "ลบแถวตาม id (คั่นด้วยจุลภาค) — ใช้กับแถวซ้ำที่ตรวจรูปยืนยันแล้ว"
+        type: string
+        default: ""
       dedupe_approved:
         description: "ลบแถวอนุมัติซ้ำ (booking code ซ้ำของไรเดอร์คนเดียวกัน)"
         type: boolean
@@ -75,6 +79,7 @@ jobs:
           if [ "${{ github.event.inputs.fix_hidden_turbo }}" = "true" ]; then ARGS="$ARGS --fix-hidden-turbo"; fi
           if [ -n "${{ github.event.inputs.redo_model }}" ]; then ARGS="$ARGS --redo-model ${{ github.event.inputs.redo_model }}"; fi
           if [ -n "${{ github.event.inputs.delete_jobs }}" ]; then ARGS="$ARGS --delete-jobs ${{ github.event.inputs.delete_jobs }}"; fi
+          if [ -n "${{ github.event.inputs.delete_trips }}" ]; then ARGS="$ARGS --delete-trips ${{ github.event.inputs.delete_trips }}"; fi
           if [ "${{ github.event.inputs.dedupe_approved }}" = "true" ]; then ARGS="$ARGS --dedupe-approved"; fi
           if [ -n "${{ github.event.inputs.limit }}" ]; then ARGS="$ARGS --limit ${{ github.event.inputs.limit }}"; fi
           python ingest.py $ARGS
