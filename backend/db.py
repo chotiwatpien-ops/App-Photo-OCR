@@ -351,6 +351,64 @@ def mark_orphan_bottom_duplicates(job_id) -> int:
         return n
 
 
+def discard_settled_duplicates(job_id) -> int:
+    """A duplicate whose twin is already approved for the SAME amount needs no human: the money
+    reached the workbook once and this row is just the extra photo. Team rule 2026-08-27 (Ops:
+    fewest possible clicks) — park it as status='duplicate', which drops it out of the queue and
+    every done-based view while the row, its note and its image stay for the record.
+
+    A duplicate whose amount DISAGREES with its twin stays in the queue on purpose: the same
+    booking code with different money is a real question, not a stray screenshot."""
+    def amount(r):
+        return r["net_earnings"] if r["net_earnings"] is not None else r["base_fare"]
+
+    with engine.begin() as c:
+        rows = c.execute(select(trips.c.id, trips.c.duplicate_of, trips.c.net_earnings,
+                                trips.c.base_fare, trips.c.note)
+                         .where(trips.c.job_id == job_id, trips.c.status == "done",
+                                trips.c.committed == 0,
+                                trips.c.duplicate_of.isnot(None))).mappings().all()
+        if not rows:
+            return 0
+        twins = {t["id"]: t for t in c.execute(
+            select(trips.c.id, trips.c.file_name, trips.c.committed,
+                   trips.c.net_earnings, trips.c.base_fare)
+            .where(trips.c.id.in_([r["duplicate_of"] for r in rows]))).mappings().all()}
+        n = 0
+        for r in rows:
+            twin = twins.get(r["duplicate_of"])
+            if not twin or not twin["committed"]:
+                continue                                   # twin not approved — decide together
+            a, b = amount(r), amount(twin)
+            if a is None or b is None or abs(a - b) > 0.01:
+                continue                                   # same code, different money — ask a person
+            msg = f"ทิ้งอัตโนมัติ: ซ้ำกับ {twin['file_name']} ที่อนุมัติแล้ว (ยอด {a:,.0f} ตรงกัน)"
+            c.execute(update(trips).where(trips.c.id == r["id"])
+                      .values(status="duplicate", note=f"{msg} | {r['note']}" if r["note"] else msg))
+            n += 1
+        return n
+
+
+def discarded_duplicates(limit=200):
+    """The auto-discard log — newest first, for the panel on the review queue."""
+    q = (select(*TRIP_COLS, jobs.c.driver_name)
+         .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+         .where(trips.c.status == "duplicate")
+         .order_by(trips.c.id.desc()).limit(limit))
+    with engine.begin() as c:
+        return [dict(r) for r in c.execute(q).mappings().all()]
+
+
+def restore_discarded(trip_id) -> bool:
+    """Put an auto-discarded row back in the queue — the undo behind the log panel's button."""
+    with engine.begin() as c:
+        r = c.execute(update(trips)
+                      .where(trips.c.id == trip_id, trips.c.status == "duplicate")
+                      .values(status="done", duplicate_of=None,
+                              note=func.coalesce(trips.c.note, "") + " | กู้คืนโดยผู้ใช้"))
+        return r.rowcount > 0
+
+
 def auto_approve_job(job_id, fresh_ids=()) -> dict:
     """Commit rows that passed every check (✓, not a duplicate, booking code unseen);
     leave the rest for a person. Returns {approved, flagged}.
@@ -360,6 +418,7 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
     the lone top first writes a guessed base fare (and an estimated passenger fare) into the
     workbook. Anything older than this round is approved as usual, so nothing sticks."""
     mark_orphan_bottom_duplicates(job_id)
+    discarded = discard_settled_duplicates(job_id)
     fresh_ids = set(fresh_ids or ())
     with engine.begin() as c:
         rows = c.execute(select(trips.c.id, trips.c.check_status, trips.c.duplicate_of,
@@ -401,7 +460,8 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
                                      trips.c.committed == 0)).scalar()
         c.execute(update(jobs).where(jobs.c.id == job_id)
                   .values(status="committed" if remaining == 0 else "review"))
-        return {"approved": len(ok_ids), "flagged": len(rows) - len(ok_ids)}
+        return {"approved": len(ok_ids), "flagged": len(rows) - len(ok_ids),
+                "discarded": discarded}
 
 
 def start_ingest_run() -> int:

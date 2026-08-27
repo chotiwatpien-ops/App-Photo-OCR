@@ -50,6 +50,8 @@ export const api = {
     fetch(`/api/jobs/${jobId}/spread-dates?all_rows=${allRows}`, { method: 'POST' }).then(handle),
   approveTrip: (id) => fetch(`/api/trips/${id}/approve`, { method: 'POST' }).then(handle),
   approvePassing: () => fetch('/api/review-queue/approve-passing', { method: 'POST' }).then(handle),
+  discarded: () => fetch('/api/review-queue/discarded').then(handle),
+  restoreTrip: (id) => fetch(`/api/trips/${id}/restore`, { method: 'POST' }).then(handle),
   commit: (id, force = false) =>
     fetch(`/api/jobs/${id}/commit${force ? '?force=true' : ''}`, { method: 'POST' }).then(handle),
 }

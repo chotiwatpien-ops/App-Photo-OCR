@@ -450,6 +450,19 @@ def diag_summary():
             "runs": db.list_ingest_runs(10), "issues": db.list_ingest_issues(30)}
 
 
+@app.get("/api/review-queue/discarded")
+def discarded(limit: int = 200):
+    """Rows the system dropped by itself as already-counted repeats — kept visible, and undoable."""
+    return db.discarded_duplicates(limit)
+
+
+@app.post("/api/trips/{trip_id}/restore")
+def restore_trip(trip_id: int):
+    if not db.restore_discarded(trip_id):
+        raise HTTPException(404, "ไม่พบแถวที่ถูกทิ้ง (หรือถูกกู้คืนไปแล้ว)")
+    return {"ok": True}
+
+
 @app.get("/api/diag/models")
 def diag_models(recent: int = 500):
     """Which model actually read the trips, and what it cost — the check after a model switch."""

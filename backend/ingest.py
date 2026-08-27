@@ -370,10 +370,15 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     # still in review, so rows that meet the CURRENT criteria stop waiting on a person
     for jid, d1, d2 in db.jobs_dates(db.review_job_ids()):
         st = db.auto_approve_job(jid)
-        if st["approved"]:
+        if st["approved"] or st.get("discarded"):
             approved += st["approved"]
             touched_weeks.add((d1, d2))
-            log(f"  ✚ job #{jid}: เกณฑ์ล่าสุดอนุมัติเพิ่ม {st['approved']} แถว")
+            bits = []
+            if st["approved"]:
+                bits.append(f"อนุมัติเพิ่ม {st['approved']} แถว")
+            if st.get("discarded"):
+                bits.append(f"ทิ้งรูปซ้ำที่นับไปแล้ว {st['discarded']} แถว")
+            log(f"  ✚ job #{jid}: เกณฑ์ล่าสุด{' · '.join(bits)}")
 
     # customer-image uploads that failed earlier (network blips) — the issue log promises the
     # next round retries them, so it does; still-failing jobs stay on the issue list
@@ -472,7 +477,8 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         processed_images += len(group)
         db.update_ingest_run_progress(run_id, files_new=processed_images,
                                       auto_approved=approved, flagged=flagged)
-        log(f"  ✓ อนุมัติอัตโนมัติ {stats['approved']} · รอคน {stats['flagged']} · error {results.count('error')}")
+        dup_note = f" · ทิ้งซ้ำอัตโนมัติ {stats['discarded']}" if stats.get("discarded") else ""
+        log(f"  ✓ อนุมัติอัตโนมัติ {stats['approved']} · รอคน {stats['flagged']}{dup_note} · error {results.count('error')}")
 
     # ONE continuous workbook for the whole project (all weeks appended). Regenerated EVERY
     # run — not just when new photos arrived — so edits/approvals made in the web app between

@@ -11,6 +11,59 @@ function reason(t) {
   return { label: 'รอคน', cls: 'bg-slate-100 text-slate-600', tip: 'ผ่านการตรวจแต่ยังไม่ได้อนุมัติ' }
 }
 
+function DiscardedLog() {
+  const [rows, setRows] = useState(null)
+  const [open, setOpen] = useState(false)
+  const [msg, setMsg] = useState('')
+  const load = useCallback(() => api.discarded().then(setRows).catch((e) => setMsg(e.message)), [])
+  useEffect(() => { load() }, [load])
+
+  const restore = async (t) => {
+    if (!confirm(`เอา ${t.file_name} กลับเข้าคิวตรวจ?`)) return
+    try {
+      await api.restoreTrip(t.id)
+      setRows(rows.filter((r) => r.id !== t.id))
+      setMsg(`กู้ ${t.file_name} กลับเข้าคิวแล้ว — รีเฟรชหน้านี้เพื่อดู`)
+    } catch (e) { setMsg(e.message) }
+  }
+
+  if (!rows || rows.length === 0) return null
+  return (
+    <section className="bg-white rounded-xl border border-slate-200">
+      <button onClick={() => setOpen(!open)} className="w-full text-left px-5 py-3 text-sm">
+        <span className="text-slate-400">{open ? '▾' : '▸'}</span>
+        <span className="ml-2 text-slate-600">รูปซ้ำที่ระบบทิ้งเอง</span>
+        <span className="ml-2 font-semibold">{rows.length}</span>
+        <span className="ml-2 text-slate-400 text-xs">— งานเดิมถูกนับไปแล้ว ไม่ต้องทำอะไร กดดูได้ถ้าอยากตรวจ</span>
+      </button>
+      {open && (
+        <div className="px-5 pb-4">
+          {msg && <p className="text-sm text-slate-600 mb-2">{msg}</p>}
+          <table className="w-full text-sm">
+            <thead><tr className="text-left text-slate-500 border-b border-slate-200 text-xs">
+              <th className="py-1 pr-3">ไรเดอร์</th><th className="py-1 pr-3">ไฟล์</th>
+              <th className="py-1 pr-3 text-right">รายได้</th><th className="py-1 pr-3">ทิ้งเพราะ</th><th></th>
+            </tr></thead>
+            <tbody>
+              {rows.map((t) => (
+                <tr key={t.id} className="border-b border-slate-100">
+                  <td className="py-1.5 pr-3">{t.driver_name} <span className="text-slate-400 text-xs">job #{t.job_id}</span></td>
+                  <td className="py-1.5 pr-3 text-slate-500">{t.file_name}</td>
+                  <td className="py-1.5 pr-3 text-right tabular-nums">฿{(t.net_earnings ?? 0).toLocaleString()}</td>
+                  <td className="py-1.5 pr-3 text-slate-500 text-xs">{(t.note || '').split(' | ')[0]}</td>
+                  <td className="py-1.5 text-right">
+                    <button onClick={() => restore(t)} className="text-blue-600 hover:underline text-xs">กู้กลับเข้าคิว</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  )
+}
+
 export default function ReviewQueue({ onOpenJob }) {
   const [rows, setRows] = useState(null)
   const [issues, setIssues] = useState([])
@@ -84,6 +137,7 @@ export default function ReviewQueue({ onOpenJob }) {
   return (
     <div className="space-y-4">
       <IssuesPanel issues={issues} />
+      <DiscardedLog />
       <div className="flex items-center justify-between flex-wrap gap-3">
         <p className="text-sm text-slate-600">
           แถวที่ระบบไม่กล้าอนุมัติเอง — <strong>{rows.length}</strong> รายการจากทุก job ·
