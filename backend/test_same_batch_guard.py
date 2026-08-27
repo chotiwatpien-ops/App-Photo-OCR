@@ -74,5 +74,25 @@ if not (n == 1 and st_bottom == "duplicate"):
     ok = False
     print("   ✗ ควรถูกทิ้งเข้าบันทึกเอง")
 
+# 5. the same rider's photos in TWO folders: a code approved in job A blocks job B's copy
+#    forever, so the same rule files it away — but only when the amount agrees
+jobA = db.create_job("สองโฟลเดอร์", "S", "2026-08-10", "2026-08-16", category="4 W Standard")
+jobB = db.create_job("สองโฟลเดอร์", "S", "2026-08-10", "2026-08-16", category="2 W Saver")
+add(jobA, "567090_1.jpg", "full", 45.0, 45.0, code="A-DUP1")
+copy_row = add(jobB, "567090_0.jpg", "top", 45.0, 45.0, code="A-DUP1")
+add(jobA, "567091_1.jpg", "full", 55.0, 55.0, code="A-DUP2")   # same code, different money
+odd = add(jobB, "567091_0.jpg", "top", 99.0, 99.0, code="A-DUP2")
+db.auto_approve_job(jobA)
+n5 = db.auto_approve_job(jobB)["discarded"]   # job B's own round already files the repeat away
+with db.engine.begin() as c:
+    st = {r["id"]: r["status"] for r in c.execute(
+        select(db.trips.c.id, db.trips.c.status)
+        .where(db.trips.c.id.in_([copy_row, odd]))).mappings().all()}
+print(f"\n5) รูปเดียวกันอยู่คนละโฟลเดอร์ → ทิ้งอัตโนมัติ {n5} แถว "
+      f"(ยอดตรง={st[copy_row]} · ยอดต่าง={st[odd]})")
+if not (n5 == 1 and st[copy_row] == "duplicate" and st[odd] == "done"):
+    ok = False
+    print("   ✗ ควรทิ้งเฉพาะตัวที่ยอดตรงกัน ตัวที่ยอดต่างต้องรอคน")
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

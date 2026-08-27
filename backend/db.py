@@ -351,9 +351,27 @@ def mark_orphan_bottom_duplicates(job_id) -> int:
         return n
 
 
+def _approved_twin(c, job_id, row):
+    """The approved row this one repeats: same booking code, same rider, same week — the very
+    condition that forbids approving it. The twin usually sits in ANOTHER job, because the rider's
+    photos were dropped in two folders, so the in-job duplicate check never saw it."""
+    if not row["booking_code"]:
+        return None
+    jm = c.execute(select(jobs.c.driver_name, jobs.c.date_from)
+                   .where(jobs.c.id == job_id)).mappings().first()
+    return c.execute(select(trips.c.id, trips.c.file_name, trips.c.committed,
+                            trips.c.net_earnings, trips.c.base_fare)
+                     .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+                     .where(trips.c.committed == 1, trips.c.booking_code == row["booking_code"],
+                            jobs.c.driver_name == jm["driver_name"],
+                            jobs.c.date_from == jm["date_from"])).mappings().first()
+
+
 def discard_settled_duplicates(job_id) -> int:
-    """A duplicate whose twin is already approved for the SAME amount needs no human: the money
-    reached the workbook once and this row is just the extra photo. Team rule 2026-08-27 (Ops:
+    """A repeat whose twin is already approved for the SAME amount needs no human: the money
+    reached the workbook once and this row is just the extra photo. Two shapes qualify — a row
+    already marked duplicate_of inside its job, and a row whose booking code is approved under
+    the same rider and week somewhere else (the rider's photos landed in two folders). Team rule 2026-08-27 (Ops:
     fewest possible clicks) — park it as status='duplicate', which drops it out of the queue and
     every done-based view while the row, its note and its image stay for the record.
 
@@ -364,19 +382,20 @@ def discard_settled_duplicates(job_id) -> int:
 
     with engine.begin() as c:
         rows = c.execute(select(trips.c.id, trips.c.duplicate_of, trips.c.net_earnings,
-                                trips.c.base_fare, trips.c.note)
+                                trips.c.base_fare, trips.c.note, trips.c.booking_code)
                          .where(trips.c.job_id == job_id, trips.c.status == "done",
                                 trips.c.committed == 0,
-                                trips.c.duplicate_of.isnot(None))).mappings().all()
+                                trips.c.duplicate_of.isnot(None)
+                                | trips.c.booking_code.isnot(None))).mappings().all()
         if not rows:
             return 0
         twins = {t["id"]: t for t in c.execute(
             select(trips.c.id, trips.c.file_name, trips.c.committed,
                    trips.c.net_earnings, trips.c.base_fare)
-            .where(trips.c.id.in_([r["duplicate_of"] for r in rows]))).mappings().all()}
+            .where(trips.c.id.in_([r["duplicate_of"] for r in rows if r["duplicate_of"]]))).mappings().all()}
         n = 0
         for r in rows:
-            twin = twins.get(r["duplicate_of"])
+            twin = twins.get(r["duplicate_of"]) if r["duplicate_of"] else _approved_twin(c, job_id, r)
             if not twin or not twin["committed"]:
                 continue                                   # twin not approved — decide together
             a, b = amount(r), amount(twin)
