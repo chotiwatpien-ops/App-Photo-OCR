@@ -226,7 +226,10 @@ def _suspect_fields(data: dict) -> list[str]:
 
 def _gen_config(model: str) -> types.GenerateContentConfig:
     cfg = dict(response_mime_type="application/json", response_schema=SCHEMA, temperature=0)
-    if model.startswith("gemini-3"):
+    if "2.5-pro" in model:
+        # 2.5 Pro is the one model that cannot switch thinking off — 128 is its floor
+        cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=128)
+    elif model.startswith("gemini-3"):
         # 3.x: thinking on by default and billed as output — cap it for extraction work
         cfg["thinking_config"] = types.ThinkingConfig(thinking_level=GEMINI_THINKING_LEVEL)
     elif GEMINI_THINKING_BUDGET is not None:

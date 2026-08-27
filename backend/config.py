@@ -92,12 +92,19 @@ DIAG_KEY = _setting("DIAG_KEY", "diag_key", None)
 # still be wrong (base guessed = net, passenger fare empty). Cheaper is not cheaper here.
 GEMINI_MODEL = _setting("GEMINI_MODEL", "model", "gemini-3.7-flash")
 
-# $/1M tokens (in, out); thinking bills as output. Used by /api/diag/models and model_bench.
+# $/1M tokens (in, out) for image prompts under 200k; thinking bills as output.
+# Read off ai.google.dev/gemini-api/docs/pricing on 2026-08-27. Used by /api/diag/models
+# and model_bench. NOTE 3.7/3.6 Flash are at intro pricing — both double on 2027-01-01.
 GEMINI_PRICE = {
+    "gemini-3.1-pro-preview": (2.00, 12.00),
+    "gemini-2.5-pro": (1.25, 10.00),
+    "gemini-3.5-flash": (1.50, 9.00),
     "gemini-3.7-flash": (0.75, 3.75),
+    "gemini-3.6-flash": (0.75, 3.75),
+    "gemini-3-flash-preview": (0.50, 3.00),
     "gemini-3.5-flash-lite": (0.30, 2.50),
-    "gemini-3.1-flash-lite": (0.125, 0.75),
     "gemini-2.5-flash": (0.30, 2.50),
+    "gemini-3.1-flash-lite": (0.25, 1.50),
     "gemini-2.5-flash-lite": (0.10, 0.40),
 }
 USD_THB = 35.0
