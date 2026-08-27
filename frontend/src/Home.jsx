@@ -48,11 +48,24 @@ function RunStatus({ run, canTrigger, onTriggered }) {
             </div>
           )
         })()}
+        {(() => {
+          // rounds are ~10h and ~14h apart; nothing for 16h means a schedule was skipped
+          const last = run?.finished_at || run?.started_at
+          if (!last || running) return null
+          const hrs = (Date.now() - Date.parse(last.replace(' ', 'T'))) / 36e5
+          if (hrs < 16) return null
+          return (
+            <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-2">
+              ⏰ ไม่มีรอบดูดรูปมา {Math.floor(hrs)} ชั่วโมงแล้ว — รอบตามตารางอาจถูกข้าม
+              กด “▶ ดูดรูปตอนนี้” เพื่อรันเลยได้
+            </p>
+          )
+        })()}
         {run?.notes && <p className="text-xs text-amber-700 mt-1 whitespace-pre-line">⚠ {run.notes}</p>}
         {msg && <p className="text-xs text-slate-600 mt-1">{msg}</p>}
       </div>
       <div className="text-right text-xs text-slate-500">
-        <p>ตั้งเวลา: ทุกวัน 05:00 / 15:00</p>
+        <p>ตั้งเวลา: ทุกวัน 05:23 / 15:23</p>
         <button onClick={trigger} disabled={busy || running || !canTrigger}
           title={canTrigger ? 'สั่ง GitHub Actions รันทันที' : 'ยังไม่ได้ตั้งค่า GITHUB_TOKEN — รันได้จากแท็บ Actions บน GitHub'}
           className="mt-1 bg-slate-900 hover:bg-slate-700 disabled:bg-slate-300 text-white rounded-lg px-4 py-2 text-sm font-medium">

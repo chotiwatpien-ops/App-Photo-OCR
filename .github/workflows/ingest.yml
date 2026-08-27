@@ -2,8 +2,10 @@ name: Weekly ingest (Drive → Gemini → DB → Excel)
 
 on:
   schedule:
-    - cron: "0 22 * * *"            # 05:00 Asia/Bangkok, daily (UTC+7)
-    - cron: "0 8 * * *"             # 15:00 Asia/Bangkok
+    # GitHub queues scheduled runs and drops them under load; the top of the hour is the
+    # busiest slot, so both rounds sit at :23 (history showed 16-31 min slips at :00)
+    - cron: "23 22 * * *"           # 05:23 Asia/Bangkok, daily (UTC+7)
+    - cron: "23 8 * * *"            # 15:23 Asia/Bangkok
   workflow_dispatch:
     inputs:
       dry_run:
