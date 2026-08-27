@@ -97,10 +97,17 @@ def pair_fragments(job_id) -> int:
                 # bottom's real base lands, that inference is stale and may be redone
                 if "เติม Turbo" in (top.get("note") or ""):
                     m2["turbo"] = 0
-                tnote = _fill_hidden_turbo(m2)
+                tnote = _repair_money(m2)
                 if tnote:
-                    fields["turbo"] = m2["turbo"]
+                    fields["base_fare"] = m2.get("base_fare")
+                    fields["turbo"] = m2.get("turbo") or 0
                     fields["check_status"] = _check(m2)
+                if fields["check_status"] != "pass":
+                    tnote2 = _fill_hidden_turbo(m2)
+                    if tnote2:
+                        fields["turbo"] = m2["turbo"]
+                        fields["check_status"] = _check(m2)
+                        tnote = f"{tnote} | {tnote2}" if tnote else tnote2
             fields["kind"] = "full"
             note = f"รวม 2 รูป: {r['file_name']} + {b['file_name']}"
             if tnote:
@@ -282,6 +289,33 @@ def normalize_service(ai_value, category):
     return ai_value, None
 
 
+def _repair_money(data):
+    """Two reading mistakes that leave the identity net = base + bonus + turbo broken, both
+    settled by evidence already on the row. Returns an audit note when it changed something.
+
+    1. No base fare anywhere. On a car slip the base sits on the line the crop usually cuts,
+       and the lower half reports it as 'รวมรายได้จากรอบขับ'. When net and the incentives are
+       known, the base is what is left — and it matches the lower half's own figure.
+    2. A toll paid back to the rider ('รายการจ่ายคืน · ค่าทางด่วน') read a second time as a
+       turbo incentive. The giveaway: turbo equals the toll, and the identity already balances
+       without it.
+    """
+    net, base = data.get("net_earnings"), data.get("base_fare")
+    bonus, turbo = data.get("bonus") or 0, data.get("turbo") or 0
+    tolls = data.get("tolls") or 0
+
+    if turbo and tolls and abs(turbo - tolls) <= 0.01 and net is not None and base is not None             and abs(net - (base + bonus)) <= 0.01:
+        data["turbo"] = 0
+        return f"ค่าทางด่วน {tolls:g} ที่จ่ายคืนถูกอ่านซ้ำเป็น Turbo — ตัดออก (ยอดลงตัวโดยไม่มีมัน)"
+
+    if net is not None and not base:
+        derived = round(net - bonus - (data.get("turbo") or 0), 2)
+        if derived > 0:
+            data["base_fare"] = derived
+            return f"ค่าโดยสารพื้นฐาน {derived:g} คำนวณจาก net−bonus−turbo (รูปตัดบรรทัดนี้หาย)"
+    return None
+
+
 def _fill_hidden_turbo(data):
     """Team rule (2026-08-24): a small positive net−base gap with bonus and turbo both read
     as 0 is the surge hidden inside a folded section (~5% of base in practice) — fill it into
@@ -333,6 +367,32 @@ def repair_service_conflicts() -> int:
     return fixed
 
 
+def repair_money_reads() -> int:
+    """Retro pass for rows already waiting: apply _repair_money to the stored numbers and let
+    the ones that now balance stop waiting on a person."""
+    from sqlalchemy import select, update
+    fixed = 0
+    with db.engine.begin() as c:
+        t = db.trips.c
+        rows = c.execute(select(db.trips).where(
+            t.status == "done", t.committed == 0, t.check_status == "fail")).mappings().all()
+    for r in rows:
+        data = {k: r[k] for k in ("net_earnings", "base_fare", "bonus", "turbo", "tolls",
+                                  "passenger_total", "grab_commission")}
+        note = _repair_money(data)
+        if not note:
+            continue
+        check = extractor.arithmetic_check({**data, "net_earnings_left_panel": None})
+        if check != "pass":
+            continue                                  # only silence a row the numbers now clear
+        with db.engine.begin() as c:
+            c.execute(update(db.trips).where(db.trips.c.id == r["id"]).values(
+                base_fare=data["base_fare"], turbo=data["turbo"], check_status=check,
+                note=f"{note} | {r['note']}" if r["note"] else note))
+        fixed += 1
+    return fixed
+
+
 def process_trip(trip_id: int, job_id: int) -> str:
     """Extract one stored image and persist the result. Returns 'done' | 'error'."""
     try:
@@ -356,7 +416,10 @@ def process_trip(trip_id: int, job_id: int) -> str:
             data["bonus"] = raw_bonus  # bonus already included the tip
         turbo_note = None
         if extractor.arithmetic_check(data) != "pass":
-            turbo_note = _fill_hidden_turbo(data)
+            turbo_note = _repair_money(data)
+        if extractor.arithmetic_check(data) != "pass":
+            t2 = _fill_hidden_turbo(data)
+            turbo_note = f"{turbo_note} | {t2}" if turbo_note and t2 else (t2 or turbo_note)
         check = extractor.arithmetic_check(data)
         note = data.get("confidence_note")
         if turbo_note:

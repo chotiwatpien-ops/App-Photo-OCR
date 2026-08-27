@@ -373,6 +373,9 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
 
     # team rule 2026-08-25: rows once held for a photo-vs-folder vehicle conflict now log
     # per the photo — convert any old-style flagged rows before the approval sweep below
+    n_money = pipeline.repair_money_reads()
+    if n_money:
+        log(f"🔧 ซ่อมตัวเลขที่อ่านพลาด {n_money} แถว (ฐานหาย / ค่าทางด่วนถูกนับเป็น Turbo)")
     n_svc = pipeline.repair_service_conflicts()
     if n_svc:
         log(f"🔁 บันทึกตามรูปให้ {n_svc} แถวที่เคยติดธงประเภทรถขัดกับโฟลเดอร์")
