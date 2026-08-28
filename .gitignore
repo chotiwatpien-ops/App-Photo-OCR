@@ -25,3 +25,6 @@ frontend/node_modules/
 # scratch
 *.backup*
 .claude/
+
+# local diagnostic dumps (rider names, amounts) — never belong in the repo
+.diag_*.json
