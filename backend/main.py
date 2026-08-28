@@ -546,6 +546,24 @@ def restore_trip(trip_id: int):
     return {"ok": True}
 
 
+@app.get("/api/diag/batches")
+def diag_batches(limit: int = 20):
+    """Batch queue seen from outside the login — the office network blocks the database port,
+    and 'is the reading done yet' is exactly the question that comes up on those days."""
+    rows = db.recent_batches(limit)
+    for r in [x for x in rows if not x.get("finished_at")][:10]:
+        try:
+            import batch_client
+            r["state"] = batch_client.state(r["name"])
+        except Exception as e:  # noqa: BLE001
+            r["state_error"] = str(e)[:120]
+    waiting = [r for r in rows if not r.get("finished_at")]
+    return {"batches": rows, "open": len(waiting),
+            "waiting_images": sum(r.get("n_trips") or 0 for r in waiting),
+            "ready_images": sum(r.get("n_trips") or 0 for r in waiting
+                                if str(r.get("state") or "").endswith("SUCCEEDED"))}
+
+
 @app.get("/api/diag/models")
 def diag_models(recent: int = 500):
     """Which model actually read the trips, and what it cost — the check after a model switch."""
