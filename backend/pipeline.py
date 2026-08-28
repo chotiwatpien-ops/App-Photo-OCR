@@ -225,10 +225,12 @@ def spread_dates(job_id, date_from, date_to, only_missing=True) -> int:
     return n
 
 
-def customer_images(job_id, rider, fetch=None):
+def customer_images(job_id, rider, fetch=None, cache=None):
     """Yield (file_name, jpeg_bytes) for every trip in customer order: '<rider>1.jpg', '<rider>2.jpg', ...
-    Uses the stored blobs; when they were already cleared (approved rows) and `fetch(drive_id)`
-    is given, re-downloads the originals from Drive."""
+
+    Photos are not kept in the database any more, so the bytes come from `cache` — what the
+    round already downloaded, keyed by trip id — and from `fetch(drive_id)` for anything the
+    round no longer holds (a batch collected later, or an older job being regenerated)."""
     import stitch
     from datetime import date as _date
     job = db.get_job_meta(job_id)
@@ -238,8 +240,15 @@ def customer_images(job_id, rider, fetch=None):
         wk = f"WK{w:02d}"
     rows = db.trips_with_images(job_id)
     rows.sort(key=lambda r: (r["trip_date"] or "9999", _natural_key(r["file_name"])))
+    cache = cache or {}
+    for r in rows:                       # bytes this round already has cost nothing to reuse
+        if r["top_blob"] is None and r["id"] in cache:
+            r["top_blob"] = cache[r["id"]][0]
+        bid = r.get("bottom_id")
+        if r["bottom_blob"] is None and bid in cache:
+            r["bottom_blob"] = cache[bid][0]
     drive_ids = db.drive_ids_for_job(job_id) if fetch else {}
-    if fetch:  # re-download cleared blobs in parallel before stitching
+    if fetch:  # re-download whatever is still missing, in parallel, before stitching
         from concurrent.futures import ThreadPoolExecutor
         from config import DRIVE_PARALLEL
         need = []
@@ -393,10 +402,15 @@ def repair_money_reads() -> int:
     return fixed
 
 
-def process_trip(trip_id: int, job_id: int) -> str:
-    """Extract one stored image and persist the result. Returns 'done' | 'error'."""
+def process_trip(trip_id: int, job_id: int, image=None) -> str:
+    """Read one image and persist the result. Returns 'done' | 'error'.
+
+    `image` is (bytes, mime) the caller already has in hand — ingest downloads the photo from
+    Drive and passes it straight through, so nothing has to be written to the database and
+    read back out again. Without it the stored copy is used, which is how manual uploads and
+    the web app work."""
     try:
-        img = db.get_trip_image(trip_id)
+        img = image or db.get_trip_image(trip_id)
         if not img:
             raise RuntimeError("image missing")
         return apply_extraction(trip_id, job_id, extractor.extract_image(img[0], img[1]))

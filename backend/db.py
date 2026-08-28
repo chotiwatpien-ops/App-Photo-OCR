@@ -39,7 +39,10 @@ trips = Table(
     Column("job_id", Integer, nullable=False, index=True),
     Column("file_name", Text, nullable=False),
     Column("image_path", Text),            # legacy local path (pre-blob); unused for new rows
-    Column("image_blob", LargeBinary),     # cleared on commit
+    # Kept ONLY for images a person still has to look at. Drive-sourced photos are not stored
+    # here at all: every copy in and out of the database counts against Neon's network
+    # transfer, and 9,900 photos moving twice each is what used the free 5 GB in four days.
+    Column("image_blob", LargeBinary),
     Column("image_mime", String(32)),
     Column("status", String(16), nullable=False, default="pending"),  # pending | done | error
     Column("error", Text),
@@ -676,12 +679,16 @@ def stuck_pending_trips():
     recorded as ingested so nothing would ever retry them without this.
 
     Rows a batch is still holding are NOT stuck: they carry batch_name and are waiting for an
-    answer that has been paid for. Re-reading those live would pay twice."""
+    answer that has been paid for. Re-reading those live would pay twice.
+
+    A row counts as recoverable when its image is either stored here or still on Drive — since
+    photos stopped being kept in the database, the Drive copy is the usual one."""
     with engine.begin() as c:
         rows = c.execute(select(trips.c.id, trips.c.job_id)
                          .where(trips.c.status == "pending",
-                                trips.c.image_blob.isnot(None),
-                                trips.c.batch_name.is_(None))).all()
+                                trips.c.batch_name.is_(None))
+                         .where(trips.c.image_blob.isnot(None)
+                                | trips.c.id.in_(select(ingested_files.c.trip_id)))).all()
         return [(r[0], r[1]) for r in rows]
 
 
@@ -830,6 +837,35 @@ def get_trip(trip_id):
     with engine.begin() as c:
         r = c.execute(select(*TRIP_COLS).where(trips.c.id == trip_id)).mappings().first()
         return dict(r) if r else None
+
+
+def set_trip_image(trip_id, image_bytes, mime="image/jpeg") -> None:
+    """Store an image for a row that is waiting on a person — the only reason to keep one."""
+    if not image_bytes:
+        return
+    with engine.begin() as c:
+        c.execute(update(trips).where(trips.c.id == trip_id)
+                  .values(image_blob=image_bytes, image_mime=mime))
+
+
+def waiting_trip_ids(job_id, among=None):
+    """Rows of this job that still need a person — the ones whose image is worth keeping."""
+    with engine.begin() as c:
+        q = select(trips.c.id).where(trips.c.job_id == job_id, trips.c.status == "done",
+                                     trips.c.committed == 0, trips.c.image_blob.is_(None))
+        if among:
+            q = q.where(trips.c.id.in_(list(among)))
+        return [r[0] for r in c.execute(q).all()]
+
+
+def drive_ids_for_trips(trip_ids):
+    """trip_id -> Drive file id, for fetching an original that was never stored."""
+    if not trip_ids:
+        return {}
+    with engine.begin() as c:
+        return {r[1]: r[0] for r in c.execute(
+            select(ingested_files.c.drive_id, ingested_files.c.trip_id)
+            .where(ingested_files.c.trip_id.in_(list(trip_ids)))).all()}
 
 
 def get_trip_image(trip_id, part=1):

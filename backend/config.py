@@ -121,6 +121,12 @@ INGEST_BATCH = str(_setting("INGEST_BATCH", "ingest_batch", "1")).lower() in ("1
 # more than the free Neon tier can hold: ~131 KB a slip, 500 MB the ceiling. 1,500 keeps a
 # round near 200 MB, and six rounds a day still clear 9,000 images — more than a full week's.
 MAX_NEW_PER_ROUND = int(_setting("MAX_NEW_PER_ROUND", "max_new_per_round", 1500))
+# Photos pulled from Drive are NOT copied into the database: the original stays on Drive, which
+# charges nothing to read, while every copy in and out of Neon counts against a 5 GB monthly
+# transfer allowance — 9,900 photos crossing it twice each exhausted the free tier in four days.
+# A row that ends up waiting for a person does get its image stored, so the review page still
+# shows it. Manual uploads always store, since there is no Drive copy to go back to.
+STORE_DRIVE_IMAGES = str(_setting("STORE_DRIVE_IMAGES", "store_drive_images", "0")).lower() in ("1", "true", "yes")
 DRIVE_PARALLEL = int(_setting("DRIVE_PARALLEL", "drive_parallel", 8))            # Drive uploads/downloads
 
 # Sheet1 "Time" band source. The Grab trip screen has NO trip time — only the phone clock at

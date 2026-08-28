@@ -207,6 +207,41 @@ def discover(drive, inbox_id):
     return items, skipped
 
 
+def keep_images_for_waiting(job_id, among=None, memory=None, drive=None) -> int:
+    """Store the picture of every row this job left for a person, and nothing else.
+
+    Photos are no longer copied into the database as a matter of course, but a row in the
+    review queue is useless without one — Ops has to look at the slip to fix the number. Those
+    are the ~2% worth keeping. The bytes come from this round's memory when they are still in
+    hand, and from Drive when the reading happened in an earlier round via a batch."""
+    ids = db.waiting_trip_ids(job_id, among=among)
+    if not ids:
+        return 0
+    memory = memory or {}
+    kept = 0
+    missing = [t for t in ids if t not in memory]
+    fetched = {}
+    if missing and drive is not None:
+        drive_ids = db.drive_ids_for_trips(missing)
+
+        def one(tid):
+            try:
+                return tid, drive.download(drive_ids[tid]), "image/jpeg"
+            except Exception:  # noqa: BLE001 - a missing picture must not fail the round
+                return tid, None, None
+
+        with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
+            for tid, data, mime in ex.map(one, [t for t in missing if t in drive_ids]):
+                if data:
+                    fetched[tid] = (data, mime)
+    for tid in ids:
+        got = memory.get(tid) or fetched.get(tid)
+        if got:
+            db.set_trip_image(tid, got[0], got[1])
+            kept += 1
+    return kept
+
+
 def collect_batches(drive, exports_id=None):
     """Pick up whatever the batch queue has finished since the last round.
 
@@ -264,7 +299,9 @@ def collect_batches(drive, exports_id=None):
             pairs_n = pipeline.pair_fragments(jid)
             pipeline.spread_dates(jid, d1, d2, only_missing=True)
             st = db.auto_approve_job(jid, fresh_ids=fresh_by_job.get(jid, []))
-            log(f"  ✓ job #{jid}: จับคู่ {pairs_n} · อนุมัติอัตโนมัติ {st['approved']} · รอคน {st['flagged']}")
+            kept = keep_images_for_waiting(jid, drive=drive)
+            log(f"  ✓ job #{jid}: จับคู่ {pairs_n} · อนุมัติอัตโนมัติ {st['approved']} · "
+                f"รอคน {st['flagged']}" + (f" · เก็บรูปให้แถวที่รอคน {kept}" if kept else ""))
         if drive is None:
             # collected from the web app, which has no Drive credentials — the numbers are in,
             # the customer images and workbook follow on the next proper round
@@ -448,8 +485,20 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     stuck = db.stuck_pending_trips()
     if stuck:
         log(f"♻ เก็บตก {len(stuck)} แถวที่ค้างจากรอบก่อนซึ่งถูกตัดกลางทาง")
+        stuck_ids = db.drive_ids_for_trips([t for t, _ in stuck])
+
+        def _redo(x):
+            tid, jid = x
+            img = None
+            if tid in stuck_ids:
+                try:
+                    img = (drive.download(stuck_ids[tid]), "image/jpeg")
+                except Exception:  # noqa: BLE001 - fall back to a stored copy if there is one
+                    img = None
+            return pipeline.process_trip(tid, jid, img)
+
         with ThreadPoolExecutor(max_workers=INGEST_PARALLEL) as ex:
-            res = list(ex.map(lambda x: pipeline.process_trip(x[0], x[1]), stuck))
+            res = list(ex.map(_redo, stuck))
         errors += res.count("error")
     redo_jobs = {j for _, j in stuck} | set(db.stale_running_jobs()) | set(db.jobs_missing_dates())
     if redo_jobs:
@@ -528,6 +577,8 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         display_names[job_id] = f"{rider}-{meta.get('admin')}" if (dup_here and meta.get("admin")) else rider
         log(f"job #{job_id} {rider} {d_from}..{d_to}: {len(group)} รูป")
 
+        images = {}          # trip_id -> (bytes, mime) for this job, this round only
+
         def _dl(i):
             try:
                 return i, drive.download(i["file"]["id"]), None
@@ -554,8 +605,11 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
                 n_same += 1
                 continue
             seen_hashes[digest] = f["name"]
-            tid = db.create_trip(job_id, f["name"], data, f["mime"], source_url=f.get("url"),
-                                 image_hash=digest)
+            # the photo stays on Drive; only its bytes travel through this round in memory
+            tid = db.create_trip(job_id, f["name"],
+                                 data if config.STORE_DRIVE_IMAGES else None,
+                                 f["mime"], source_url=f.get("url"), image_hash=digest)
+            images[tid] = (data, f["mime"])
             if i["trip_date"]:
                 db.update_trip(tid, {"trip_date": i["trip_date"]})
             db.record_ingested(f["id"], f["name"], job_id, tid)
@@ -568,7 +622,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             # hand the pile over and move on — the next round collects the answers and does the
             # pairing, images and approvals for this job
             try:
-                items = [(tid, *db.get_trip_image(tid)) for tid in trip_ids]
+                items = [(tid, *images[tid]) for tid in trip_ids if tid in images]
                 for b in batch_client.submit(items, display_name=f"job{job_id}",
                                              workers=DRIVE_PARALLEL):
                     db.record_batch(b["name"], b["model"], b["trips"], run_id)
@@ -578,14 +632,15 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
                 log(f"  ✗ ส่ง batch ไม่สำเร็จ: {str(e)[:150]} — อ่านแบบปกติแทน")
                 issues.append((f"batch:{job_id}", "process", f"ส่ง batch ของ {rider} ไม่สำเร็จ: {str(e)[:200]}"))
                 with ThreadPoolExecutor(max_workers=INGEST_PARALLEL) as ex:
-                    ex.map(lambda tid: pipeline.process_trip(tid, job_id), trip_ids)
+                    ex.map(lambda tid: pipeline.process_trip(tid, job_id, images.get(tid)), trip_ids)
             processed_images += len(group)
             db.update_ingest_run_progress(run_id, files_new=processed_images,
                                           auto_approved=approved, flagged=flagged)
             continue
 
         with ThreadPoolExecutor(max_workers=INGEST_PARALLEL) as ex:
-            results = list(ex.map(lambda tid: pipeline.process_trip(tid, job_id), trip_ids))
+            results = list(ex.map(lambda tid: pipeline.process_trip(tid, job_id, images.get(tid)),
+                                  trip_ids))
         errors += results.count("error")
         for tid, res in zip(trip_ids, results):
             if res == "error":
@@ -607,7 +662,8 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             cat_dir = drive.ensure_folder(week_dir, meta.get("category") or "อัปโหลดมือ")
             db.record_drive_file(wk, "rider_folder", cat_dir, meta.get("category"), ref=job_id)
             display = display_names.get(job_id, rider)
-            imgs = list(pipeline.customer_images(job_id, display, fetch=drive.download))
+            imgs = list(pipeline.customer_images(job_id, display, fetch=drive.download,
+                                                 cache=images))
             with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
                 list(ex.map(lambda nd: drive.upload_file(cat_dir, nd[0], nd[1], "image/jpeg"), imgs))
             log(f"  🖼 รูปส่งลูกค้า {len(imgs)} ไฟล์ → Exports/{wk}/{meta.get('category') or 'อัปโหลดมือ'}/ (ชื่อ {display}N.jpg)")
@@ -617,6 +673,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             errors += 1
 
         stats = db.auto_approve_job(job_id, fresh_ids=trip_ids)
+        keep_images_for_waiting(job_id, among=trip_ids, memory=images)
         approved += stats["approved"]
         flagged += stats["flagged"]
         touched_weeks.add((d_from, d_to))
