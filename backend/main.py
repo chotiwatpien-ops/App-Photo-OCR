@@ -656,24 +656,40 @@ def diag_audit():
         out["riders_with_multiple_jobs"] = [
             {"driver_name": r[0], "week_from": r[1], "jobs": r[2]} for r in rows]
 
-        codes = c.execute(select(t.booking_code, j.driver_name, func.count().label("n"))
-                          .select_from(db.trips.join(db.jobs, j.id == t.job_id))
-                          .where(t.committed == 1, t.booking_code.isnot(None))
-                          .group_by(t.booking_code, j.driver_name)
-                          .having(func.count() > 1)).mappings().all()
-        out["approved_code_repeats_same_rider"] = len(codes)
-        extra_rows = sum(r["n"] - 1 for r in codes)
-        out["extra_approved_rows"] = extra_rows
-        pairs = [(r["booking_code"], r["driver_name"]) for r in codes]
+        # A repeat only means money counted twice when it is the SAME rider in the SAME week.
+        # The team allows a rider to reuse a slip in another week, so counting those here made
+        # the audit cry double-count over something Ops had explicitly signed off.
+        same_week = c.execute(select(t.booking_code, j.driver_name, j.date_from,
+                                     func.count().label("n"))
+                              .select_from(db.trips.join(db.jobs, j.id == t.job_id))
+                              .where(t.committed == 1, t.booking_code.isnot(None))
+                              .group_by(t.booking_code, j.driver_name, j.date_from)
+                              .having(func.count() > 1)).mappings().all()
+        out["approved_code_repeats_same_rider_same_week"] = len(same_week)
+        out["extra_approved_rows"] = sum(r["n"] - 1 for r in same_week)
         money = 0.0
-        for code, drv in pairs:
+        for r in same_week:
             vals = c.execute(select(t.id, t.net_earnings)
                              .select_from(db.trips.join(db.jobs, j.id == t.job_id))
-                             .where(t.committed == 1, t.booking_code == code,
-                                    j.driver_name == drv)
+                             .where(t.committed == 1, t.booking_code == r["booking_code"],
+                                    j.driver_name == r["driver_name"],
+                                    j.date_from == r["date_from"])
                              .order_by(t.id)).all()
             money += sum((v[1] or 0) for v in vals[1:])  # everything past the first is extra
         out["extra_approved_baht"] = round(money, 2)
+        out["same_week_repeat_sample"] = [
+            {"code": r["booking_code"], "driver_name": r["driver_name"],
+             "week_from": r["date_from"], "times": r["n"]} for r in same_week[:15]]
+
+        # same rider, ANOTHER week — allowed by the team's slip-reuse rule, reported only
+        cross_week_same_rider = c.execute(
+            select(t.booking_code, j.driver_name,
+                   func.count(func.distinct(j.date_from)).label("weeks"))
+            .select_from(db.trips.join(db.jobs, j.id == t.job_id))
+            .where(t.committed == 1, t.booking_code.isnot(None))
+            .group_by(t.booking_code, j.driver_name)
+            .having(func.count(func.distinct(j.date_from)) > 1)).mappings().all()
+        out["same_rider_across_weeks_allowed"] = len(cross_week_same_rider)
 
         # slips reused ACROSS riders or ACROSS weeks — the team allows these (different
         # riders may legitimately hold the same code), so they are reported, never blocked
@@ -700,9 +716,6 @@ def diag_audit():
                                       "file_name": w["file_name"], "net": w["net_earnings"]}
                                      for w in who]})
         out["cross_use_sample"] = sample
-        out["approved_code_repeat_sample"] = [
-            {"code": r["booking_code"], "driver_name": r["driver_name"], "times": r["n"]}
-            for r in codes[:15]]
     return out
 
 
