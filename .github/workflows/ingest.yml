@@ -77,7 +77,10 @@ jobs:
           TZ: Asia/Bangkok        # runner clock is UTC; the app stamps Bangkok — keep logs comparable
           INGEST_BATCH: ${{ github.event.inputs.live_read == 'true' && '0' || '1' }}
           INGEST_PARALLEL: "24"
-          DRIVE_PARALLEL: "8"
+          # 8 was the calm-down after a 32-fault network storm on 2026-08-26, before every Drive
+          # call had a retry. With batch reading, downloads ARE the round — 19 images a minute
+          # at 8 lanes puts a full week over the free Actions quota — so back up to 12.
+          DRIVE_PARALLEL: "12"
         run: |
           ARGS=""
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
