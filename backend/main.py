@@ -350,9 +350,13 @@ def collect_batches_now():
     immediately, which is what Ops is looking at."""
     import ingest
     try:
-        got, errs, jobs_touched, _issues = ingest.collect_batches(None)
+        got, errs, jobs_touched, issues = ingest.collect_batches(None)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(502, f"เก็บผล batch ไม่สำเร็จ: {str(e)[:200]}")
+    # this path cannot reach Drive, so the customer images are still owed — leave that on the
+    # issue list one by one, which is the list the next round works through
+    for key, kind, message in issues:
+        db.note_issue(key, kind, message)
     still = db.open_batches()
     return {"ok": True, "trips": got, "errors": errs, "jobs": len(jobs_touched),
             "waiting": sum(b.get("n_trips") or 0 for b in still)}

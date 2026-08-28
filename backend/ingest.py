@@ -304,8 +304,13 @@ def collect_batches(drive, exports_id=None):
                 f"รอคน {st['flagged']}" + (f" · เก็บรูปให้แถวที่รอคน {kept}" if kept else ""))
         if drive is None:
             # collected from the web app, which has no Drive credentials — the numbers are in,
-            # the customer images and workbook follow on the next proper round
+            # but the customer images are not, and nothing would remember that. The issue log is
+            # exactly the list a round retries, so leaving a note there is what brings them back.
             log("  ℹ เก็บผลจากหน้าเว็บ: รูปส่งลูกค้า/Excel บน Drive จะอัพเดตในรอบถัดไป")
+            for jid in touched_jobs:
+                issues.append((f"images:{jid}", "images",
+                               f"job #{jid}: เก็บผลจากหน้าเว็บแล้ว ยังไม่ได้สร้างรูปส่งลูกค้า "
+                               f"— รอบถัดไปจะสร้างให้"))
         else:
             errs2, failed = export_only(drive, exports_id, only_job_ids=touched_jobs, with_xlsx=False)
             errors += errs2
@@ -538,6 +543,15 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
                 bits.append(f"ทิ้งรูปซ้ำที่นับไปแล้ว {st['discarded']} แถว")
             log(f"  ✚ job #{jid}: เกณฑ์ล่าสุด{' · '.join(bits)}")
 
+    orphan = db.waiting_trips_without_image()
+    if orphan:
+        by_job = collections.defaultdict(list)
+        for tid, jid in orphan:
+            by_job[jid].append(tid)
+        got = sum(keep_images_for_waiting(jid, among=tids, drive=drive)
+                  for jid, tids in by_job.items())
+        log(f"🖼 ดึงรูปให้แถวที่รอคนตรวจ {got}/{len(orphan)} แถว (เก็บผลจากหน้าเว็บไม่มีสิทธิ์แตะ Drive)")
+
     # customer-image uploads that failed earlier (network blips) — the issue log promises the
     # next round retries them, so it does; still-failing jobs stay on the issue list
     retry_jobs = set(db.open_image_issue_jobs())
@@ -716,6 +730,8 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--exports-only", action="store_true", help="regenerate Excel + customer images for existing jobs")
+    ap.add_argument("--exports-jobs", metavar="IDS",
+                    help="regenerate customer images for these job ids only (comma-separated)")
     ap.add_argument("--fix-hidden-turbo", action="store_true",
                     help="DB-only maintenance: fill small net-base gaps (collapsed sections) into Turbo")
     ap.add_argument("--delete-jobs", metavar="IDS", help="comma-separated job ids to delete")
@@ -753,6 +769,13 @@ def main():
         tids = [int(x) for x in (a.delete_trips or "").replace(" ", "").split(",") if x]
         sys.exit(cleanup(drive, exports, delete_job_ids=ids, dedupe=a.dedupe_approved,
                          delete_trip_ids=tids))
+    if a.exports_jobs:
+        only = {int(x) for x in a.exports_jobs.replace(" ", "").split(",") if x}
+        log(f"🖼 สร้างรูปส่งลูกค้าใหม่เฉพาะ job {sorted(only)}")
+        errors, failed = export_only(drive, exports, only_job_ids=only)
+        for jid in only - set(failed):
+            db.resolve_issue(f"images:{jid}")
+        sys.exit(1 if errors else 0)
     if a.exports_only:
         errors, _ = export_only(drive, exports)
     else:

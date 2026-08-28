@@ -858,6 +858,20 @@ def waiting_trip_ids(job_id, among=None):
         return [r[0] for r in c.execute(q).all()]
 
 
+def waiting_trips_without_image():
+    """(trip_id, job_id) rows a person has to look at that carry no picture.
+
+    A collection run from the web app cannot reach Drive, so its leftovers land here; the next
+    round with Drive credentials fetches them, or the review queue shows a row with nothing to
+    look at."""
+    with engine.begin() as c:
+        return [(r[0], r[1]) for r in c.execute(
+            select(trips.c.id, trips.c.job_id)
+            .where(trips.c.status == "done", trips.c.committed == 0,
+                   trips.c.image_blob.is_(None),
+                   trips.c.id.in_(select(ingested_files.c.trip_id)))).all()]
+
+
 def drive_ids_for_trips(trip_ids):
     """trip_id -> Drive file id, for fetching an original that was never stored."""
     if not trip_ids:
@@ -1119,6 +1133,33 @@ def list_ingest_runs(limit=10):
     with engine.begin() as c:
         return [dict(r) for r in c.execute(select(ingest_runs).order_by(ingest_runs.c.id.desc())
                                            .limit(limit)).mappings().all()]
+
+
+def resolve_issue(key, run_id=None) -> None:
+    """Close one open issue — the job it complained about has been dealt with."""
+    with engine.begin() as c:
+        c.execute(update(ingest_issues)
+                  .where(ingest_issues.c.key == key, ingest_issues.c.resolved_run.is_(None))
+                  .values(resolved_run=run_id or 0, resolved_at=_now()))
+
+
+def note_issue(key, kind, message, run_id=None) -> None:
+    """Record ONE issue without touching the others.
+
+    sync_ingest_issues() resolves everything it was not handed, which is right at the end of a
+    round and wrong anywhere else — the web app knows about one job, not about the whole list."""
+    with engine.begin() as c:
+        row = c.execute(select(ingest_issues.c.id, ingest_issues.c.times_seen)
+                        .where(ingest_issues.c.key == key,
+                               ingest_issues.c.resolved_run.is_(None))).mappings().first()
+        if row:
+            c.execute(update(ingest_issues).where(ingest_issues.c.id == row["id"])
+                      .values(message=message, last_run=run_id,
+                              times_seen=(row["times_seen"] or 1) + 1))
+        else:
+            c.execute(insert(ingest_issues).values(
+                key=key, kind=kind, message=message,
+                first_run=run_id, last_run=run_id, times_seen=1))
 
 
 def sync_ingest_issues(run_id, issues):
