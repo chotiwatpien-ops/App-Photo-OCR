@@ -536,6 +536,28 @@ def approve_trip(trip_id: int):
 
 # ---------- read-only diagnostics (header X-Diag-Key; see auth_gate) ----------
 
+@app.get("/api/diag/db")
+def diag_db():
+    """Why the database is refusing us, in words. Every other diagnostic answers 500 when the
+    connection is gone, which says nothing about whether it is the network, the credentials or
+    the provider suspending the project."""
+    from sqlalchemy import text
+    out = {"url_host": (config.DATABASE_URL.split("@")[-1].split("/")[0]
+                        if "@" in config.DATABASE_URL else "local")}
+    try:
+        with db.engine.begin() as c:
+            out["select_1"] = c.execute(text("SELECT 1")).scalar()
+            out["trips"] = c.execute(text("SELECT count(*) FROM trips")).scalar()
+            out["db_size_mb"] = round((c.execute(
+                text("SELECT pg_database_size(current_database())")).scalar() or 0) / 1e6, 1)
+        out["ok"] = True
+    except Exception as e:  # noqa: BLE001
+        out["ok"] = False
+        out["error_type"] = type(e).__name__
+        out["error"] = str(e)[:600]
+    return out
+
+
 @app.get("/api/diag/summary")
 def diag_summary():
     from sqlalchemy import case, func, select
