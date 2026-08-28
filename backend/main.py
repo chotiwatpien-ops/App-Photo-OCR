@@ -536,6 +536,46 @@ def approve_trip(trip_id: int):
 
 # ---------- read-only diagnostics (header X-Diag-Key; see auth_gate) ----------
 
+@app.get("/api/diag/schedule")
+def diag_schedule():
+    """Ask GitHub why the scheduled rounds are not firing.
+
+    A workflow can be switched off — by hand, or by GitHub itself when a repository goes quiet —
+    and nothing about that is visible from inside the app. This reads the workflow's own state
+    and its last runs by event, which separates 'never triggered' from 'triggered and failed'."""
+    import urllib.request
+    if not (config.GITHUB_TOKEN and config.GITHUB_REPO):
+        raise HTTPException(501, "ยังไม่ได้ตั้งค่า GITHUB_TOKEN / GITHUB_REPO")
+    base = f"https://api.github.com/repos/{config.GITHUB_REPO}"
+    head = {"Authorization": f"Bearer {config.GITHUB_TOKEN}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28"}
+
+    def get(path):
+        req = urllib.request.Request(base + path, headers=head)
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.loads(r.read())
+
+    out = {}
+    try:
+        wf = get(f"/actions/workflows/{config.GITHUB_WORKFLOW}")
+        out["workflow"] = {"name": wf.get("name"), "state": wf.get("state"),
+                           "path": wf.get("path")}
+    except Exception as e:  # noqa: BLE001
+        out["workflow_error"] = str(e)[:200]
+    for event in ("schedule", "workflow_dispatch"):
+        try:
+            runs = get(f"/actions/workflows/{config.GITHUB_WORKFLOW}/runs"
+                       f"?event={event}&per_page=5")
+            out[event] = [{"created_at": r["created_at"], "status": r["status"],
+                           "conclusion": r["conclusion"], "branch": r["head_branch"]}
+                          for r in runs.get("workflow_runs", [])]
+            out[f"{event}_total"] = runs.get("total_count")
+        except Exception as e:  # noqa: BLE001
+            out[f"{event}_error"] = str(e)[:200]
+    return out
+
+
 @app.get("/api/diag/db")
 def diag_db():
     """Why the database is refusing us, in words. Every other diagnostic answers 500 when the
