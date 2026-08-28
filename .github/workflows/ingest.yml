@@ -2,10 +2,10 @@ name: Weekly ingest (Drive → Gemini → DB → Excel)
 
 on:
   schedule:
-    # Every 4 hours. A batch round only submits and collects, so six rounds a day cost less
-    # runner time than the two live rounds did — and the shorter gap is what hides the batch
-    # queue's own delay from Ops. :23 because GitHub drops scheduled runs at busy o'clock slots.
-    - cron: "23 1,5,9,13,17,21 * * *"   # 08:23 12:23 16:23 20:23 00:23 04:23 Asia/Bangkok
+    # GitHub fires about one scheduled run in three, 20-95 minutes late (measured 2026-08-24..28:
+    # 8 runs where ~25 were due). So it is asked every hour and the round itself decides whether
+    # it is due — --min-gap makes an early one exit in seconds, long before any real work.
+    - cron: "23 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -83,6 +83,8 @@ jobs:
           DRIVE_PARALLEL: "12"
         run: |
           ARGS=""
+          # a person pressing the button always runs; the hourly schedule only runs when due
+          if [ "${{ github.event_name }}" = "schedule" ]; then ARGS="$ARGS --min-gap 3.5"; fi
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
           if [ "${{ github.event.inputs.exports_only }}" = "true" ]; then ARGS="$ARGS --exports-only"; fi
           if [ -n "${{ github.event.inputs.exports_jobs }}" ]; then ARGS="$ARGS --exports-jobs ${{ github.event.inputs.exports_jobs }}"; fi

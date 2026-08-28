@@ -741,10 +741,28 @@ def main():
                     help="comma-separated trip ids to delete (team-verified repeats), then rewrite the xlsx")
     ap.add_argument("--redo-model", metavar="SUBSTR",
                     help="delete trips read by a model matching SUBSTR, then re-read them this run")
+    ap.add_argument("--min-gap", type=float, metavar="HOURS",
+                    help="do nothing if a round finished less than this many hours ago "
+                         "(scheduled runs only — a person pressing the button always runs)")
     ap.add_argument("--only", help="comma-separated substrings of rider folder paths to process, e.g. '01 อภิชาติ,01 ปัญญา'")
     a = ap.parse_args()
 
     db.init_db()
+    if a.min_gap:
+        # GitHub fires roughly one scheduled run in three, and late. The answer is to let it try
+        # every hour and have the round decide: if one finished recently there is nothing to do,
+        # and saying so costs seconds instead of the minutes a real round takes.
+        last = db.latest_ingest_run()
+        if last and last.get("finished_at"):
+            from datetime import datetime
+            age = (datetime.now(db._TZ_BKK).replace(tzinfo=None)
+                   - datetime.fromisoformat(last["finished_at"])).total_seconds() / 3600
+            if age < a.min_gap:
+                log(f"⏭ รอบล่าสุดเพิ่งจบไป {age:.1f} ชม. (เกณฑ์ {a.min_gap} ชม.) — ยังไม่ถึงเวลา ข้ามรอบนี้")
+                sys.exit(0)
+        elif last and not last.get("finished_at"):
+            log("⏭ มีรอบกำลังรันอยู่ — ข้ามรอบนี้")
+            sys.exit(0)
     if a.fix_hidden_turbo:
         sys.exit(fix_hidden_turbo())
     if a.redo_model:
