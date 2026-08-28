@@ -297,26 +297,46 @@ def weeks():
             "exports_folder": config.DRIVE_EXPORTS_FOLDER_ID, "inbox_folder": config.DRIVE_INBOX_FOLDER_ID}
 
 
+def _refresh_batch_states(rows, limit=40, workers=10):
+    """Ask Gemini where each open batch actually is.
+
+    The stored state only moves when a round collects, so without this a batch that finished
+    minutes after being sent still reads 'รอคิว' hours later. Asking one at a time made that
+    worse — with twenty batches open only the newest few were ever refreshed, and the rest sat
+    on screen looking queued when they were done. They are asked together instead."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    import batch_client
+    todo = [r for r in rows if not r.get("finished_at")][:limit]
+    if not todo:
+        return rows
+
+    def one(r):
+        try:
+            live = batch_client.state(r["name"])
+            if live and live != r["state"]:
+                db.touch_batch(r["name"], live)
+                r["state"] = live
+        except Exception as e:  # noqa: BLE001
+            r["state_error"] = str(e)[:120]   # keep the stored state, say it is not fresh
+        return r
+
+    with ThreadPoolExecutor(max_workers=min(workers, len(todo))) as ex:
+        list(ex.map(one, todo))
+    return rows
+
+
 @app.get("/api/batches")
 def batches(limit: int = 20):
     """What is out with the batch reader right now, and what came back lately.
 
     The stored state only moves when a round collects, so an open batch is asked directly —
     otherwise the page would show 'รอคิว' for four hours after the work was actually done."""
-    rows = db.recent_batches(limit)
+    rows = _refresh_batch_states(db.recent_batches(limit))
     open_rows = [r for r in rows if not r.get("finished_at")]
-    # a busy round leaves dozens of batches open; refreshing every one of them would make this
-    # page as slow as the queue is long, so only the newest few are asked
-    for r in open_rows[:8]:
-        try:
-            import batch_client
-            live = batch_client.state(r["name"])
-            if live and live != r["state"]:
-                db.touch_batch(r["name"], live)
-                r["state"] = live
-        except Exception as e:  # noqa: BLE001
-            r["state_error"] = str(e)[:120]
     return {"batches": rows, "open": len(open_rows),
+            "ready_images": sum(r.get("n_trips") or 0 for r in open_rows
+                                if str(r.get("state") or "").endswith("SUCCEEDED")),
             "waiting_images": sum(r.get("n_trips") or 0 for r in open_rows),
             "mode": "batch" if config.INGEST_BATCH else "live"}
 
@@ -550,13 +570,7 @@ def restore_trip(trip_id: int):
 def diag_batches(limit: int = 20):
     """Batch queue seen from outside the login — the office network blocks the database port,
     and 'is the reading done yet' is exactly the question that comes up on those days."""
-    rows = db.recent_batches(limit)
-    for r in [x for x in rows if not x.get("finished_at")][:10]:
-        try:
-            import batch_client
-            r["state"] = batch_client.state(r["name"])
-        except Exception as e:  # noqa: BLE001
-            r["state_error"] = str(e)[:120]
+    rows = _refresh_batch_states(db.recent_batches(limit))
     waiting = [r for r in rows if not r.get("finished_at")]
     return {"batches": rows, "open": len(waiting),
             "waiting_images": sum(r.get("n_trips") or 0 for r in waiting),

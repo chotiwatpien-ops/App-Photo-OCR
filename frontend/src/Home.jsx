@@ -215,7 +215,7 @@ function BatchPanel({ onCollected }) {
                     <td className="py-1.5 pr-3">
                       <span className={`text-xs rounded-full px-2 py-0.5 ${st[1]}`}>{st[0]}</span>
                       {b.finished_at && <span className="text-slate-400 text-xs ml-1">เก็บผลแล้ว</span>}
-                      {b.state_error && <span className="text-red-600 text-xs ml-1" title={b.state_error}>เช็คสถานะไม่ได้</span>}
+                      {b.state_error && <span className="text-amber-700 text-xs ml-1" title={b.state_error}>(เช็คสดไม่ได้ — สถานะล่าสุดที่บันทึกไว้)</span>}
                     </td>
                     <td className="py-1.5 pr-3 text-slate-600">{(b.riders || []).join(', ') || '-'}</td>
                     <td className="py-1.5 pr-3 text-slate-500 text-xs">{(b.model || '').replace('gemini-', '')}</td>
