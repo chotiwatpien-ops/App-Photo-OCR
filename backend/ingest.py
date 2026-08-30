@@ -296,12 +296,23 @@ def collect_batches(drive, exports_id=None):
         log(f"  ⏳ ยังรอผล batch อีก {waiting} รูป — รอบถัดไปมาเก็บ")
     if touched_jobs:
         for jid, d1, d2 in db.jobs_dates(touched_jobs):
-            pairs_n = pipeline.pair_fragments(jid)
-            pipeline.spread_dates(jid, d1, d2, only_missing=True)
-            st = db.auto_approve_job(jid, fresh_ids=fresh_by_job.get(jid, []))
-            kept = keep_images_for_waiting(jid, drive=drive)
-            log(f"  ✓ job #{jid}: จับคู่ {pairs_n} · อนุมัติอัตโนมัติ {st['approved']} · "
-                f"รอคน {st['flagged']}" + (f" · เก็บรูปให้แถวที่รอคน {kept}" if kept else ""))
+            # each job stands alone: one that throws used to abandon every job after it in this
+            # loop, leaving their rows read but undated and unapproved — 420 rows on 2026-08-30
+            try:
+                pairs_n = pipeline.pair_fragments(jid)
+                if d1 and d2:
+                    pipeline.spread_dates(jid, d1, d2, only_missing=True)
+                else:
+                    log(f"  ⚠ job #{jid}: ไม่รู้ช่วงสัปดาห์ ข้ามการกระจายวันที่")
+                st = db.auto_approve_job(jid, fresh_ids=fresh_by_job.get(jid, []))
+                kept = keep_images_for_waiting(jid, drive=drive)
+                log(f"  ✓ job #{jid}: จับคู่ {pairs_n} · อนุมัติอัตโนมัติ {st['approved']} · "
+                    f"รอคน {st['flagged']}" + (f" · เก็บรูปให้แถวที่รอคน {kept}" if kept else ""))
+            except Exception as e:  # noqa: BLE001
+                errors += 1
+                log(f"  ✗ job #{jid}: จัดการหลังอ่านไม่สำเร็จ — {str(e)[:150]}")
+                issues.append((f"collect:{jid}", "process",
+                               f"job #{jid}: เก็บผลแล้วแต่จับคู่/ลงวันที่/อนุมัติไม่สำเร็จ: {str(e)[:200]}"))
         if drive is None:
             # collected from the web app, which has no Drive credentials — the numbers are in,
             # but the customer images are not, and nothing would remember that. The issue log is
@@ -532,6 +543,8 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     # rule changes apply retroactively: re-run the (idempotent) auto-approve over every job
     # still in review, so rows that meet the CURRENT criteria stop waiting on a person
     for jid, d1, d2 in db.jobs_dates(db.review_job_ids()):
+        if d1 and d2:
+            pipeline.spread_dates(jid, d1, d2, only_missing=True)   # rows a failed collect left bare
         st = db.auto_approve_job(jid)
         if st["approved"] or st.get("discarded"):
             approved += st["approved"]
@@ -542,6 +555,42 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             if st.get("discarded"):
                 bits.append(f"ทิ้งรูปซ้ำที่นับไปแล้ว {st['discarded']} แถว")
             log(f"  ✚ job #{jid}: เกณฑ์ล่าสุด{' · '.join(bits)}")
+
+    broken = db.retryable_error_trips()
+    if broken:
+        log(f"♻ อ่านใหม่ {len(broken)} แถวที่รอบก่อนอ่านไม่สำเร็จ (Gemini ตอบ error ชั่วคราว)")
+        ids = db.drive_ids_for_trips([t for t, _ in broken])
+
+        def _reread(x):
+            tid, jid = x
+            img = None
+            if tid in ids:
+                try:
+                    img = (drive.download(ids[tid]), "image/jpeg")
+                except Exception:  # noqa: BLE001
+                    return "error"
+            return pipeline.process_trip(tid, jid, img)
+
+        with ThreadPoolExecutor(max_workers=INGEST_PARALLEL) as ex:
+            res = list(ex.map(_reread, broken))
+        fixed = res.count("done")
+        log(f"   อ่านสำเร็จ {fixed}/{len(broken)} แถว")
+        for (tid, _), r in zip(broken, res):
+            if r == "done":
+                db.resolve_issue(f"batch:{tid}")
+        errors += res.count("error")
+        # redo_jobs was already consumed above, so these jobs are finished off here
+        for jid, d1, d2 in db.jobs_dates({j for _t, j in broken}):
+            try:
+                pipeline.pair_fragments(jid)
+                if d1 and d2:
+                    pipeline.spread_dates(jid, d1, d2, only_missing=True)
+                st = db.auto_approve_job(jid)
+                if st["approved"]:
+                    approved += st["approved"]
+                    touched_weeks.add((d1, d2))
+            except Exception as e:  # noqa: BLE001
+                log(f"  ✗ job #{jid}: หลังอ่านซ้ำแล้วจัดการต่อไม่สำเร็จ — {str(e)[:120]}")
 
     orphan = db.waiting_trips_without_image()
     if orphan:

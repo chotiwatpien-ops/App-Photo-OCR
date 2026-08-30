@@ -858,6 +858,20 @@ def waiting_trip_ids(job_id, among=None):
         return [r[0] for r in c.execute(q).all()]
 
 
+def retryable_error_trips(limit=60):
+    """(trip_id, job_id) rows the reader failed on that still have their original on Drive.
+
+    Batch results carry per-request failures — 'service unavailable', 'deadline expired' — which
+    are Gemini having a moment, not anything wrong with the slip. Nothing retried those, so the
+    trip sat in 'error' for good and its money never reached the workbook."""
+    with engine.begin() as c:
+        return [(r[0], r[1]) for r in c.execute(
+            select(trips.c.id, trips.c.job_id)
+            .where(trips.c.status == "error",
+                   trips.c.id.in_(select(ingested_files.c.trip_id)))
+            .order_by(trips.c.id).limit(limit)).all()]
+
+
 def waiting_trips_without_image():
     """(trip_id, job_id) rows a person has to look at that carry no picture.
 
