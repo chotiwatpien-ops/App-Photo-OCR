@@ -519,13 +519,19 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     redo_jobs = {j for _, j in stuck} | set(db.stale_running_jobs()) | set(db.jobs_missing_dates())
     if redo_jobs:
         for jid, d1, d2 in db.jobs_dates(redo_jobs):
-            pipeline.pair_fragments(jid)
-            pipeline.spread_dates(jid, d1, d2, only_missing=True)
-            st = db.auto_approve_job(jid)
-            approved += st["approved"]
-            flagged += st["flagged"]
-            touched_weeks.add((d1, d2))
-            log(f"  ♻ job #{jid}: จับคู่/อนุมัติย้อนหลัง — อนุมัติ {st['approved']} · รอคน {st['flagged']}")
+            try:
+                pipeline.pair_fragments(jid)
+                if d1 and d2:
+                    pipeline.spread_dates(jid, d1, d2, only_missing=True)
+                st = db.auto_approve_job(jid)
+                approved += st["approved"]
+                flagged += st["flagged"]
+                touched_weeks.add((d1, d2))
+                log(f"  ♻ job #{jid}: จับคู่/อนุมัติย้อนหลัง — อนุมัติ {st['approved']} · รอคน {st['flagged']}")
+            except Exception as e:  # noqa: BLE001
+                errors += 1
+                log(f"  ✗ job #{jid}: กู้ย้อนหลังไม่สำเร็จ — {type(e).__name__}: {str(e)[:150]}")
+                issues.append((f"redo:{jid}", "process", f"job #{jid}: กู้ย้อนหลังไม่สำเร็จ: {str(e)[:200]}"))
 
     # the hidden-turbo backfill now runs EVERY round (no more manual checkbox needed) —
     # rows that slipped through under older, stricter conditions heal themselves here
@@ -542,19 +548,32 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
 
     # rule changes apply retroactively: re-run the (idempotent) auto-approve over every job
     # still in review, so rows that meet the CURRENT criteria stop waiting on a person
+    swept_fail = 0
     for jid, d1, d2 in db.jobs_dates(db.review_job_ids()):
-        if d1 and d2:
-            pipeline.spread_dates(jid, d1, d2, only_missing=True)   # rows a failed collect left bare
-        st = db.auto_approve_job(jid)
-        if st["approved"] or st.get("discarded"):
-            approved += st["approved"]
-            touched_weeks.add((d1, d2))
-            bits = []
-            if st["approved"]:
-                bits.append(f"อนุมัติเพิ่ม {st['approved']} แถว")
-            if st.get("discarded"):
-                bits.append(f"ทิ้งรูปซ้ำที่นับไปแล้ว {st['discarded']} แถว")
-            log(f"  ✚ job #{jid}: เกณฑ์ล่าสุด{' · '.join(bits)}")
+        # every job on its own: this loop runs near the end of a round, so one exception here
+        # used to lose the dates, the approvals AND the issue sync for every job behind it —
+        # 354 rows sat undated for three days because of exactly that
+        try:
+            if d1 and d2:
+                pipeline.spread_dates(jid, d1, d2, only_missing=True)  # a failed collect left them bare
+            st = db.auto_approve_job(jid)
+            if st["approved"] or st.get("discarded"):
+                approved += st["approved"]
+                touched_weeks.add((d1, d2))
+                bits = []
+                if st["approved"]:
+                    bits.append(f"อนุมัติเพิ่ม {st['approved']} แถว")
+                if st.get("discarded"):
+                    bits.append(f"ทิ้งรูปซ้ำที่นับไปแล้ว {st['discarded']} แถว")
+                log(f"  ✚ job #{jid}: เกณฑ์ล่าสุด{' · '.join(bits)}")
+        except Exception as e:  # noqa: BLE001
+            swept_fail += 1
+            errors += 1
+            log(f"  ✗ job #{jid}: กวาดย้อนหลังไม่สำเร็จ — {type(e).__name__}: {str(e)[:150]}")
+            issues.append((f"sweep:{jid}", "process",
+                           f"job #{jid}: กวาดย้อนหลัง (ลงวันที่/อนุมัติ) ไม่สำเร็จ: {str(e)[:200]}"))
+    if swept_fail:
+        log(f"⚠ กวาดย้อนหลังพลาด {swept_fail} job — job อื่นไม่ได้รับผลกระทบ")
 
     broken = db.retryable_error_trips()
     if broken:
