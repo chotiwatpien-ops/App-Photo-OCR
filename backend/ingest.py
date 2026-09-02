@@ -330,9 +330,10 @@ def collect_batches(drive, exports_id=None):
     return done_trips, errors, touched_jobs, issues
 
 
-def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True):
+def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True, force=False):
     """Regenerate Excel + customer images for jobs already in the database (no reading).
-    only_job_ids limits the sweep; returns (error_count, failed_job_ids)."""
+    only_job_ids limits the sweep; force=True rebuilds pictures that already exist (for a job
+    whose upload failed). Returns (error_count, failed_job_ids)."""
     errors = 0
     failed = []
     for (d_from, d_to), js in sorted(db.jobs_by_week().items()):
@@ -347,7 +348,10 @@ def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True):
                 db.record_drive_file(wk, "rider_folder", cat_dir, j.get("category"), ref=j["id"])
                 dup = sum(1 for x in js if x["driver_name"] == j["driver_name"] and x.get("category") == j.get("category")) > 1
                 display = f"{j['driver_name']}-{j.get('admin')}" if (dup and j.get("admin")) else j["driver_name"]
-                imgs = list(pipeline.customer_images(j["id"], display, fetch=drive.download))
+                imgs = list(pipeline.customer_images(j["id"], display, fetch=drive.download,
+                                                     only_missing=not force))
+                if not imgs:
+                    continue                    # every picture for this job is already on Drive
                 with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
                     list(ex.map(lambda nd: drive.upload_file(cat_dir, nd[0], nd[1], "image/jpeg"), imgs))
                 log(f"🖼 {display}: {len(imgs)} รูป → Exports/{wk}/{j.get('category') or 'อัปโหลดมือ'}/")
@@ -625,7 +629,8 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     retry_jobs = set(db.open_image_issue_jobs())
     if retry_jobs:
         log(f"🖼 ลองอัพโหลดรูปส่งลูกค้าซ้ำ {len(retry_jobs)} job ที่ค้างจากรอบก่อน")
-        errs, still_failed = export_only(drive, exports_id, only_job_ids=retry_jobs, with_xlsx=False)
+        errs, still_failed = export_only(drive, exports_id, only_job_ids=retry_jobs,
+                                         with_xlsx=False, force=True)
         errors += errs
         for jid in still_failed:
             issues.append((f"images:{jid}", "images", f"อัพโหลดรูปส่งลูกค้า job #{jid} ยังไม่สำเร็จ (ลองซ้ำแล้ว)"))
@@ -858,7 +863,7 @@ def main():
     if a.exports_jobs:
         only = {int(x) for x in a.exports_jobs.replace(" ", "").split(",") if x}
         log(f"🖼 สร้างรูปส่งลูกค้าใหม่เฉพาะ job {sorted(only)}")
-        errors, failed = export_only(drive, exports, only_job_ids=only)
+        errors, failed = export_only(drive, exports, only_job_ids=only, force=True)
         for jid in only - set(failed):
             db.resolve_issue(f"images:{jid}")
         sys.exit(1 if errors else 0)

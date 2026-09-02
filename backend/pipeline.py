@@ -225,12 +225,18 @@ def spread_dates(job_id, date_from, date_to, only_missing=True) -> int:
     return n
 
 
-def customer_images(job_id, rider, fetch=None, cache=None):
+def customer_images(job_id, rider, fetch=None, cache=None, only_missing=True):
     """Yield (file_name, jpeg_bytes) for every trip in customer order: '<rider>1.jpg', '<rider>2.jpg', ...
 
     Photos are not kept in the database any more, so the bytes come from `cache` — what the
     round already downloaded, keyed by trip id — and from `fetch(drive_id)` for anything the
-    round no longer holds (a batch collected later, or an older job being regenerated)."""
+    round no longer holds (a batch collected later, or an older job being regenerated).
+
+    only_missing skips trips whose image was already made and named, without downloading or
+    stitching them again — a round with no new photos was spending an hour rebuilding files
+    that already sat on Drive. Numbering is unaffected: every trip still takes its place in the
+    order, so the skipped ones keep the names they have. Pass only_missing=False to rebuild a
+    job whose upload failed, or when the pictures themselves must be made again."""
     import stitch
     from datetime import date as _date
     job = db.get_job_meta(job_id)
@@ -241,6 +247,15 @@ def customer_images(job_id, rider, fetch=None, cache=None):
     rows = db.trips_with_images(job_id)
     rows.sort(key=lambda r: (r["trip_date"] or "9999", _natural_key(r["file_name"])))
     cache = cache or {}
+    if only_missing:
+        # work out each trip's name first; a trip that already carries it needs nothing done
+        n = 0
+        for r in rows:
+            n += 1
+            r["_name"] = stitch.customer_name(rider, n, wk)
+            r["_skip"] = r.get("customer_image") == r["_name"]
+        if all(r["_skip"] for r in rows):
+            return
     for r in rows:                       # bytes this round already has cost nothing to reuse
         if r["top_blob"] is None and r["id"] in cache:
             r["top_blob"] = cache[r["id"]][0]
@@ -253,6 +268,8 @@ def customer_images(job_id, rider, fetch=None, cache=None):
         from config import DRIVE_PARALLEL
         need = []
         for r in rows:
+            if r.get("_skip"):
+                continue
             if r["top_blob"] is None and r["id"] in drive_ids:
                 need.append((r, "top_blob", drive_ids[r["id"]]))
             bid = r.get("bottom_id")
@@ -263,10 +280,12 @@ def customer_images(job_id, rider, fetch=None, cache=None):
                 r[key] = data
     n = 0
     for r in rows:
+        n += 1
+        name = r.get("_name") or stitch.customer_name(rider, n, wk)
+        if r.get("_skip"):
+            continue                     # already on Drive under this name
         if not r["top_blob"]:
             continue
-        n += 1
-        name = stitch.customer_name(rider, n, wk)
         db.update_trip(r["id"], {"customer_image": name})  # so Sheet1 can trace back to this file
         yield name, stitch.stitch(r["top_blob"], r["bottom_blob"])
 

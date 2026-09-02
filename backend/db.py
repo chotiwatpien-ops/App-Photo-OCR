@@ -1264,7 +1264,7 @@ def trips_with_images(job_id):
     `bottom_blob`. Only useful while blobs exist (before approval clears them)."""
     with engine.begin() as c:
         rows = c.execute(select(trips.c.id, trips.c.file_name, trips.c.trip_date,
-                                trips.c.image_blob)
+                                trips.c.customer_image, trips.c.image_blob)
                          .where(trips.c.job_id == job_id, trips.c.status == "done")).mappings().all()
         bottoms = {r["merged_into"]: (r["id"], r["image_blob"]) for r in c.execute(
             select(trips.c.id, trips.c.merged_into, trips.c.image_blob)
@@ -1273,6 +1273,7 @@ def trips_with_images(job_id):
     for r in rows:
         b = bottoms.get(r["id"])
         out.append({"id": r["id"], "file_name": r["file_name"], "trip_date": r["trip_date"],
+                    "customer_image": r["customer_image"],
                     "top_blob": bytes(r["image_blob"]) if r["image_blob"] else None,
                     "bottom_id": b[0] if b else None,
                     "bottom_blob": bytes(b[1]) if b and b[1] else None})
