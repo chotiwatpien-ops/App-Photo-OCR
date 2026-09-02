@@ -1293,6 +1293,24 @@ def drive_ids_for_job(job_id):
                                               .where(ingested_files.c.job_id == job_id)).all()}
 
 
+def jobs_overview():
+    """Every job with its week, vehicle group, admin and row counts — for asking questions about
+    the roster: who appears in which group, week after week."""
+    with engine.begin() as c:
+        counts = {r[0]: (r[1], r[2]) for r in c.execute(
+            select(trips.c.job_id, func.count(),
+                   func.sum(case((trips.c.status == "done", 1), else_=0)))
+            .group_by(trips.c.job_id)).all()}
+        rows = c.execute(select(jobs.c.id, jobs.c.driver_name, jobs.c.date_from, jobs.c.date_to,
+                                jobs.c.category, jobs.c.admin, jobs.c.folder_name, jobs.c.status)
+                         .order_by(jobs.c.id)).mappings().all()
+    out = []
+    for r in rows:
+        n_all, n_done = counts.get(r["id"], (0, 0))
+        out.append({**dict(r), "images": n_all, "trips": n_done or 0})
+    return out
+
+
 def jobs_by_week():
     """{(date_from, date_to): [job meta...]} for every job — used by --exports-only."""
     with engine.begin() as c:

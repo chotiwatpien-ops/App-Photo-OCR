@@ -580,6 +580,12 @@ def diag_schedule():
     return out
 
 
+@app.get("/api/diag/jobs")
+def diag_jobs():
+    """Every job with week, vehicle group, admin and counts — for roster questions."""
+    return {"jobs": db.jobs_overview()}
+
+
 @app.get("/api/diag/db")
 def diag_db():
     """Why the database is refusing us, in words. Every other diagnostic answers 500 when the
