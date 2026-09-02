@@ -108,6 +108,13 @@ GEMINI_PRICE = {
     "gemini-2.5-flash-lite": (0.10, 0.40),
 }
 USD_THB = 35.0
+# Fields the model is NOT asked for. Output is billed at 5x input, and the two full addresses
+# were 95 of the ~450 output tokens a slip costs — 9.8% of the bill, measured by reading the
+# same 30 images both ways. Ops confirmed 2026-09-02 that nobody opens them; the districts and
+# zones Sheet1 actually uses are separate, much shorter fields and stay.
+EXTRACT_DROP_FIELDS = tuple(
+    f for f in str(_setting("EXTRACT_DROP_FIELDS", "extract_drop_fields",
+                            "pickup_text,dropoff_text")).split(",") if f.strip())
 GEMINI_THINKING_LEVEL = _setting("GEMINI_THINKING_LEVEL", "thinking_level", "low")
 _tb = _setting("GEMINI_THINKING_BUDGET", "thinking_budget", 0)
 GEMINI_THINKING_BUDGET = int(_tb) if _tb not in (None, "") else None

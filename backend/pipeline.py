@@ -2,6 +2,7 @@
 """One trip through Gemini → checks → DB. Shared by the web app (manual upload) and ingest.py."""
 import re
 
+import config
 import db
 import extractor
 
@@ -432,7 +433,9 @@ def process_trip(trip_id: int, job_id: int, image=None) -> str:
         img = image or db.get_trip_image(trip_id)
         if not img:
             raise RuntimeError("image missing")
-        return apply_extraction(trip_id, job_id, extractor.extract_image(img[0], img[1]))
+        return apply_extraction(trip_id, job_id,
+                                extractor.extract_image(img[0], img[1],
+                                                        drop=config.EXTRACT_DROP_FIELDS))
     except Exception as e:  # noqa: BLE001 - surface any failure on the trip row
         db.update_trip(trip_id, {"status": "error", "error": str(e)[:500]})
         db.refresh_job_status(job_id)

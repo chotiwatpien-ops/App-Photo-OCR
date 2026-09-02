@@ -48,7 +48,7 @@ def submit(items, model=None, display_name="ingest", workers=4) -> list:
     from google.genai import types
     model = model or config.GEMINI_MODEL
     cl = _client()
-    cfg = extractor._gen_config(model)
+    cfg = extractor._gen_config(model, config.EXTRACT_DROP_FIELDS)   # same schema as a live read
 
     def one(numbered):
         i, chunk = numbered
