@@ -53,6 +53,7 @@ check("Test 8: ฿252 จับได้จากการ์ด 315/252/63", pa
 b221 = {"amount": None, "numbers": [20, 50, 55, 221, 276, 346], "seq": [50, 346, 20, 50, 276, 276, 221, 55]}
 check("Test 8: ฿229 ห้ามจับกับครึ่งล่างรายได้ 221 (เคย 221+4 / 55+50+...)", not pairing.matches({"amount": 229.0}, b221))
 check("Test 8: ฿221 จับได้จากการ์ด 276/221/55", pairing.match_tier({"amount": 221.0}, b221) == 0)
+check("ยอดจิ๋วคือการอ่านพลาด: MIN_AMOUNT ≥ 10 (GitHub run 2026-09-03 ต่อ ฿4/฿6/฿8 ผิด 10 คู่)", pairing.MIN_AMOUNT >= 10)
 check("ครึ่งบนอ่านยอดไม่ได้ → ไม่จับ", not pairing.matches({"amount": None}, {"amount": 104.0, "numbers": [104]}))
 
 items = [("1", {"role": "top", "amount": 30.0}), ("2", {"role": "bottom", "amount": 30.0, "numbers": [30]}),

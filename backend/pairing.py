@@ -106,6 +106,9 @@ def _all_numbers(im):
     return sorted(set(seq)), seq
 
 
+MIN_AMOUNT = 15    # no Grab trip nets less than this; a smaller "amount" is a misread digit
+
+
 def inspect(source):
     """source: path or bytes. Returns {'role': 'long'|'top'|'bottom', 'amount', 'numbers', ...}."""
     im = Image.open(io.BytesIO(source) if isinstance(source, (bytes, bytearray)) else source).convert("RGB")
@@ -136,6 +139,10 @@ def inspect(source):
             y0, y1 = small[0]                                # topmost small green line = 'รวมรายได้จากรอบขับ'
             info["amount"], info["alts"] = _amount_from_block(im, mask, y0, y1)
         info["numbers"], info["seq"] = _all_numbers(im)
+    if info["amount"] is not None and info["amount"] < MIN_AMOUNT:
+        # ฿4, ฿8 … are never a fare: the OCR dropped digits (or read the bonus line). Treated
+        # as unreadable, so two such misreads can never be glued together as a "฿4 trip".
+        info["amount"], info["alts"] = None, []
     return info
 
 
