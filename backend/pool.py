@@ -264,8 +264,11 @@ def write_previews(drive, albums, data, report, log=log):
                 buf = io.BytesIO()
                 img.save(buf, "JPEG", quality=88)
                 tn, bn = (x.rsplit("_", 1)[1].rsplit(".", 1)[0] for x in (p["top"], p["bottom"]))
-                drive.upload_file(alb_dir, f"{i:03d}_฿{p['amount']:g}_{tn}+{bn}.jpg", buf.getvalue(), "image/jpeg")
-                n += 1
+                try:
+                    drive.upload_file(alb_dir, f"{i:03d}_฿{p['amount']:g}_{tn}+{bn}.jpg", buf.getvalue(), "image/jpeg")
+                    n += 1
+                except Exception as e:  # noqa: BLE001 — one dropped preview must not lose the report
+                    report["errors"].append(f"อัปโหลดรูปตัวอย่างไม่สำเร็จ {p['top']}: {str(e)[:100]}")
         drive.upload_file(rep_dir, f"รายงานจัดกอง {stamp}.txt", render(report).encode("utf-8"), "text/plain")
         log(f"  ↳ {wk}/{REPORT_DIR}: รูปที่ต่อแล้ว {n} ใบ + รายงาน")
 

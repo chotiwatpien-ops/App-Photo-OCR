@@ -105,13 +105,15 @@ class DriveClient:
 
     def ensure_folder(self, parent_id, name) -> str:
         """Id of child folder `name`, created if missing."""
-        q = (f"'{parent_id}' in parents and name='{name}' and "
-             f"mimeType='application/vnd.google-apps.folder' and trashed=false")
-        found = self._list(q, "id")
-        if found:
-            return found[0]["id"]
-        meta = {"name": name, "parents": [parent_id], "mimeType": "application/vnd.google-apps.folder"}
-        return self.svc.files().create(body=meta, fields="id", supportsAllDrives=True).execute()["id"]
+        def _ensure():
+            q = (f"'{parent_id}' in parents and name='{name}' and "
+                 f"mimeType='application/vnd.google-apps.folder' and trashed=false")
+            found = self._list(q, "id")
+            if found:
+                return found[0]["id"]
+            meta = {"name": name, "parents": [parent_id], "mimeType": "application/vnd.google-apps.folder"}
+            return self.svc.files().create(body=meta, fields="id", supportsAllDrives=True).execute()["id"]
+        return self._retry(_ensure)
 
     def upload_file(self, parent_id, name, data: bytes, mime: str) -> str:
         """Create or overwrite `name` inside the folder."""
