@@ -69,27 +69,32 @@ def _green_blocks(a):
 def _amount_from_block(im, mask, y0, y1):
     """The figure printed in a green block → (best guess, [other plausible readings]).
     The '฿' glyph is sometimes read as a digit glued to the number (฿94 → '494', ฿99 → '899').
-    The green pixels themselves settle it: count the glyphs (column groups) in the block — one
-    more glyph than digits means the '฿' stands apart and the digits are right; the same count
-    means the first "digit" IS the '฿' and is dropped."""
+    Settled by a second reading with the leftmost green glyph painted out: if that reading is
+    the first one minus its first digit, the first "digit" was the '฿'."""
     cols = np.where(mask[y0:y1 + 1].sum(axis=0) > 0)[0]
     h = y1 - y0
-    crop = im.crop((max(0, cols[0] - 3 * h), max(0, y0 - h),
-                    min(im.width, cols[-1] + int(1.5 * h)), min(im.height, y1 + h)))
+    x0, ya = max(0, cols[0] - 3 * h), max(0, y0 - h)
+    crop = im.crop((x0, ya, min(im.width, cols[-1] + int(1.5 * h)), min(im.height, y1 + h)))
     scale = max(2, int(140 / max(1, h)))
-    txt = _read_text(crop.resize((crop.width * scale, crop.height * scale), Image.LANCZOS))
-    nums = re.findall(r'(?<![\d.])(\d{1,4}(?:\.\d{1,2})?)(?![\d])', txt)
-    if not nums:
-        return None, []
-    d = nums[-1]
-    digits = len(d.replace(".", ""))
+
+    def read(c):
+        txt = _read_text(c.resize((c.width * scale, c.height * scale), Image.LANCZOS))
+        nums = re.findall(r'(?<![\d.])(\d{1,4}(?:\.\d{1,2})?)(?![\d])', txt)
+        return nums[-1] if nums else None
+
+    d1 = read(crop)
     gap = max(2, h // 8)
-    glyphs = 1 + int(np.sum(np.diff(cols) > gap))            # column groups = glyphs drawn in green
-    if glyphs == digits and digits >= 2 and d[0] in "4868B" and "." not in d:
-        return float(d[1:]), []                              # the '฿' was read as the first digit
-    if glyphs == digits + 1:
-        return float(d), []                                  # '฿' stands apart: reading is whole
-    return float(d), []                                      # unclear: trust the reading, never guess a second one
+    breaks = np.where(np.diff(cols) > gap)[0]
+    if len(breaks):
+        first_end = cols[breaks[0]]                            # last column of the leftmost glyph
+        crop2 = crop.copy()
+        crop2.paste((255, 255, 255), (0, 0, first_end - x0 + gap, crop2.height))
+        d2 = read(crop2)
+        if d2 and d1 and len(d1) == len(d2) + 1 and d1.endswith(d2) and d1[0] in "48B":
+            return float(d2), []                              # the '฿' had been read as a 4/8
+        if d2 and not d1:
+            return float(d2), []
+    return (float(d1), []) if d1 else (None, [])
 
 
 def _all_numbers(im):
@@ -114,12 +119,23 @@ def inspect(source):
     im = Image.open(io.BytesIO(source) if isinstance(source, (bytes, bytearray)) else source).convert("RGB")
     a = np.asarray(im).astype(int)
     mask, blocks = _green_blocks(a)
+
+    def is_text(y0, y1):
+        """A printed figure ('฿ 28', '฿ 413') is always wider than it is tall; the green map
+        pin, the status-bar icon and other blobs are square or upright. Skip the blobs."""
+        cols = np.where(mask[y0:y1 + 1].sum(axis=0) > 0)[0]
+        if len(cols) < 2:
+            return False
+        width, height = cols[-1] - cols[0] + 1, y1 - y0 + 1
+        fill = mask[y0:y1 + 1, cols[0]:cols[-1] + 1].mean()
+        return width >= 1.3 * height and fill < 0.6
+
     # the big 'คุณได้รับ' figure is ≥5.5% of the width tall; the status bar (top 4% of the
     # screen) can hold a green LINE icon glued to a half-hidden line, so it never counts as big
     big = [(y0, y1) for y0, y1 in blocks
-           if im.width * 0.055 <= y1 - y0 <= im.width * 0.16 and y0 > im.height * 0.04]
+           if im.width * 0.055 <= y1 - y0 <= im.width * 0.16 and y0 > im.height * 0.04 and is_text(y0, y1)]
     small = [(y0, y1) for y0, y1 in blocks
-             if im.width * 0.015 <= y1 - y0 < im.width * 0.055 and y0 > im.height * 0.04]
+             if im.width * 0.015 <= y1 - y0 < im.width * 0.055 and y0 > im.height * 0.04 and is_text(y0, y1)]
     info = {"width": im.width, "height": im.height, "amount": None, "alts": [], "numbers": [], "seq": []}
     if im.width / im.height < 0.36:
         info["role"] = "long"
