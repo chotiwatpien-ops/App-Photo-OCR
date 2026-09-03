@@ -1,0 +1,67 @@
+name: Pool — จัดกอง (จับคู่ครึ่งรูปในกองอัลบั้ม)
+
+# Phase 2. The Agent drops whole LINE albums into Drive as Inbox/<Week …>/Pool/<2W|4W>/<album>/.
+# This job pairs the half screenshots with free local OCR (no Gemini). By default it only writes a
+# report plus stitched previews into <Week>/Pool/_รายงาน/. With `move` ticked, paired trips go to
+# <Week>/<vehicle category>/ as one stitched image (originals to Pool/_ใช้แล้ว/), long screenshots
+# move there as they are, and everything unpaired stays in the pool.
+
+on:
+  workflow_dispatch:
+    inputs:
+      week:
+        description: "เฉพาะสัปดาห์นี้ (ชื่อโฟลเดอร์ในกอง เช่น Week 17-23 Aug) — ว่าง = ทุกสัปดาห์"
+        type: string
+        default: ""
+      preview:
+        description: "อัปโหลดรูปที่ต่อแล้ว + รายงาน ไว้ใน _รายงาน ให้ดูด้วยตา"
+        type: boolean
+        default: true
+      album:
+        description: "เฉพาะอัลบั้มที่ชื่อมีคำนี้ (คั่นด้วยจุลภาค เช่น Test 8,Test 9) — ว่าง = ทุกอัลบั้ม"
+        type: string
+        default: ""
+      move:
+        description: "ย้ายจริง: คู่ที่จับได้ → Week/<ประเภทรถ>/ (ต้นฉบับไป Pool/_ใช้แล้ว) · รูปยาว → Week/<ประเภทรถ>/ · ที่เหลืออยู่ที่เดิม"
+        type: boolean
+        default: false
+      limit:
+        description: "จำกัดจำนวนรูป (ทดลอง) — ว่าง = ทั้งหมด"
+        type: string
+        default: ""
+
+concurrency:
+  group: pool
+  cancel-in-progress: false
+
+jobs:
+  pool:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180   # ~1.8 s per image single-threaded; 4 OCR threads → ~4,000 images/hour
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: sudo apt-get install -y -qq libgl1 libglib2.0-0   # opencv (pulled in by the OCR) needs them
+      - run: pip install -r backend/requirements.txt -r backend/requirements-pairing.txt
+      - name: Run pool
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.DRIVE_OAUTH_TOKEN_JSON }}
+          DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
+          DRIVE_POOL_FOLDER_ID: ${{ secrets.DRIVE_POOL_FOLDER_ID }}   # optional: separate-folder layout
+          DRIVE_PARALLEL: "12"
+          POOL_PARALLEL: "4"
+          TZ: Asia/Bangkok
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.week }}" ]; then ARGS="$ARGS --week \"${{ github.event.inputs.week }}\""; fi
+          if [ -n "${{ github.event.inputs.album }}" ]; then ARGS="$ARGS --album \"${{ github.event.inputs.album }}\""; fi
+          if [ "${{ github.event.inputs.move }}" = "true" ]; then ARGS="$ARGS --move"; fi
+          if [ "${{ github.event.inputs.preview }}" != "true" ]; then ARGS="$ARGS --no-preview"; fi
+          if [ -n "${{ github.event.inputs.limit }}" ]; then ARGS="$ARGS --limit ${{ github.event.inputs.limit }}"; fi
+          eval python pool.py $ARGS

@@ -133,6 +133,15 @@ class DriveClient:
     def upload_xlsx(self, parent_id, name, data: bytes) -> str:
         return self.upload_file(parent_id, name, data, XLSX_MIME)
 
+    def move_file(self, file_id, new_parent_id) -> None:
+        """Re-parent a file (no copy, no delete — the same file id ends up in the new folder)."""
+        def _mv():
+            meta = self.svc.files().get(fileId=file_id, fields="parents", supportsAllDrives=True).execute()
+            self.svc.files().update(fileId=file_id, addParents=new_parent_id,
+                                    removeParents=",".join(meta.get("parents", [])),
+                                    fields="id", supportsAllDrives=True).execute()
+        self._retry(_mv)
+
 
 class LocalDrive:
     """Same interface over a local directory tree — for testing ingest without Google."""
@@ -165,3 +174,9 @@ class LocalDrive:
 
     def upload_xlsx(self, parent_id, name, data: bytes) -> str:
         return self.upload_file(parent_id, name, data, XLSX_MIME)
+
+    def move_file(self, file_id, new_parent_id) -> None:
+        src = Path(file_id)
+        dst = Path(new_parent_id)
+        dst.mkdir(parents=True, exist_ok=True)
+        src.rename(dst / src.name)

@@ -44,6 +44,8 @@ RIDER_RANGE_RE = re.compile(
 RANGE_RE = re.compile(
     r"(?P<d1>\d{1,2})\s*(?P<m1>[A-Za-z]{3,9})?\s*[-–]\s*(?P<d2>\d{1,2})\s*(?P<m2>[A-Za-z]{3,9})\s*(?P<y>\d{4})?\s*$")
 ADMIN_RE = re.compile(r"^\s*admin\b\s*(?P<name>.*)$", re.IGNORECASE)
+# Week X/<one of these>/ holds whole LINE albums waiting to be paired and distributed (pool.py)
+POOL_FOLDER_NAMES = ("pool", "กอง")
 NUM_PREFIX_RE = re.compile(r"^\s*\d{1,3}\s*[-. ]\s*")
 MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
 CATEGORIES = {"4 w standard", "4 w saver", "2 w standard", "2 w saver"}
@@ -188,6 +190,8 @@ def discover(drive, inbox_id):
             for cat in drive.list_folders(top["id"]):
                 if clean_name(cat["name"]).lower() in CATEGORIES:
                     _discover_category(drive, cat, clean_name(cat["name"]), d1.isoformat(), d2.isoformat(), wk, skipped, items)
+                elif clean_name(cat["name"]).lower() in POOL_FOLDER_NAMES:
+                    continue  # Phase 2 album pool (pool.py) — whole albums, not yet sorted into riders
                 else:
                     skipped.append(f"'{top['name']}/{cat['name']}' ไม่ใช่กลุ่มรถ (4 W Standard ...) — ข้าม")
             continue

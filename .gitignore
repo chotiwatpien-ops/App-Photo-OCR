@@ -28,3 +28,6 @@ frontend/node_modules/
 
 # local diagnostic dumps (rider names, amounts) — never belong in the repo
 .diag_*.json
+
+# Phase 2 sample albums + pairing outputs (rider photos, amounts)
+Phase2/

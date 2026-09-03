@@ -158,6 +158,24 @@ ingest_issues = Table(
     Column("resolved_at", String(19)),
 )
 
+# Phase 2 pool runs (pool.py): what was found in the album pool and what was done with it.
+# report JSON is kept whole so the page can show pairs, leftovers and duplicates per album.
+pool_runs = Table(
+    "pool_runs", meta,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("started_at", String(19), nullable=False),
+    Column("finished_at", String(19)),
+    Column("mode", String(16)),               # report | move
+    Column("week", Text),                     # pool week folder(s) touched, comma-joined
+    Column("n_images", Integer, default=0),
+    Column("n_pairs", Integer, default=0),
+    Column("n_long", Integer, default=0),
+    Column("n_leftover", Integer, default=0),
+    Column("n_duplicates", Integer, default=0),
+    Column("summary", Text),                  # the human-readable report (Thai)
+    Column("report", Text),                   # JSON
+)
+
 TRIP_EDITABLE = [
     "trip_date", "trip_time", "service_type", "payment_method",
     "pickup_code", "dropoff_code", "pickup_text", "dropoff_text",
@@ -1155,6 +1173,24 @@ def resolve_issue(key, run_id=None) -> None:
         c.execute(update(ingest_issues)
                   .where(ingest_issues.c.key == key, ingest_issues.c.resolved_run.is_(None))
                   .values(resolved_run=run_id or 0, resolved_at=_now()))
+
+
+def record_pool_run(mode, week, counts, summary, report) -> int:
+    """One row per pool.py run; `counts` = dict(n_images, n_pairs, n_long, n_leftover, n_duplicates)."""
+    import json as _json
+    with engine.begin() as c:
+        return c.execute(insert(pool_runs).values(
+            started_at=report.get("started_at") or _now(), finished_at=_now(), mode=mode, week=week,
+            summary=summary, report=_json.dumps(report, ensure_ascii=False),
+            **{k: counts.get(k, 0) for k in ("n_images", "n_pairs", "n_long", "n_leftover", "n_duplicates")}
+        )).inserted_primary_key[0]
+
+
+def recent_pool_runs(limit=10, with_report=False):
+    cols = [c for c in pool_runs.c if with_report or c.name != "report"]
+    with engine.begin() as c:
+        return [dict(r) for r in c.execute(
+            select(*cols).order_by(pool_runs.c.id.desc()).limit(limit)).mappings().all()]
 
 
 def note_issue(key, kind, message, run_id=None) -> None:

@@ -157,6 +157,12 @@ DRIVE_OAUTH_TOKEN = (os.environ.get("DRIVE_OAUTH_TOKEN_JSON")
                      or (str(_tok_default) if _tok_default.exists() else None))
 DRIVE_INBOX_FOLDER_ID = _setting("DRIVE_INBOX_FOLDER_ID", "drive_inbox_folder_id")
 DRIVE_EXPORTS_FOLDER_ID = _setting("DRIVE_EXPORTS_FOLDER_ID", "drive_exports_folder_id")
+# Phase 2 "pool": whole LINE albums dropped as Inbox/<Week …>/Pool/<vehicle group>/<album>/
+# (ingest skips a "Pool" folder inside a week). pool.py pairs the halves there and, once
+# trusted, distributes trips into that week's rider folders. Set DRIVE_POOL_FOLDER_ID only for
+# the alternative layout of one separate folder holding Pool/<Week …>/<group>/<album>/.
+DRIVE_POOL_FOLDER_ID = _setting("DRIVE_POOL_FOLDER_ID", "drive_pool_folder_id")
+POOL_PARALLEL = int(_setting("POOL_PARALLEL", "pool_parallel", 4))                # local OCR threads
 
 
 def _usable_key(k) -> bool:

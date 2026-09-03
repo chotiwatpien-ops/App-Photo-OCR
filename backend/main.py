@@ -701,6 +701,19 @@ def diag_trip_image(trip_id: int, part: int = 1):
     return Response(content=img[0], media_type=img[1])
 
 
+@app.get("/api/diag/pool")
+def diag_pool(limit: int = 5, report: bool = False):
+    """Phase 2 pool runs (pool.py): what the pairing found in the album pool, newest first."""
+    rows = db.recent_pool_runs(limit, with_report=report)
+    if report:
+        for r in rows:
+            try:
+                r["report"] = json.loads(r["report"] or "{}")
+            except ValueError:
+                pass
+    return {"runs": rows}
+
+
 @app.get("/api/diag/audit")
 def diag_audit():
     """System-wide double-count audit: same file ingested twice inside a job, a rider holding
