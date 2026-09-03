@@ -71,9 +71,10 @@ ok = ok and len(previews) == r.get("n_pairs") and len(txts) == 1
 
 # a second run must see _รายงาน as not-an-album and report the same numbers
 rc2 = pool.main(["--local", root, "--no-preview"])
-r2 = db.recent_pool_runs(1)[0]
-print(f"5) รันซ้ำได้ผลเท่าเดิม: {r2['n_pairs'] == r['n_pairs'] and r2['n_images'] == r['n_images']}")
-ok = ok and rc2 == 0 and r2["n_pairs"] == r["n_pairs"] and r2["n_images"] == r["n_images"]
+r2 = db.recent_pool_runs(1, with_report=True)[0]
+cached = __import__("json").loads(r2["report"]).get("ocr_cached")
+print(f"5) รันซ้ำได้ผลเท่าเดิม: {r2['n_pairs'] == r['n_pairs'] and r2['n_images'] == r['n_images']} · ใช้ผล OCR เดิม {cached} รูป (ต้อง 14)")
+ok = ok and rc2 == 0 and r2["n_pairs"] == r["n_pairs"] and r2["n_images"] == r["n_images"] and cached == 14
 
 # the old ingest must walk past the pool: no items from it, no warning about it
 import ingest                                                   # noqa: E402

@@ -176,6 +176,15 @@ pool_runs = Table(
     Column("report", Text),                   # JSON
 )
 
+# what the free OCR concluded about an image, keyed by its bytes — a half that stays in the pool
+# is met again every run, and the verdict for identical bytes never changes
+pool_ocr_cache = Table(
+    "pool_ocr_cache", meta,
+    Column("hash", String(40), primary_key=True),
+    Column("info", Text, nullable=False),        # JSON of pairing.inspect()
+    Column("created_at", String(19), nullable=False),
+)
+
 TRIP_EDITABLE = [
     "trip_date", "trip_time", "service_type", "payment_method",
     "pickup_code", "dropoff_code", "pickup_text", "dropoff_text",
@@ -1184,6 +1193,26 @@ def record_pool_run(mode, week, counts, summary, report) -> int:
             summary=summary, report=_json.dumps(report, ensure_ascii=False),
             **{k: counts.get(k, 0) for k in ("n_images", "n_pairs", "n_long", "n_leftover", "n_duplicates")}
         )).inserted_primary_key[0]
+
+
+def pool_ocr_cache_load() -> dict:
+    import json as _json
+    with engine.begin() as c:
+        return {r[0]: _json.loads(r[1]) for r in c.execute(select(pool_ocr_cache.c.hash, pool_ocr_cache.c.info)).all()}
+
+
+def pool_ocr_cache_save(entries: dict) -> None:
+    """entries = {md5: info}; hashes already present are left alone."""
+    import json as _json
+    if not entries:
+        return
+    with engine.begin() as c:
+        have = {r[0] for r in c.execute(select(pool_ocr_cache.c.hash)
+                                        .where(pool_ocr_cache.c.hash.in_(list(entries)))).all()}
+        rows = [{"hash": h, "info": _json.dumps(v, ensure_ascii=False), "created_at": _now()}
+                for h, v in entries.items() if h not in have and v is not None]
+        if rows:
+            c.execute(insert(pool_ocr_cache), rows)
 
 
 def recent_pool_runs(limit=10, with_report=False):

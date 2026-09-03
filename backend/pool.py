@@ -129,10 +129,13 @@ def fetch(drive, images, workers, errors):
 
 
 # --- 2-3. duplicates + pairing ------------------------------------------------------------
-def analyse(albums, data, workers):
+def analyse(albums, data, workers, cache=None):
+    """cache: optional dict-like {md5: info} of earlier inspect() results — a half left in the
+    pool is looked at again every run, and the OCR verdict for the same bytes never changes."""
     report = {"albums": [], "duplicates": [], "errors": []}
     seen = {}                                   # md5 -> "album/name" of the first copy
     todo = []                                   # (album index, image) that need inspecting
+    hashes = {}
     for ai, alb in enumerate(albums):
         alb["_keep"] = []
         for img in sorted(alb["images"], key=lambda i: pairing._natural(i["name"])):
@@ -146,18 +149,28 @@ def analyse(albums, data, workers):
                                              "file": where, "same_as": seen[h]})
                 continue
             seen[h] = where
+            hashes[img["id"]] = h
             alb["_keep"].append(img)
             todo.append((ai, img))
 
+    cache = cache if cache is not None else {}
+    fresh = {}
+
     def inspect(item):
         ai, img = item
+        h = hashes[img["id"]]
+        if h in cache:
+            return img["id"], cache[h]
         try:
-            return img["id"], pairing.inspect(data[img["id"]])
+            fresh[h] = pairing.inspect(data[img["id"]])
+            return img["id"], fresh[h]
         except Exception as e:  # noqa: BLE001
             report["errors"].append(f"ตรวจรูปไม่ได้ {img['name']}: {str(e)[:120]}")
             return img["id"], None
     with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
         info = dict(ex.map(inspect, todo))
+    report["ocr_cached"] = len(todo) - len(fresh)
+    report["ocr_fresh"] = fresh
 
     def target_for(img_id, album_name):
         """Category folder for a trip: the chip on its top/long image, else the album name."""
@@ -293,31 +306,50 @@ def apply_moves(drive, albums, data, report, log=log):
                 cats[name] = drive.ensure_folder(week_id, name)
             return cats[name]
 
-        used_dir = None
-        n = 0
-        for p in entry["pairs"]:
+        # folders first (sequential — Drive must not be asked to create the same one twice),
+        # then every upload/move in parallel: each item is independent, and Drive's per-call
+        # latency, not bandwidth, is what made this phase slow
+        for x in entry["pairs"] + entry["long"]:
+            if x["target"]:
+                cat_dir(x["target"])
+        used_dir = (drive.ensure_folder(drive.ensure_folder(pool_id, USED_DIR), entry["album"])
+                    if any(p["target"] for p in entry["pairs"]) else None)
+
+        def do_pair(p):
             if not p["target"]:
                 p["moved"] = "ไม่รู้ประเภทรถ — ยังอยู่ในกอง"
-                continue
-            img = pairing.stitch(io.BytesIO(data[p["top_id"]]), io.BytesIO(data[p["bottom_id"]]))
-            buf = io.BytesIO()
-            img.save(buf, "JPEG", quality=88)
-            tn, bn = (re.search(r'(\d+)\.\w+$', x).group(1) for x in (p["top"], p["bottom"]))
-            name = f"{entry['album']}_{tn}+{bn}_฿{p['amount']:g}.jpg"
-            drive.upload_file(cat_dir(p["target"]), name, buf.getvalue(), "image/jpeg")
-            if used_dir is None:
-                used_dir = drive.ensure_folder(drive.ensure_folder(pool_id, USED_DIR), entry["album"])
-            drive.move_file(p["top_id"], used_dir)
-            drive.move_file(p["bottom_id"], used_dir)
-            p["moved"] = f"{p['target']}/{name}"
-            n += 1
-        for l in entry["long"]:
+                return 0
+            try:
+                img = pairing.stitch(io.BytesIO(data[p["top_id"]]), io.BytesIO(data[p["bottom_id"]]))
+                buf = io.BytesIO()
+                img.save(buf, "JPEG", quality=88)
+                tn, bn = (re.search(r'(\d+)\.\w+$', x).group(1) for x in (p["top"], p["bottom"]))
+                name = f"{entry['album']}_{tn}+{bn}_฿{p['amount']:g}.jpg"
+                drive.upload_file(cats[p["target"]], name, buf.getvalue(), "image/jpeg")
+                drive.move_file(p["top_id"], used_dir)
+                drive.move_file(p["bottom_id"], used_dir)
+                p["moved"] = f"{p['target']}/{name}"
+                return 1
+            except Exception as e:  # noqa: BLE001 — this pair stays in the pool for the next run
+                p["moved"] = f"ย้ายไม่สำเร็จ: {str(e)[:80]}"
+                report["errors"].append(f"ย้ายไม่สำเร็จ {p['top']}: {str(e)[:120]}")
+                return 0
+
+        def do_long(l):
             if not l["target"]:
                 l["moved"] = "ไม่รู้ประเภทรถ — ยังอยู่ในกอง"
-                continue
-            drive.move_file(l["id"], cat_dir(l["target"]))
-            l["moved"] = f"{l['target']}/{l['file']}"
-            n += 1
+                return 0
+            try:
+                drive.move_file(l["id"], cats[l["target"]])
+                l["moved"] = f"{l['target']}/{l['file']}"
+                return 1
+            except Exception as e:  # noqa: BLE001
+                l["moved"] = f"ย้ายไม่สำเร็จ: {str(e)[:80]}"
+                report["errors"].append(f"ย้ายไม่สำเร็จ {l['file']}: {str(e)[:120]}")
+                return 0
+
+        with ThreadPoolExecutor(max_workers=max(1, config.DRIVE_PARALLEL)) as ex:
+            n = sum(ex.map(do_pair, entry["pairs"])) + sum(ex.map(do_long, entry["long"]))
         moved += n
         log(f"  ↳ {entry['album']}: ย้ายแล้ว {n} รายการ")
     report["totals"]["n_moved"] = moved
@@ -368,11 +400,19 @@ def main(argv=None):
     data = fetch(drive, [i for a in albums for i in a["images"]], config.DRIVE_PARALLEL, errors)
     log(f"โหลดแล้ว {len(data)} รูป ใน {time.time() - t0:.0f} วิ")
     t0 = time.time()
-    report = analyse(albums, data, config.POOL_PARALLEL)
+    cache = {}
+    if not args.no_db:
+        import db
+        db.init_db()
+        cache = db.pool_ocr_cache_load()
+    report = analyse(albums, data, config.POOL_PARALLEL, cache)
+    fresh = report.pop("ocr_fresh", {})
+    if not args.no_db and fresh:
+        db.pool_ocr_cache_save(fresh)
     report["errors"] = errors + report["errors"]
     report["started_at"] = started
     report["mode"] = "move" if args.move else "report"
-    log(f"ตรวจและจับคู่เสร็จใน {time.time() - t0:.0f} วิ")
+    log(f"ตรวจและจับคู่เสร็จใน {time.time() - t0:.0f} วิ" + (f" · ใช้ผล OCR เดิม {report['ocr_cached']} รูป" if report.get("ocr_cached") else ""))
     if args.move and albums:
         apply_moves(drive, albums, data, report)
     summary = render(report)
@@ -392,9 +432,8 @@ def main(argv=None):
             report["errors"].append(f"อัปโหลดรายงานไม่สำเร็จ: {str(e)[:200]}")
     if not args.no_db:
         import db
-        db.init_db()
         # the JSON keeps only what the page needs — no file ids
-        slim = {k: v for k, v in report.items()}
+        slim = {k: v for k, v in report.items() if k != "ocr_fresh"}
         slim["albums"] = [{**a, "pairs": [{k: v for k, v in p.items() if not k.endswith("_id")} for p in a["pairs"]],
                            "long": [{k: v for k, v in l.items() if k != "id"} for l in a["long"]]}
                           for a in report["albums"]]
