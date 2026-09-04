@@ -47,11 +47,21 @@ SCHEMA = types.Schema(
         ),
         "passenger_total": types.Schema(
             type=types.Type.NUMBER, nullable=True,
-            description="The 'รวมค่าโดยสารของผู้โดยสาร' TOTAL line (bold, at the bottom of the 'ค่าโดยสารของผู้โดยสารทั้งหมด' section) — NOT the 'ยอดที่ผู้โดยสารชำระ' sub-line above it. Null if that section is collapsed.",
+            description=(
+                "The passenger's FARE for this trip - the figure Grab charges its commission on. "
+                "Two app versions print it differently. "
+                "NEW screen: the bold 'รวมค่าโดยสารของผู้โดยสาร' TOTAL at the bottom of the "
+                "'ค่าโดยสารของผู้โดยสารทั้งหมด' section (NOT the 'ยอดที่ผู้โดยสารชำระ' sub-line above it). "
+                "OLD screen: the 'ค่าโดยสารของผู้โดยสาร' line INSIDE the 'ค่าบริการที่แกร็บได้รับ' card - "
+                "the same figure as 'รวมยอดค่าโดยสาร', the FIRST line of the 'ค่าธรรมเนียมของผู้โดยสาร' card. "
+                "NEVER report the old screen's 'ค่าธรรมเนียมของผู้โดยสาร' Total: that receipt total adds the "
+                "app fee, tip, tolls and international fee on top of the fare and is a different number. "
+                "Null if no such figure is visible."
+            ),
         ),
         "passenger_paid": types.Schema(
             type=types.Type.NUMBER, nullable=True,
-            description="The 'ยอดที่ผู้โดยสารชำระ' sub-line (first line inside the 'ค่าโดยสารของผู้โดยสารทั้งหมด' section) — the amount the passenger actually paid, BEFORE the app fee / discount lines. Null if not visible.",
+            description="The 'ยอดที่ผู้โดยสารชำระ' sub-line (first line inside the 'ค่าโดยสารของผู้โดยสารทั้งหมด' section on the NEW screen) — what the passenger actually paid, BEFORE the app fee / discount lines. The OLD screen has no such line: report null there, do not put the fare here.",
         ),
         "grab_commission": types.Schema(
             type=types.Type.NUMBER, nullable=True,
@@ -125,6 +135,12 @@ Extract the trip data into the JSON schema. Rules:
 - 'ยอดรายได้สุทธิ' or 'รายได้จากรอบขับ' or 'คุณได้รับ' = net_earnings.
 - 'ค่าโดยสารพื้นฐาน' = base_fare. Do NOT confuse it with 'ค่าโดยสารของผู้โดยสาร'
   (passenger total → passenger_total) or 'ค่าบริการที่แกร็บได้รับ' (Grab's cut → grab_commission).
+- Older app versions print TWO passenger cards. 'ค่าบริการที่แกร็บได้รับ' lists
+  'ค่าโดยสารของผู้โดยสาร' / 'รายได้จากรอบขับ' / the cut — that first line IS passenger_total.
+  'ค่าธรรมเนียมของผู้โดยสาร' below it repeats the fare as 'รวมยอดค่าโดยสาร' and then ADDS the app
+  fee, tip, tolls and international fee into its own bold 'Total'. That Total is the receipt, not
+  the fare: never report it as passenger_total. The identity that always holds is
+  passenger_total = รายได้จากรอบขับ + ค่าบริการที่แกร็บได้รับ.
 - net_earnings comes from the RIGHT screen (or the only screen). If a LEFT screen also
   shows 'คุณได้รับ ฿X', report that separately as net_earnings_left_panel — copy each
   screen's number as printed even if they differ; do not reconcile them yourself.
@@ -146,6 +162,71 @@ def client() -> genai.Client:
     if _client is None:
         _client = genai.Client(api_key=load_api_key())
     return _client
+
+
+def _n(x):
+    return x if isinstance(x, (int, float)) else None
+
+
+def receipt_extras(data: dict) -> float:
+    """What the old screen's 'ค่าธรรมเนียมของผู้โดยสาร' card adds on top of the fare. The app fee
+    counts only when printed as a POSITIVE charge — the new screen prints it negative inside the
+    fare itself, where it is part of the total and must not be subtracted."""
+    fee = _n(data.get("app_fee")) or 0
+    return ((fee if fee > 0 else 0) + (_n(data.get("tip")) or 0)
+            + (_n(data.get("tolls")) or 0) + (_n(data.get("intl_fee")) or 0))
+
+
+def implausible(passenger_total, base_fare) -> bool:
+    """Grab's cut tops out around 20-25% of the fare (Standard Car is the dearest service and
+    sits at 20%). A passenger fare more than 35% above the driver's base fare is not a rate
+    Grab charges — something else got added to it."""
+    return base_fare is not None and base_fare > 0 and passenger_total > base_fare * 1.35
+
+
+def fix_passenger_total(data: dict) -> dict:
+    """Keep passenger_total on the FARE, never on the receipt total.
+
+    The pre-2026 trip screen prints the fare twice: once in the 'ค่าบริการที่แกร็บได้รับ' card
+    (fare = driver's round income + Grab's cut) and once at the top of the
+    'ค่าธรรมเนียมของผู้โดยสาร' card, which then adds the app fee, tip, tolls and international fee
+    into a bold Total. Reading that Total as the passenger fare overstated 43 rows across
+    W33-W35 by up to ฿235 — the customer checks this column, so a model slip here is expensive.
+
+    Only corrects when the arithmetic proves the extras were added; an unexplained disagreement
+    is left alone rather than replaced with a guess. Mutates and returns data.
+    """
+    pt, paid, base = _n(data.get("passenger_total")), _n(data.get("passenger_paid")), _n(data.get("base_fare"))
+    if pt is None:
+        return data
+    extras = receipt_extras(data)
+    fixed = None
+    # the fee card states the fare outright: รายได้จากรอบขับ + ค่าบริการที่แกร็บได้รับ
+    gc = _n(data.get("grab_commission"))
+    card = base + gc if (base is not None and gc is not None and gc >= 0) else None
+    if card is not None and abs(pt - card) > 1 and abs((pt - card) - extras) <= 1:
+        fixed = card
+    # Without the cut printed there is no proof, only arithmetic that happens to fit — and the
+    # international-fee line sits INSIDE the new screen's fare, where subtracting it would be
+    # wrong. So the remaining branches only run when the figure as read is already impossible:
+    # Grab's commission does not reach 35% of the fare on any service type.
+    elif not implausible(pt, base):
+        pass
+    # the receipt total minus its extras lands exactly on the paid line
+    elif extras > 0 and paid is not None and abs((pt - extras) - paid) <= 1 and abs(pt - paid) > 1:
+        fixed = paid
+    # nothing to reconcile against at all: accept the subtraction only when it turns that
+    # impossible commission into a plausible one. When the cut IS printed the card above
+    # already had its say — an unexplained gap stays unexplained.
+    elif (card is None and extras > 0 and paid is None
+            and base - 1 <= pt - extras <= base * 1.35):
+        fixed = pt - extras
+    if fixed is None or abs(fixed - pt) <= 1:
+        return data
+    data["passenger_total"] = fixed
+    note = f"แก้ค่าโดยสารผู้โดยสาร {pt:g} → {fixed:g} (หน้าจอเก่าเอายอดรวมที่ผู้โดยสารจ่ายมา)"
+    data["confidence_note"] = f"{note} | {data['confidence_note']}" if data.get("confidence_note") else note
+    return data
 
 
 def arithmetic_check(data: dict) -> str:
@@ -253,7 +334,7 @@ def _call_gemini(img, model: str = None, drop=()) -> dict:
     resp = client().models.generate_content(
         model=model, contents=[PROMPT, img], config=_gen_config(model, drop),
     )
-    data = json.loads(resp.text)
+    data = fix_passenger_total(json.loads(resp.text))
     u = resp.usage_metadata
     data["_usage"] = {
         "model": model,
