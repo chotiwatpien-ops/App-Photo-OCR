@@ -59,13 +59,34 @@ jobs:
     timeout-minutes: 330  # a full-week backfill (~1,800 images) takes ~2.5h; normal rounds are minutes
     steps:
       - uses: actions/checkout@v4
+      # GitHub fires roughly one scheduled run in three, and --min-gap then ends most of them in
+      # seconds — but only after ~90s of installing Python packages, which is where most of the
+      # free Actions quota went. psql ships with the runner, so the same question costs ~2s here.
+      # Fail-open: an unreadable answer runs the round, so a check can never cost us one.
+      - name: Is a round due?
+        id: gate
+        if: github.event_name == 'schedule'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          age=$(psql "$DATABASE_URL" -tAc "select coalesce(extract(epoch from ((now() at time zone 'Asia/Bangkok') - max(finished_at)::timestamp))/3600, 999) from ingest_runs where finished_at is not null" 2>/dev/null | tr -d '[:space:]')
+          running=$(psql "$DATABASE_URL" -tAc "select count(*) from ingest_runs where finished_at is null and started_at::timestamp > (now() at time zone 'Asia/Bangkok') - interval '6 hours'" 2>/dev/null | tr -d '[:space:]')
+          echo "รอบล่าสุดจบไปแล้ว ${age:-?} ชม. · กำลังรันอยู่ ${running:-?} รอบ"
+          if [ -n "$age" ] && [ -n "$running" ] && awk "BEGIN{exit !($age < 3.5 || $running > 0)}"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "⏭ ยังไม่ถึงเวลา (หรือมีรอบกำลังรัน) — จบรอบนี้โดยไม่ติดตั้งอะไร"
+          fi
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.skip != 'true'
         with:
           python-version: "3.12"
           cache: pip
       - run: sudo apt-get install -y -qq libgl1 libglib2.0-0   # opencv (pulled in by the free OCR) needs them
+        if: steps.gate.outputs.skip != 'true'
       - run: pip install -r backend/requirements.txt -r backend/requirements-pairing.txt
+        if: steps.gate.outputs.skip != 'true'
       - name: Run ingest
+        if: steps.gate.outputs.skip != 'true' 
         working-directory: backend
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
