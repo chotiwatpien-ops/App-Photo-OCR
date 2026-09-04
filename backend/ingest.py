@@ -172,6 +172,48 @@ def _discover_category(drive, cat_folder, category, d_from, d_to, wk_name, skipp
             skipped.append(f"'{category}/{child['name']}' อ่านชื่อ/ช่วงวันที่ไม่ออก — ข้าม")
 
 
+PROBE_KEY = "drive_probe_at"
+XLSX_KEY = "xlsx_fingerprint"
+PROBE_MARGIN = 15 * 60      # seconds of overlap, so a file saved mid-round is never missed
+PROBE_PAGE = 100
+
+
+def _utc_now():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _shift(rfc3339, seconds):
+    from datetime import datetime, timedelta, timezone
+    t = datetime.strptime(rfc3339, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    return (t + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def nothing_new(drive) -> bool:
+    """Can this round skip walking the Inbox? True only when it is CERTAIN there is nothing.
+
+    Every answer other than a confident no means walk: no watermark yet, no probe on this drive,
+    a full page of results, a file we have not ingested, or any error at all. Being wrong in that
+    direction costs a round the five minutes it already spends; being wrong the other way would
+    lose a rider's photos for three hours, so the probe never gets the benefit of the doubt."""
+    if not config.DRIVE_PROBE or not hasattr(drive, "images_modified_since"):
+        return False
+    since = db.state_get(PROBE_KEY)
+    if not since:
+        return False
+    try:
+        found = drive.images_modified_since(since, limit=PROBE_PAGE)
+    except Exception as e:  # noqa: BLE001 — a probe must never be the reason a round fails
+        log(f"⚠ ถาม Drive ว่ามีรูปใหม่มั้ยไม่สำเร็จ ({str(e)[:120]}) — เดินโฟลเดอร์ตามปกติ")
+        return False
+    if len(found) >= PROBE_PAGE:
+        return False                       # too many to judge; the walk decides
+    if not found:
+        return True
+    ids = [f["id"] for f in found]
+    return not (set(ids) - db.already_ingested(ids))
+
+
 def discover(drive, inbox_id):
     """Walk the Inbox. Two layouts are understood:
       A) Inbox/<YYYY-Www>/<rider>/[YYYY-MM-DD/]*.jpg
@@ -454,7 +496,11 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     run_id = None if dry_run else db.start_ingest_run()
     t0 = time.time()
     issues = []  # (key, kind, message) — synced to ingest_issues at the end (auto-resolve)
-    if config.POOL_IN_ROUND:
+    mark = _utc_now()                       # everything after this moment belongs to the next round
+    quiet = nothing_new(drive) if not only else None
+    if quiet:
+        log("⏭ ไม่มีรูปใหม่ใน Drive ตั้งแต่รอบก่อน — ข้ามการเดินโฟลเดอร์ (ยังเก็บผล batch/อนุมัติตามปกติ)")
+    if config.POOL_IN_ROUND and not quiet:
         # Phase 2: whole albums in Week/Pool get paired and filed under Week/<vehicle category>
         # BEFORE the folders are read, so what this round submits already includes them.
         # The free OCR (numpy/rapidocr) is installed for rounds, not for the web app — an
@@ -465,7 +511,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             log(f"⏭ ข้ามขั้นจัดกอง (ไม่มีไลบรารี OCR ฟรีในเครื่องนี้: {e})")
         else:
             pool.round_step(drive, inbox_id, run_id=run_id, dry_run=dry_run, log=log)
-    items, skipped = discover(drive, inbox_id)
+    items, skipped = ([], []) if quiet else discover(drive, inbox_id)
     issues += [(f"folder:{s}", "folder", s) for s in skipped]
     if only:
         keys = [k.strip() for k in only.split(",") if k.strip()]
@@ -790,7 +836,17 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     # ONE continuous workbook for the whole project (all weeks appended). Regenerated EVERY
     # run — not just when new photos arrived — so edits/approvals made in the web app between
     # runs always reach the Drive copy too.
-    rows = db.query_trips(committed_only=True)
+    # The workbook is one continuous file for the whole project, rewritten from every approved
+    # row — 13,000 of them, pulled out of Neon. It used to be rebuilt every round so that edits
+    # made in the web app between rounds still reached Drive; four quiet rounds a day was
+    # 5 MB each of a 5 GB monthly transfer allowance spent producing a byte-identical file.
+    # The fingerprint answers the same question for three numbers.
+    stamp = db.committed_fingerprint()
+    if stamp == db.state_get(XLSX_KEY):
+        log("📄 Rider Trips.xlsx: ไม่มีอะไรเปลี่ยนตั้งแต่รอบก่อน — ไม่ต้องเขียนใหม่")
+        rows = []
+    else:
+        rows = db.query_trips(committed_only=True)
     if rows:
         name = "Rider Trips.xlsx"
         try:
@@ -798,11 +854,16 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             for (d_from, _), _js in db.jobs_by_week().items():
                 db.record_drive_file(week_label(d_from), "xlsx", fid, name)
             log(f"📄 {name}: {len(rows)} แถวรวมทุกสัปดาห์")
+            db.state_set(XLSX_KEY, stamp)
         except Exception as e:  # noqa: BLE001
             log(f"✗ upload {name}: {e}")
             issues.append(("xlsx", "xlsx", f"อัพโหลด {name} ขึ้น Drive ไม่สำเร็จ: {e}"))
             errors += 1
 
+    if not quiet and not only:
+        # the next round asks Drive for anything touched since here. The margin covers a photo
+        # uploaded while this round was walking, which the walk would have missed.
+        db.state_set(PROBE_KEY, _shift(mark, -PROBE_MARGIN))
     db.sync_ingest_issues(run_id, issues)
     db.finish_ingest_run(run_id, files_new=len(new), files_skipped=len(items) - len(new),
                          jobs_created=jobs_created, auto_approved=approved, flagged=flagged,
