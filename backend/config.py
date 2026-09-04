@@ -140,9 +140,12 @@ DRIVE_PARALLEL = int(_setting("DRIVE_PARALLEL", "drive_parallel", 8))           
 # capture time (riders screenshot in the evening). "screen_clock" bands that clock; "na" writes N/A.
 TIME_BAND_SOURCE = _setting("TIME_BAND_SOURCE", "time_band_source", "screen_clock")
 
-# Sheet1 "Passenger Fare": "paid" = ยอดที่ผู้โดยสารชำระ (matches Operation's template 21/21),
-# "total" = รวมค่าโดยสารของผู้โดยสาร. Both are kept in the Analysis sheet.
-PASSENGER_FARE_SOURCE = _setting("PASSENGER_FARE_SOURCE", "passenger_fare_source", "paid")
+# Sheet1 "Passenger Fare": "total" = รวมค่าโดยสารของผู้โดยสาร, "paid" = ยอดที่ผู้โดยสารชำระ.
+# Both are kept in the Analysis sheet. It was "paid" from 2026-08-21, matching the rows Operation
+# had keyed for ขวัญชัย, but the customer sent Week 35 back: on the 21 rows they corrected by hand
+# (docs/Rider Data Train.xlsx) รวม matches 21/21 and ชำระ matches 0/21 — the two differ whenever the
+# passenger had a discount or an app fee, which is most trips. Changed 2026-09-04.
+PASSENGER_FARE_SOURCE = _setting("PASSENGER_FARE_SOURCE", "passenger_fare_source", "total")
 
 # --- Google Drive (ingest) ---
 # service account: env GOOGLE_SERVICE_ACCOUNT_JSON (JSON text or path) > config "service_account_file" > ./service_account.json

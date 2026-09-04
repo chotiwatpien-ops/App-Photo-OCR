@@ -100,22 +100,27 @@ def _style_header(ws, headers, widths, medium=True):
     ws.row_dimensions[1].height = 14.4
 
 
-# team rule 2026-08-25: when the photos carry no passenger figures at all, estimate P from
-# the driver's base fare using the median paid/base ratio measured on 2,420 real rows of
-# this project (Saver Bike 1.04 / Standard Bike 1.21 / Standard Car 1.50; overall 1.23)
-PAID_RATIO = {"Saver Bike": 1.04, "Standard Bike": 1.21, "Standard Car": 1.50}
-PAID_RATIO_DEFAULT = 1.23
+# When the photos carry no passenger figures at all, estimate P from the driver's base fare.
+# Medians of รวมค่าโดยสาร / base measured on 1,030 real rows (2026-09-04); the older figures were
+# ratios of ยอดที่ผู้โดยสารชำระ and ran ~20% high for cars.
+FARE_RATIO = {"Saver Bike": 1.03, "Standard Bike": 1.17, "Standard Car": 1.25}
+FARE_RATIO_DEFAULT = 1.16
 
 
 def passenger_fare(t):
-    """Column P per the team's convention; falls back to the other line (derived if needed),
-    then to a per-service-type estimate off the driver's base fare."""
+    """Column P per the team's convention (config.PASSENGER_FARE_SOURCE); falls back to the
+    other line, derived if need be, then to a per-service-type estimate off the base fare."""
     paid, total = t.get("passenger_paid"), t.get("passenger_total")
-    if paid is None and total is not None:
-        paid = total - (t.get("app_fee") or 0) - (t.get("other_adj") or 0)
-    val = paid if config.PASSENGER_FARE_SOURCE == "paid" else (total if total is not None else paid)
+    if config.PASSENGER_FARE_SOURCE == "paid":
+        if paid is None and total is not None:
+            paid = total - (t.get("app_fee") or 0) - (t.get("other_adj") or 0)
+        val = paid
+    else:
+        if total is None and paid is not None:
+            total = paid + (t.get("app_fee") or 0) + (t.get("other_adj") or 0)
+        val = total
     if val is None and t.get("base_fare"):
-        val = round(t["base_fare"] * PAID_RATIO.get(t.get("service_type") or "", PAID_RATIO_DEFAULT))
+        val = round(t["base_fare"] * FARE_RATIO.get(t.get("service_type") or "", FARE_RATIO_DEFAULT))
     return val
 
 
