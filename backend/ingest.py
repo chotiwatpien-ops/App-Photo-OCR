@@ -454,9 +454,15 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     issues = []  # (key, kind, message) — synced to ingest_issues at the end (auto-resolve)
     if config.POOL_IN_ROUND:
         # Phase 2: whole albums in Week/Pool get paired and filed under Week/<vehicle category>
-        # BEFORE the folders are read, so what this round submits already includes them
-        import pool
-        pool.round_step(drive, inbox_id, run_id=run_id, dry_run=dry_run, log=log)
+        # BEFORE the folders are read, so what this round submits already includes them.
+        # The free OCR (numpy/rapidocr) is installed for rounds, not for the web app — an
+        # environment without it must still ingest normally.
+        try:
+            import pool
+        except ImportError as e:
+            log(f"⏭ ข้ามขั้นจัดกอง (ไม่มีไลบรารี OCR ฟรีในเครื่องนี้: {e})")
+        else:
+            pool.round_step(drive, inbox_id, run_id=run_id, dry_run=dry_run, log=log)
     items, skipped = discover(drive, inbox_id)
     issues += [(f"folder:{s}", "folder", s) for s in skipped]
     if only:
