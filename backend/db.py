@@ -1195,10 +1195,29 @@ def record_pool_run(mode, week, counts, summary, report) -> int:
         )).inserted_primary_key[0]
 
 
-def pool_ocr_cache_load() -> dict:
+def pool_ocr_cache_load(hashes) -> dict:
+    """Only the rows asked for, in chunks — the whole table would be megabytes across the wire
+    every round, and Neon free counts every byte against 5 GB a month."""
     import json as _json
+    hashes = list(hashes)
+    out = {}
+    if not hashes:
+        return out
     with engine.begin() as c:
-        return {r[0]: _json.loads(r[1]) for r in c.execute(select(pool_ocr_cache.c.hash, pool_ocr_cache.c.info)).all()}
+        for i in range(0, len(hashes), 500):
+            part = hashes[i:i + 500]
+            for h, info in c.execute(select(pool_ocr_cache.c.hash, pool_ocr_cache.c.info)
+                                     .where(pool_ocr_cache.c.hash.in_(part))).all():
+                out[h] = _json.loads(info)
+    return out
+
+
+def pool_ocr_cache_prune(days: int = 30) -> int:
+    """Forget images nobody has met for a while — a paired half is filed away and never
+    inspected again, so its verdict is dead weight."""
+    cutoff = (datetime.now(_TZ_BKK) - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    with engine.begin() as c:
+        return c.execute(pool_ocr_cache.delete().where(pool_ocr_cache.c.created_at < cutoff)).rowcount or 0
 
 
 def pool_ocr_cache_save(entries: dict) -> None:

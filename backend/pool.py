@@ -415,11 +415,12 @@ def run_pool(drive, albums, move, preview=True, use_db=True, started=None, label
     if use_db:
         import db
         db.init_db()
-        cache = db.pool_ocr_cache_load()
+        cache = db.pool_ocr_cache_load(hashlib.md5(v).hexdigest() for v in data.values())
     report = analyse(albums, data, config.POOL_PARALLEL, cache)
     fresh = report.pop("ocr_fresh", {})
     if use_db and fresh:
         db.pool_ocr_cache_save(fresh)
+        db.pool_ocr_cache_prune()
     report["errors"] = errors + report["errors"]
     report["started_at"] = started
     report["mode"] = "move" if move else "report"
