@@ -31,6 +31,7 @@ function GroupCard({ g, active, onPick }) {
       <Bar done={g.done} target={g.target} tone={done ? 'bg-emerald-500' : 'bg-amber-500'} />
       <p className="text-xs text-slate-500 mt-1.5 tabular-nums">
         {fmt(g.done)}/{fmt(g.target)} งาน ({pct(g.done, g.target)}%)
+        {g.unread > 0 && <span className="text-slate-400"> · รออ่าน {fmt(g.unread)}</span>}
       </p>
       <p className="text-xs text-slate-400 mt-1">
         คนที่ยังขาด {g.short.length}
@@ -66,6 +67,7 @@ export default function Dashboard({ onOpenJob }) {
   const totalDone = groups.reduce((s, g) => s + g.done, 0)
   const totalTarget = groups.reduce((s, g) => s + g.target, 0)
   const heads = groups.reduce((s, g) => s + g.riders + g.absent.length, 0)
+  const totalUnread = groups.reduce((s, g) => s + (g.unread || 0), 0)
 
   return (
     <div className="space-y-5">
@@ -105,7 +107,10 @@ export default function Dashboard({ onOpenJob }) {
             <p className="text-2xl font-semibold tabular-nums">
               {fmt(totalDone)} <span className="text-slate-400 text-lg">/ {fmt(totalTarget)}</span>
             </p>
-            <p className="text-xs text-slate-400">ไรเดอร์ {fmt(heads)} คน · เกณฑ์ {comp.expected} งาน/คน</p>
+            <p className="text-xs text-slate-400">
+              ไรเดอร์ {fmt(heads)} คน · เกณฑ์ {comp.expected} งาน/คน
+              {totalUnread > 0 && <span> · ในนั้นรออ่าน {fmt(totalUnread)}</span>}
+            </p>
           </div>
         </div>
         <div className="mt-3">
@@ -124,7 +129,7 @@ export default function Dashboard({ onOpenJob }) {
         <div className="flex items-baseline justify-between gap-3 flex-wrap">
           <h2 className="font-semibold">
             คนที่ยังขาด
-            <span className="text-sm font-normal text-slate-400"> {cat || 'ทุกกลุ่มรถ'} · เรียงจากขาดมากสุด</span>
+            <span className="text-sm font-normal text-slate-400"> {cat || 'ทุกกลุ่มรถ'} · เรียงจากขาดมากสุด · * มีรูปที่ยังรออ่าน</span>
           </h2>
           <p className="text-sm text-slate-500">{short.length} คน</p>
         </div>
@@ -139,7 +144,9 @@ export default function Dashboard({ onOpenJob }) {
                 <span className="w-32 truncate font-medium">{r.driver_name}</span>
                 {!cat && <span className="w-28 text-xs text-slate-400 truncate">{r.category}</span>}
                 <span className="flex-1 min-w-24"><Bar done={r.done} target={comp.expected} /></span>
-                <span className="w-16 text-right tabular-nums text-slate-600">{r.done}/{comp.expected}</span>
+                <span className="w-16 text-right tabular-nums text-slate-600" title={r.read !== r.done ? `อ่านแล้ว ${r.read} · รออ่าน ${r.done - r.read}` : undefined}>
+                  {r.done}/{comp.expected}{r.read !== r.done && <span className="text-slate-400">*</span>}
+                </span>
                 <span className="w-20 text-right text-red-600 tabular-nums font-medium">ขาด {r.missing}</span>
               </button>
             ))}

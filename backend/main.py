@@ -368,7 +368,9 @@ def completeness():
 
     The Agent reads this before asking an admin for more slips, so everything is counted in
     trips — target is riders × the weekly quota, and a rider who sent nothing at all is counted
-    against the group they rode for last time (otherwise the biggest hole is invisible)."""
+    against the group they rode for last time (otherwise the biggest hole is invisible).
+    A slip that has arrived but has not been read yet already counts as collected: the Agent
+    must not go asking for photos that are sitting in the queue."""
     exp = config.EXPECTED_TRIPS_PER_WEEK
     weeks_ = db.weeks_overview()
     # where each rider was last seen, so an absent rider still lands in a vehicle group
@@ -384,19 +386,24 @@ def completeness():
         groups, present = {}, set()
         for g in W["groups"]:
             cat = g["category"] or "ไม่ระบุกลุ่มรถ"
-            b = groups.setdefault(cat, {"category": cat, "riders": 0, "done": 0, "approved": 0,
-                                        "waiting": 0, "short": [], "absent": []})
+            b = groups.setdefault(cat, {"category": cat, "riders": 0, "done": 0, "read": 0,
+                                        "approved": 0, "waiting": 0, "unread": 0,
+                                        "short": [], "absent": []})
             for j in g["jobs"]:
                 present.add(j["driver_name"])
+                # read + still queued + failed to read: all three are slips already in hand
+                collected = (j["done"] or 0) + (j["pending"] or 0) + (j["errors"] or 0)
                 b["riders"] += 1
-                b["done"] += j["done"] or 0
+                b["done"] += collected
+                b["read"] += j["done"] or 0
                 b["approved"] += j["approved"] or 0
                 b["waiting"] += j["waiting"] or 0
-                missing = max(0, exp - (j["done"] or 0))
+                b["unread"] += (j["pending"] or 0) + (j["errors"] or 0)
+                missing = max(0, exp - collected)
                 if missing:
                     b["short"].append({
                         "driver_name": j["driver_name"], "job_id": j["id"],
-                        "done": j["done"] or 0, "approved": j["approved"] or 0,
+                        "done": collected, "read": j["done"] or 0, "approved": j["approved"] or 0,
                         "waiting": j["waiting"] or 0, "pending": j["pending"] or 0,
                         "errors": j["errors"] or 0, "missing": missing,
                     })
@@ -404,8 +411,9 @@ def completeness():
             if rider in present or since >= W["date_from"]:
                 continue
             cat = last_group.get(rider) or "ไม่ระบุกลุ่มรถ"
-            groups.setdefault(cat, {"category": cat, "riders": 0, "done": 0, "approved": 0,
-                                    "waiting": 0, "short": [], "absent": []})["absent"].append(rider)
+            groups.setdefault(cat, {"category": cat, "riders": 0, "done": 0, "read": 0,
+                                    "approved": 0, "waiting": 0, "unread": 0,
+                                    "short": [], "absent": []})["absent"].append(rider)
 
         packed = []
         for b in groups.values():
@@ -421,6 +429,8 @@ def completeness():
             "week": W["week"], "date_from": W["date_from"], "date_to": W["date_to"],
             "riders": sum(b["riders"] + len(b["absent"]) for b in packed),
             "done": sum(b["done"] for b in packed),
+            "read": sum(b["read"] for b in packed),
+            "unread": sum(b["unread"] for b in packed),
             "approved": sum(b["approved"] for b in packed),
             "waiting": sum(b["waiting"] for b in packed),
             "target": sum(b["target"] for b in packed),
