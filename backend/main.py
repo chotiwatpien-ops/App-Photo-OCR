@@ -364,36 +364,69 @@ def collect_batches_now():
 
 @app.get("/api/completeness")
 def completeness():
-    """Per-week rider check: who is short of the expected trips, who sent nothing at all.
-    Complete riders are simply not listed (the flag disappears once the data is in)."""
+    """Per week and vehicle group: how much work is in, how much is owed, who is short.
+
+    The Agent reads this before asking an admin for more slips, so everything is counted in
+    trips — target is riders × the weekly quota, and a rider who sent nothing at all is counted
+    against the group they rode for last time (otherwise the biggest hole is invisible)."""
     exp = config.EXPECTED_TRIPS_PER_WEEK
     weeks_ = db.weeks_overview()
-    first_seen = {}  # rider -> earliest week date_from they appeared
-    for W in weeks_:
+    # where each rider was last seen, so an absent rider still lands in a vehicle group
+    last_group, first_seen = {}, {}
+    for W in sorted(weeks_, key=lambda w: w["date_from"]):
         for g in W["groups"]:
             for j in g["jobs"]:
-                d = first_seen.get(j["driver_name"])
-                if d is None or W["date_from"] < d:
-                    first_seen[j["driver_name"]] = W["date_from"]
+                last_group[j["driver_name"]] = g["category"]
+                first_seen.setdefault(j["driver_name"], W["date_from"])
+
     out = []
     for W in weeks_:
-        incomplete, present = [], set()
+        groups, present = {}, set()
         for g in W["groups"]:
+            cat = g["category"] or "ไม่ระบุกลุ่มรถ"
+            b = groups.setdefault(cat, {"category": cat, "riders": 0, "done": 0, "approved": 0,
+                                        "waiting": 0, "short": [], "absent": []})
             for j in g["jobs"]:
                 present.add(j["driver_name"])
-                settled = (j["waiting"] or 0) == 0 and (j["pending"] or 0) == 0 and (j["errors"] or 0) == 0
-                if (j["approved"] or 0) >= exp and settled:
-                    continue  # ครบ — no flag
-                incomplete.append({
-                    "driver_name": j["driver_name"], "category": g["category"], "job_id": j["id"],
-                    "images": j["images"] or 0, "done": j["done"] or 0, "approved": j["approved"] or 0,
-                    "waiting": j["waiting"] or 0, "pending": j["pending"] or 0, "errors": j["errors"] or 0,
-                    "missing": max(0, exp - (j["done"] or 0)),
-                })
-        absent = sorted(r for r, d in first_seen.items()
-                        if r not in present and d < W["date_from"])
-        out.append({"week": W["week"], "date_from": W["date_from"], "date_to": W["date_to"],
-                    "riders": W["riders"], "incomplete": incomplete, "absent": absent})
+                b["riders"] += 1
+                b["done"] += j["done"] or 0
+                b["approved"] += j["approved"] or 0
+                b["waiting"] += j["waiting"] or 0
+                missing = max(0, exp - (j["done"] or 0))
+                if missing:
+                    b["short"].append({
+                        "driver_name": j["driver_name"], "job_id": j["id"],
+                        "done": j["done"] or 0, "approved": j["approved"] or 0,
+                        "waiting": j["waiting"] or 0, "pending": j["pending"] or 0,
+                        "errors": j["errors"] or 0, "missing": missing,
+                    })
+        for rider, since in first_seen.items():
+            if rider in present or since >= W["date_from"]:
+                continue
+            cat = last_group.get(rider) or "ไม่ระบุกลุ่มรถ"
+            groups.setdefault(cat, {"category": cat, "riders": 0, "done": 0, "approved": 0,
+                                    "waiting": 0, "short": [], "absent": []})["absent"].append(rider)
+
+        packed = []
+        for b in groups.values():
+            b["short"].sort(key=lambda r: -r["missing"])
+            b["absent"].sort()
+            heads = b["riders"] + len(b["absent"])
+            b["target"] = heads * exp
+            b["missing"] = max(0, b["target"] - b["done"])
+            b["complete"] = b["riders"] - len(b["short"])
+            packed.append(b)
+        packed.sort(key=lambda b: -b["missing"])
+        out.append({
+            "week": W["week"], "date_from": W["date_from"], "date_to": W["date_to"],
+            "riders": sum(b["riders"] + len(b["absent"]) for b in packed),
+            "done": sum(b["done"] for b in packed),
+            "approved": sum(b["approved"] for b in packed),
+            "waiting": sum(b["waiting"] for b in packed),
+            "target": sum(b["target"] for b in packed),
+            "missing": sum(b["missing"] for b in packed),
+            "groups": packed,
+        })
     return {"weeks": out, "expected": exp}
 
 
