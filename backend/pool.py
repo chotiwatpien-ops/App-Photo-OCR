@@ -387,60 +387,88 @@ def main(argv=None):
     if args.album:
         want = [w.strip().lower() for w in args.album.split(",") if w.strip()]
         albums = [a for a in albums if any(w in a["album"].lower() for w in want)]
-    n_img = sum(len(a["images"]) for a in albums)
-    log(f"กอง: {len(albums)} อัลบั้ม · {n_img} รูป" + (f" · เฉพาะ {args.week}" if args.week else ""))
     if args.limit:
         left = args.limit
         for a in albums:
             a["images"] = a["images"][:max(0, left)]
             left -= len(a["images"])
         albums = [a for a in albums if a["images"]]
+    run_pool(drive, albums, move=args.move, preview=not args.no_preview, use_db=not args.no_db,
+             started=started, label=(f"เฉพาะ {args.week}" if args.week else ""))
+    return 0
+
+
+def run_pool(drive, albums, move, preview=True, use_db=True, started=None, label="", run_id=None, log=log):
+    """The whole pool step on an already-scanned album list. Used by the CLI and by every ingest
+    round (ingest.py, POOL_IN_ROUND). Returns the report dict, or None when the pool is empty."""
+    started = started or time.strftime("%Y-%m-%d %H:%M:%S")
+    n_img = sum(len(a["images"]) for a in albums)
+    log(f"กอง: {len(albums)} อัลบั้ม · {n_img} รูป" + (f" · {label}" if label else ""))
+    if not albums:
+        return None
     errors = []
     t0 = time.time()
     data = fetch(drive, [i for a in albums for i in a["images"]], config.DRIVE_PARALLEL, errors)
     log(f"โหลดแล้ว {len(data)} รูป ใน {time.time() - t0:.0f} วิ")
     t0 = time.time()
     cache = {}
-    if not args.no_db:
+    if use_db:
         import db
         db.init_db()
         cache = db.pool_ocr_cache_load()
     report = analyse(albums, data, config.POOL_PARALLEL, cache)
     fresh = report.pop("ocr_fresh", {})
-    if not args.no_db and fresh:
+    if use_db and fresh:
         db.pool_ocr_cache_save(fresh)
     report["errors"] = errors + report["errors"]
     report["started_at"] = started
-    report["mode"] = "move" if args.move else "report"
+    report["mode"] = "move" if move else "report"
     log(f"ตรวจและจับคู่เสร็จใน {time.time() - t0:.0f} วิ" + (f" · ใช้ผล OCR เดิม {report['ocr_cached']} รูป" if report.get("ocr_cached") else ""))
-    if args.move and albums:
-        apply_moves(drive, albums, data, report)
+    if move:
+        apply_moves(drive, albums, data, report, log=log)
     summary = render(report)
     log(summary)
-    if albums and args.move:                                  # the stitched files ARE the output; keep the text log
+    if move:                                                  # the stitched files ARE the output; keep the text log
         try:
             for pid in {a["pool_id"] for a in albums}:
                 drive.upload_file(drive.ensure_folder(pid, REPORT_DIR),
                                   f"รายงานย้าย {time.strftime('%Y-%m-%d %H%M')}.txt", summary.encode("utf-8"), "text/plain")
         except Exception as e:  # noqa: BLE001
             log(f"อัปโหลดรายงานไม่สำเร็จ: {str(e)[:200]}")
-    if albums and not args.no_preview and not args.move:
+    elif preview:
         try:
-            write_previews(drive, albums, data, report)
+            write_previews(drive, albums, data, report, log=log)
         except Exception as e:  # noqa: BLE001
             log(f"อัปโหลดรายงานไม่สำเร็จ: {str(e)[:200]}")
             report["errors"].append(f"อัปโหลดรายงานไม่สำเร็จ: {str(e)[:200]}")
-    if not args.no_db:
+    if use_db:
         import db
         # the JSON keeps only what the page needs — no file ids
         slim = {k: v for k, v in report.items() if k != "ocr_fresh"}
         slim["albums"] = [{**a, "pairs": [{k: v for k, v in p.items() if not k.endswith("_id")} for p in a["pairs"]],
                            "long": [{k: v for k, v in l.items() if k != "id"} for l in a["long"]]}
                           for a in report["albums"]]
+        if run_id is not None:
+            slim["ingest_run_id"] = run_id
         rid = db.record_pool_run(report["mode"], ",".join(sorted({a["week"] for a in albums})),
                                  report["totals"], summary, slim)
         log(f"บันทึกผลเป็น pool run #{rid}")
-    return 0
+    return report
+
+
+def round_step(drive, inbox_id, run_id=None, dry_run=False, log=log):
+    """What an ingest round does first: pair and file whatever the Agent dropped into any
+    Week/Pool. Report-only on a dry run. Never raises — a pool problem must not cost the round."""
+    try:
+        albums = scan_inbox(drive, inbox_id)
+        if not albums:
+            log("กอง: ว่าง")
+            return None
+        return run_pool(drive, albums, move=not dry_run, preview=dry_run, use_db=not dry_run,
+                        run_id=run_id, log=log)
+    except Exception as e:  # noqa: BLE001
+        log(f"⚠ ขั้นจัดกองล้มเหลว (ข้ามไป รอบยังทำงานต่อ): {str(e)[:200]}")
+        return None
 
 
 if __name__ == "__main__":

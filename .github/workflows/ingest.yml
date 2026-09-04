@@ -63,7 +63,8 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r backend/requirements.txt
+      - run: sudo apt-get install -y -qq libgl1 libglib2.0-0   # opencv (pulled in by the free OCR) needs them
+      - run: pip install -r backend/requirements.txt -r backend/requirements-pairing.txt
       - name: Run ingest
         working-directory: backend
         env:

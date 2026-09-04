@@ -452,6 +452,11 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     run_id = None if dry_run else db.start_ingest_run()
     t0 = time.time()
     issues = []  # (key, kind, message) — synced to ingest_issues at the end (auto-resolve)
+    if config.POOL_IN_ROUND:
+        # Phase 2: whole albums in Week/Pool get paired and filed under Week/<vehicle category>
+        # BEFORE the folders are read, so what this round submits already includes them
+        import pool
+        pool.round_step(drive, inbox_id, run_id=run_id, dry_run=dry_run, log=log)
     items, skipped = discover(drive, inbox_id)
     issues += [(f"folder:{s}", "folder", s) for s in skipped]
     if only:

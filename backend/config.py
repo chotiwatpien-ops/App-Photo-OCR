@@ -163,6 +163,9 @@ DRIVE_EXPORTS_FOLDER_ID = _setting("DRIVE_EXPORTS_FOLDER_ID", "drive_exports_fol
 # the alternative layout of one separate folder holding Pool/<Week …>/<group>/<album>/.
 DRIVE_POOL_FOLDER_ID = _setting("DRIVE_POOL_FOLDER_ID", "drive_pool_folder_id")
 POOL_PARALLEL = int(_setting("POOL_PARALLEL", "pool_parallel", 4))                # local OCR threads
+# every ingest round first pairs and files what is in Week/Pool (pool.round_step); "0" leaves the
+# pool alone so only the manual "Pool" workflow touches it
+POOL_IN_ROUND = str(_setting("POOL_IN_ROUND", "pool_in_round", "1")).lower() in ("1", "true", "yes")
 
 
 def _usable_key(k) -> bool:
