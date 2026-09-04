@@ -147,7 +147,7 @@ export default function App() {
         ) : view === 'home' ? (
           <Home onOpenJob={openJob} onJobCreated={(job) => { setActiveJob(job); refreshJobs() }} />
         ) : view === 'dashboard' ? (
-          <Dashboard />
+          <Dashboard onOpenJob={openJob} onGoQueue={() => setView('queue')} />
         ) : view === 'data' ? (
           <DataView onOpenJob={openJob} />
         ) : view === 'queue' ? (

@@ -1051,7 +1051,8 @@ def summary(date_from=None, date_to=None):
         rows = c.execute(q).mappings().all()
 
     weeks, riders = {}, {}
-    tot = {"trips": 0, "approved": 0, "waiting": 0, "net": 0.0, "km": 0.0, "surge": 0, "cash": 0}
+    tot = {"trips": 0, "approved": 0, "waiting": 0, "net": 0.0, "km": 0.0, "surge": 0, "cash": 0,
+           "failed": 0, "duplicates": 0}
     for r in rows:
         if r["trip_date"]:
             y, w, _ = datetime.strptime(r["trip_date"], "%Y-%m-%d").isocalendar()
@@ -1060,9 +1061,12 @@ def summary(date_from=None, date_to=None):
             wk = "ไม่ระบุ"
         for bucket, key in ((weeks, wk), (riders, r["driver_name"])):
             b = bucket.setdefault(key, {"trips": 0, "approved": 0, "waiting": 0, "net": 0.0,
-                                        "km": 0.0, "surge": 0, "riders": set()})
+                                        "km": 0.0, "surge": 0, "failed": 0, "duplicates": 0,
+                                        "riders": set()})
             b["trips"] += 1
             b["riders"].add(r["driver_name"])
+            if r["trip_date"]:
+                b.setdefault("dates", set()).add(r["trip_date"])
             if r["committed"]:
                 b["approved"] += 1
                 b["net"] += r["net_earnings"] or 0
@@ -1070,6 +1074,8 @@ def summary(date_from=None, date_to=None):
             else:
                 b["waiting"] += 1
             b["surge"] += 1 if r["surge"] else 0
+            b["failed"] += 1 if r["check_status"] == "fail" else 0
+            b["duplicates"] += 1 if r["duplicate_of"] else 0
         tot["trips"] += 1
         if r["committed"]:
             tot["approved"] += 1
@@ -1079,15 +1085,23 @@ def summary(date_from=None, date_to=None):
             tot["waiting"] += 1
         tot["surge"] += 1 if r["surge"] else 0
         tot["cash"] += 1 if r["payment_method"] == "CASH" else 0
+        # both were already read from the row and thrown away; the page needs them to say
+        # whether the money on screen can be trusted
+        tot["failed"] += 1 if r["check_status"] == "fail" else 0
+        tot["duplicates"] += 1 if r["duplicate_of"] else 0
 
     def pack(d, key_name):
         out = []
         for k, b in d.items():
-            out.append({key_name: k, **{x: b[x] for x in ("trips", "approved", "waiting", "surge")},
+            out.append({key_name: k,
+                        **{x: b[x] for x in ("trips", "approved", "waiting", "surge", "failed", "duplicates")},
                         "net": round(b["net"], 2), "km": round(b["km"], 2), "riders": len(b["riders"])})
         return out
 
     by_week = sorted(pack(weeks, "week"), key=lambda x: x["week"], reverse=True)
+    for w, b in zip(by_week, [weeks[x["week"]] for x in by_week]):
+        w["date_from"] = min(b["dates"]) if b.get("dates") else None
+        w["date_to"] = max(b["dates"]) if b.get("dates") else None
     by_rider = sorted(pack(riders, "driver_name"), key=lambda x: -x["net"])
     tot["net"] = round(tot["net"], 2)
     tot["km"] = round(tot["km"], 2)
