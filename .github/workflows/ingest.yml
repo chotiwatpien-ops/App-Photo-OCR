@@ -3,9 +3,15 @@ name: Weekly ingest (Drive → Gemini → DB → Excel)
 on:
   schedule:
     # GitHub fires about one scheduled run in three, 20-95 minutes late (measured 2026-08-24..28:
-    # 8 runs where ~25 were due). So it is asked every hour and the round itself decides whether
-    # it is due — --min-gap makes an early one exit in seconds, long before any real work.
-    - cron: "23 * * * *"
+    # 8 runs where ~25 were due), so the round itself decides whether it is due — the gate below
+    # ends an early one in seconds, long before any real work.
+    #
+    # Asked every 3 hours, not hourly. Billing rounds each job up to a whole minute, so the ~17
+    # not-due runs an hourly schedule produced were costing ~510 minutes a month of the 2,000
+    # free ones to answer one question and quit. Three-hourly asks 8 times and, with the gap
+    # below at 2.5h, every ask is due: no minute is spent on a run that does nothing, and photos
+    # wait 3 hours instead of 3.5.
+    - cron: "23 */3 * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -63,9 +69,12 @@ jobs:
     timeout-minutes: 330  # a full-week backfill (~1,800 images) takes ~2.5h; normal rounds are minutes
     steps:
       - uses: actions/checkout@v4
-      # GitHub fires roughly one scheduled run in three, and --min-gap then ends most of them in
-      # seconds — but only after ~90s of installing Python packages, which is where most of the
-      # free Actions quota went. psql ships with the runner, so the same question costs ~2s here.
+      # GitHub fires roughly one scheduled run in three, late and unevenly, so a run still has to
+      # ask whether it is due — and asking used to cost ~90s of installing Python packages first,
+      # which is where most of the free Actions quota went. psql ships with the runner, so the
+      # same question costs ~2s here. The gap is 2.5h against a 3-hourly schedule: wide enough
+      # that a run arriving 20-95 minutes late is still the only one working, narrow enough that
+      # no scheduled run is turned away (at 3.5h every other one would be, halving the cadence).
       # Fail-open: an unreadable answer runs the round, so a check can never cost us one.
       - name: Is a round due?
         id: gate
@@ -76,7 +85,7 @@ jobs:
           age=$(psql "$DATABASE_URL" -tAc "select coalesce(extract(epoch from ((now() at time zone 'Asia/Bangkok') - max(finished_at)::timestamp))/3600, 999) from ingest_runs where finished_at is not null" 2>/dev/null | tr -d '[:space:]')
           running=$(psql "$DATABASE_URL" -tAc "select count(*) from ingest_runs where finished_at is null and started_at::timestamp > (now() at time zone 'Asia/Bangkok') - interval '6 hours'" 2>/dev/null | tr -d '[:space:]')
           echo "รอบล่าสุดจบไปแล้ว ${age:-?} ชม. · กำลังรันอยู่ ${running:-?} รอบ"
-          if [ -n "$age" ] && [ -n "$running" ] && awk "BEGIN{exit !($age < 3.5 || $running > 0)}"; then
+          if [ -n "$age" ] && [ -n "$running" ] && awk "BEGIN{exit !($age < 2.5 || $running > 0)}"; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "⏭ ยังไม่ถึงเวลา (หรือมีรอบกำลังรัน) — จบรอบนี้โดยไม่ติดตั้งอะไร"
           fi
@@ -109,8 +118,8 @@ jobs:
           DRIVE_PARALLEL: "12"
         run: |
           ARGS=""
-          # a person pressing the button always runs; the hourly schedule only runs when due
-          if [ "${{ github.event_name }}" = "schedule" ]; then ARGS="$ARGS --min-gap 3.5"; fi
+          # a person pressing the button always runs; a scheduled one only runs when due
+          if [ "${{ github.event_name }}" = "schedule" ]; then ARGS="$ARGS --min-gap 2.5"; fi
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
           if [ "${{ github.event.inputs.exports_only }}" = "true" ]; then ARGS="$ARGS --exports-only"; fi
           if [ "${{ github.event.inputs.xlsx_only }}" = "true" ]; then ARGS="$ARGS --xlsx-only"; fi
