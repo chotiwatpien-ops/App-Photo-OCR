@@ -153,6 +153,10 @@ def job_detail(job_id: int):
     return j
 
 
+# the figures arithmetic_check reads — editing any of them makes its old verdict stale
+MONEY_FIELDS = {"net_earnings", "base_fare", "bonus", "turbo", "passenger_total", "tip"}
+
+
 @app.patch("/api/trips/{trip_id}")
 async def patch_trip(trip_id: int, fields: dict):
     t = db.get_trip(trip_id)
@@ -161,7 +165,17 @@ async def patch_trip(trip_id: int, fields: dict):
     if t["committed"]:
         raise HTTPException(409, "รายการนี้อนุมัติแล้ว แก้ไขไม่ได้")
     db.update_trip(trip_id, {k: v for k, v in fields.items() if k in db.TRIP_EDITABLE})
-    return db.get_trip(trip_id)
+    t = db.get_trip(trip_id)
+    # the row was held back because its numbers disagreed; a person has just changed one of
+    # them, so ask the same question again. Without this the queue keeps calling a corrected
+    # row broken, and 'approve everything that passes' skips the rows someone just fixed.
+    if MONEY_FIELDS & set(fields):
+        import extractor
+        new = extractor.arithmetic_check(t)
+        if new != t.get("check_status"):
+            db.update_trip(trip_id, {"check_status": new})
+            t = db.get_trip(trip_id)
+    return t
 
 
 @app.delete("/api/trips/{trip_id}")
