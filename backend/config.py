@@ -74,8 +74,13 @@ GITHUB_TOKEN = _setting("GITHUB_TOKEN", "github_token")          # fine-grained 
 GITHUB_REPO = _setting("GITHUB_REPO", "github_repo")             # "owner/repo"
 GITHUB_WORKFLOW = _setting("GITHUB_WORKFLOW", "github_workflow", "ingest.yml")
 
-# trips each rider owes the customer per week (3/day × 7) — Dashboard completeness check
+# trips each rider owes the customer per week (3/day × 7) — used for the per-rider shortfall list
 EXPECTED_TRIPS_PER_WEEK = int(os.environ.get("EXPECTED_TRIPS_PER_WEEK", "21"))
+
+# what the customer buys: every vehicle group must reach this many trips a week on its own.
+# A group that beats it does not cover one that misses it, so the Dashboard totals the
+# shortfalls rather than the trips. 1,470 = 70 riders × the 21 above.
+WEEKLY_TARGET_PER_GROUP = int(_setting("WEEKLY_TARGET_PER_GROUP", "weekly_target_per_group", 1470))
 
 # read-only diagnostic API key (header X-Diag-Key on /api/diag/* only); unset = feature off
 DIAG_KEY = _setting("DIAG_KEY", "diag_key", None)

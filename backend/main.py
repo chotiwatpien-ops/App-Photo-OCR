@@ -367,11 +367,18 @@ def completeness():
     """Per week and vehicle group: how much work is in, how much is owed, who is short.
 
     The Agent reads this before asking an admin for more slips, so everything is counted in
-    trips — target is riders × the weekly quota, and a rider who sent nothing at all is counted
-    against the group they rode for last time (otherwise the biggest hole is invisible).
-    A slip that has arrived but has not been read yet already counts as collected: the Agent
-    must not go asking for photos that are sitting in the queue."""
+    trips. Each vehicle group owes the customer WEEKLY_TARGET_PER_GROUP trips on its own —
+    a group that runs over does not cover one that runs short, so the week's shortfall is the
+    sum of the groups' shortfalls, never target-minus-total. Groups outside the team's four
+    vehicle categories (hand uploads, unfiled) have no target of their own and are measured by
+    the riders in them. A rider who sent nothing at all is counted against the group they rode
+    for last time (otherwise the biggest hole is invisible), and a slip that has arrived but
+    has not been read yet already counts as collected: the Agent must not go asking for photos
+    that are sitting in the queue."""
     exp = config.EXPECTED_TRIPS_PER_WEEK
+    quota = config.WEEKLY_TARGET_PER_GROUP
+    import pipeline
+    with_quota = set(pipeline.CATEGORY_SERVICE)
     weeks_ = db.weeks_overview()
     # where each rider was last seen, so an absent rider still lands in a vehicle group
     last_group, first_seen = {}, {}
@@ -381,14 +388,20 @@ def completeness():
                 last_group[j["driver_name"]] = g["category"]
                 first_seen.setdefault(j["driver_name"], W["date_from"])
 
+    # a group with a target that sent nothing this week is the biggest hole there is, and it
+    # has no jobs to be found through — so every group the team actually runs is seeded empty
+    running = {g["category"] for W in weeks_ for g in W["groups"] if g["category"] in with_quota}
+
+    def blank(cat):
+        return {"category": cat, "riders": 0, "done": 0, "read": 0, "approved": 0,
+                "waiting": 0, "unread": 0, "short": [], "absent": []}
+
     out = []
     for W in weeks_:
-        groups, present = {}, set()
+        groups, present = {cat: blank(cat) for cat in running}, set()
         for g in W["groups"]:
             cat = g["category"] or "ไม่ระบุกลุ่มรถ"
-            b = groups.setdefault(cat, {"category": cat, "riders": 0, "done": 0, "read": 0,
-                                        "approved": 0, "waiting": 0, "unread": 0,
-                                        "short": [], "absent": []})
+            b = groups.setdefault(cat, blank(cat))
             for j in g["jobs"]:
                 present.add(j["driver_name"])
                 # read + still queued + failed to read: all three are slips already in hand
@@ -411,17 +424,21 @@ def completeness():
             if rider in present or since >= W["date_from"]:
                 continue
             cat = last_group.get(rider) or "ไม่ระบุกลุ่มรถ"
-            groups.setdefault(cat, {"category": cat, "riders": 0, "done": 0, "read": 0,
-                                    "approved": 0, "waiting": 0, "unread": 0,
-                                    "short": [], "absent": []})["absent"].append(rider)
+            groups.setdefault(cat, blank(cat))["absent"].append(rider)
 
         packed = []
         for b in groups.values():
             b["short"].sort(key=lambda r: -r["missing"])
             b["absent"].sort()
             heads = b["riders"] + len(b["absent"])
-            b["target"] = heads * exp
+            b["quota"] = b["category"] in with_quota          # does the customer buy this group?
+            b["target"] = quota if b["quota"] else heads * exp
             b["missing"] = max(0, b["target"] - b["done"])
+            # what the riders on the books can produce at the weekly quota each — a group can be
+            # short on trips because people under-sent, or because there are not enough people
+            b["capacity"] = heads * exp
+            # riders still to be recruited: even everyone hitting their quota would fall short
+            b["heads_needed"] = max(0, -(-(b["target"] - b["capacity"]) // exp)) if b["quota"] else 0
             b["complete"] = b["riders"] - len(b["short"])
             packed.append(b)
         packed.sort(key=lambda b: -b["missing"])
@@ -437,7 +454,7 @@ def completeness():
             "missing": sum(b["missing"] for b in packed),
             "groups": packed,
         })
-    return {"weeks": out, "expected": exp}
+    return {"weeks": out, "expected": exp, "group_target": quota}
 
 
 def _dispatch_ingest():

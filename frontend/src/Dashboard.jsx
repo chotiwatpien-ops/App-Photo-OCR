@@ -12,7 +12,8 @@ function Bar({ done, target, tone = 'bg-emerald-500', h = 'h-2' }) {
   )
 }
 
-/** One vehicle group. The number the Agent acts on is how many trips are still owed. */
+/** One vehicle group. Each one owes the customer its own weekly target, so a group that runs
+ *  over never covers one that runs short — the number the Agent acts on is this group's own gap. */
 function GroupCard({ g, active, onPick }) {
   const done = g.missing === 0
   return (
@@ -27,7 +28,9 @@ function GroupCard({ g, active, onPick }) {
       <p className={`text-3xl font-semibold tabular-nums mt-1 ${done ? 'text-emerald-600' : 'text-red-600'}`}>
         {done ? 'ครบ' : fmt(g.missing)}
       </p>
-      <p className="text-xs text-slate-500 mb-2">{done ? 'ไม่ต้องขอเพิ่ม' : 'งานที่ยังขาด'}</p>
+      <p className="text-xs text-slate-500 mb-2">
+        {done ? `ถึงเป้า ${fmt(g.target)} แล้ว` : 'งานที่ยังขาด'}
+      </p>
       <Bar done={g.done} target={g.target} tone={done ? 'bg-emerald-500' : 'bg-amber-500'} />
       <p className="text-xs text-slate-500 mt-1.5 tabular-nums">
         {fmt(g.done)}/{fmt(g.target)} งาน ({pct(g.done, g.target)}%)
@@ -37,6 +40,11 @@ function GroupCard({ g, active, onPick }) {
         คนที่ยังขาด {g.short.length}
         {g.absent.length > 0 && <span className="text-red-500"> · ยังไม่ส่งเลย {g.absent.length}</span>}
       </p>
+      {g.heads_needed > 0 && (
+        <p className="text-xs text-red-600 mt-1.5 rounded bg-red-50 border border-red-100 px-2 py-1">
+          คนไม่พอ — ต่อให้ทุกคนส่งครบก็ยังได้แค่ {fmt(g.capacity)} ต้องหาเพิ่มอีก {g.heads_needed} คน
+        </p>
+      )}
     </button>
   )
 }
@@ -100,7 +108,9 @@ export default function Dashboard({ onOpenJob }) {
             <p className={`text-5xl font-semibold tabular-nums mt-1 ${totalMissing ? 'text-red-600' : 'text-emerald-600'}`}>
               {totalMissing ? fmt(totalMissing) : 'ครบแล้ว'}
             </p>
-            <p className="text-sm text-slate-500">{totalMissing ? 'งานที่ยังต้องขอเพิ่ม' : 'ทุกกลุ่มรถครบตามเป้า'}</p>
+            <p className="text-sm text-slate-500">
+              {totalMissing ? 'งานที่ยังต้องขอเพิ่ม (รวมส่วนที่ขาดของแต่ละกลุ่มรถ)' : 'ทุกกลุ่มรถครบตามเป้า'}
+            </p>
           </div>
           <div className="text-right">
             <p className="text-sm text-slate-500">เก็บได้แล้ว</p>
@@ -108,7 +118,7 @@ export default function Dashboard({ onOpenJob }) {
               {fmt(totalDone)} <span className="text-slate-400 text-lg">/ {fmt(totalTarget)}</span>
             </p>
             <p className="text-xs text-slate-400">
-              ไรเดอร์ {fmt(heads)} คน · เกณฑ์ {comp.expected} งาน/คน
+              ไรเดอร์ {fmt(heads)} คน · เป้า {fmt(comp.group_target)} งาน/กลุ่มรถ · คนละ {comp.expected} งาน
               {totalUnread > 0 && <span> · ในนั้นรออ่าน {fmt(totalUnread)}</span>}
             </p>
           </div>
