@@ -105,13 +105,15 @@ class DriveClient:
 
     def ensure_folder(self, parent_id, name) -> str:
         """Id of child folder `name`, created if missing."""
-        q = (f"'{parent_id}' in parents and name='{name}' and "
-             f"mimeType='application/vnd.google-apps.folder' and trashed=false")
-        found = self._list(q, "id")
-        if found:
-            return found[0]["id"]
-        meta = {"name": name, "parents": [parent_id], "mimeType": "application/vnd.google-apps.folder"}
-        return self.svc.files().create(body=meta, fields="id", supportsAllDrives=True).execute()["id"]
+        def _ensure():
+            q = (f"'{parent_id}' in parents and name='{name}' and "
+                 f"mimeType='application/vnd.google-apps.folder' and trashed=false")
+            found = self._list(q, "id")
+            if found:
+                return found[0]["id"]
+            meta = {"name": name, "parents": [parent_id], "mimeType": "application/vnd.google-apps.folder"}
+            return self.svc.files().create(body=meta, fields="id", supportsAllDrives=True).execute()["id"]
+        return self._retry(_ensure)
 
     def upload_file(self, parent_id, name, data: bytes, mime: str) -> str:
         """Create or overwrite `name` inside the folder."""
@@ -132,6 +134,15 @@ class DriveClient:
 
     def upload_xlsx(self, parent_id, name, data: bytes) -> str:
         return self.upload_file(parent_id, name, data, XLSX_MIME)
+
+    def move_file(self, file_id, new_parent_id) -> None:
+        """Re-parent a file (no copy, no delete — the same file id ends up in the new folder)."""
+        def _mv():
+            meta = self.svc.files().get(fileId=file_id, fields="parents", supportsAllDrives=True).execute()
+            self.svc.files().update(fileId=file_id, addParents=new_parent_id,
+                                    removeParents=",".join(meta.get("parents", [])),
+                                    fields="id", supportsAllDrives=True).execute()
+        self._retry(_mv)
 
 
 class LocalDrive:
@@ -165,3 +176,9 @@ class LocalDrive:
 
     def upload_xlsx(self, parent_id, name, data: bytes) -> str:
         return self.upload_file(parent_id, name, data, XLSX_MIME)
+
+    def move_file(self, file_id, new_parent_id) -> None:
+        src = Path(file_id)
+        dst = Path(new_parent_id)
+        dst.mkdir(parents=True, exist_ok=True)
+        src.rename(dst / src.name)
