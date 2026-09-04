@@ -77,8 +77,26 @@ const BANNER = {
   slate: 'bg-slate-50 border-slate-200 text-slate-700',
 }
 
+/** What still has to be typed before this row can move, and how badly.
+ *  'block' — approval is refused without it. 'want' — the check cannot run without it, so the
+ *  row would sit here forever. Anything already filled asks for nothing. */
+function needed(t) {
+  const need = {}
+  if (!t.trip_date) need.trip_date = 'block'
+  if (n(t.net_earnings) === null) need.net_earnings = 'want'
+  if (n(t.base_fare) === null) need.base_fare = 'want'
+  return need
+}
+
+const NEED_BOX = {
+  block: 'border-red-400 bg-red-50 focus:border-red-500 focus:ring-red-100',
+  want: 'border-amber-400 bg-amber-50 focus:border-amber-500 focus:ring-amber-100',
+}
+const NEED_TAG = { block: 'text-red-600', want: 'text-amber-700' }
+const NEED_WORD = { block: 'ต้องกรอกก่อนอนุมัติ', want: 'ยังขาด' }
+
 /** One number the reviewer can correct without leaving the queue. */
-function Field({ label, value, onSave, type = 'number', hint }) {
+function Field({ label, value, onSave, type = 'number', hint, need }) {
   // Enter saves without waiting for the field to lose focus — a reviewer correcting a column
   // of numbers types, presses Enter, and expects the sum below to settle
   const [v, setV] = useState(value ?? '')
@@ -91,16 +109,23 @@ function Field({ label, value, onSave, type = 'number', hint }) {
     setSaving(true)
     try { await onSave(v === '' ? null : (type === 'number' ? Number(v) : v)) } finally { setSaving(false) }
   }
+  // a field only asks while it is still empty; typing into it settles it immediately
+  const asking = need && String(v) === ''
   return (
     <label className="block">
-      <span className="text-xs text-slate-500">{label}</span>
-      <input type={type} value={v} disabled={saving} ref={box}
+      <span className="text-xs text-slate-500">
+        {label}
+        {asking && <span className={`ml-1 font-medium ${NEED_TAG[need]}`}>· {NEED_WORD[need]}</span>}
+      </span>
+      <input type={type} value={v} disabled={saving} ref={box} data-need={asking ? need : undefined}
         onChange={(e) => setV(e.target.value)}
         onBlur={commit}
         onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); box.current?.blur() } }}
         className={`mt-0.5 w-full rounded-lg border px-2 py-1.5 text-sm tabular-nums outline-none
-          ${dirty ? 'border-blue-400 bg-blue-50' : 'border-slate-200 bg-white'}
-          focus:border-blue-500 focus:ring-2 focus:ring-blue-100 disabled:opacity-50`} />
+          focus:ring-2 disabled:opacity-50
+          ${dirty ? 'border-blue-400 bg-blue-50 focus:border-blue-500 focus:ring-blue-100'
+            : asking ? NEED_BOX[need]
+              : 'border-slate-200 bg-white focus:border-blue-500 focus:ring-blue-100'}`} />
       {hint && <span className="text-[11px] text-slate-400">{hint}</span>}
     </label>
   )
@@ -230,6 +255,9 @@ export default function ReviewQueue({ onOpenJob }) {
   useEffect(() => {
     const onKey = (e) => {
       if (e.target.matches('input, textarea, select')) return
+      // a bare letter is the shortcut; Ctrl+A is 'select all' and must never approve a row,
+      // which is exactly what it did before this line existed
+      if (e.ctrlKey || e.metaKey || e.altKey) return
       if (e.key === 'Escape') return setZoom(false)
       if (!rows || !rows.length) return
       const k = e.key.toLowerCase()
@@ -238,6 +266,11 @@ export default function ReviewQueue({ onOpenJob }) {
       else if (k === 'a') { e.preventDefault(); approve(rows[at]) }
       else if (k === 'x') { e.preventDefault(); remove(rows[at]) }
       else if (k === 'z') { e.preventDefault(); setZoom((z) => !z) }
+      else if (k === 'e') {
+        // straight to the first box that still wants something — the reviewer's next keystroke
+        const box = document.querySelector('[data-need="block"], [data-need="want"]')
+        if (box) { e.preventDefault(); box.focus(); box.select?.() }
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -294,7 +327,8 @@ export default function ReviewQueue({ onOpenJob }) {
             <kbd className="border rounded px-1">J</kbd>/<kbd className="border rounded px-1">K</kbd> เลื่อน ·
             <kbd className="border rounded px-1 ml-1">A</kbd> อนุมัติ ·
             <kbd className="border rounded px-1 ml-1">X</kbd> ลบ ·
-            <kbd className="border rounded px-1 ml-1">Z</kbd> ขยายรูป
+            <kbd className="border rounded px-1 ml-1">Z</kbd> ขยายรูป ·
+            <kbd className="border rounded px-1 ml-1">E</kbd> ช่องที่ต้องกรอก
           </span>
           <button onClick={approveAllPassing} disabled={busy || !counts.ready}
             className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-lg px-4 py-2 text-sm font-medium">
@@ -349,6 +383,8 @@ export default function ReviewQueue({ onOpenJob }) {
           {cur && (() => {
             const w = why(cur)
             const m = money(cur)
+            const need = needed(cur)
+            const asks = Object.keys(need).length
             const warn = fareWarning(cur)
             const two = (cur.note || '').startsWith('รวม 2 รูป')
             return (
@@ -393,11 +429,17 @@ export default function ReviewQueue({ onOpenJob }) {
                   </button>
 
                   <div className="space-y-2.5">
-                    <Field label="วันที่" type="date" value={cur.trip_date}
+                    {asks > 0 && (
+                      <p className={`text-xs rounded-lg px-2 py-1.5 ${need.trip_date
+                        ? 'bg-red-50 text-red-800' : 'bg-amber-50 text-amber-900'}`}>
+                        ต้องกรอก {asks} ช่องที่ไฮไลต์ไว้ — กด <kbd className="border rounded px-1">E</kbd> ไปช่องแรกได้เลย
+                      </p>
+                    )}
+                    <Field label="วันที่" type="date" value={cur.trip_date} need={need.trip_date}
                       onSave={(v) => edit(cur, 'trip_date', v)} />
-                    <Field label="รายได้ (คุณได้รับ)" value={cur.net_earnings}
+                    <Field label="รายได้ (คุณได้รับ)" value={cur.net_earnings} need={need.net_earnings}
                       onSave={(v) => edit(cur, 'net_earnings', v)} />
-                    <Field label="ค่าโดยสารพื้นฐาน" value={cur.base_fare}
+                    <Field label="ค่าโดยสารพื้นฐาน" value={cur.base_fare} need={need.base_fare}
                       onSave={(v) => edit(cur, 'base_fare', v)} />
                     <div className="grid grid-cols-2 gap-2">
                       <Field label="โบนัส" value={cur.bonus} onSave={(v) => edit(cur, 'bonus', v)} />
