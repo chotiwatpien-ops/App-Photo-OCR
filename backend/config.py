@@ -166,6 +166,16 @@ POOL_PARALLEL = int(_setting("POOL_PARALLEL", "pool_parallel", 4))              
 # every ingest round first pairs and files what is in Week/Pool (pool.round_step); "0" leaves the
 # pool alone so only the manual "Pool" workflow touches it
 POOL_IN_ROUND = str(_setting("POOL_IN_ROUND", "pool_in_round", "1")).lower() in ("1", "true", "yes")
+# Week folders kept for trying things out: skipped by the round (both the pool step and the
+# rider-folder read), still reachable from the manual "Pool" workflow by naming the week.
+# Matching is case-insensitive on any part of the folder name.
+IGNORE_WEEKS = tuple(w.strip().lower() for w in
+                     str(_setting("IGNORE_WEEKS", "ignore_weeks", "test,ทดสอบ,sandbox")).split(",") if w.strip())
+
+
+def week_ignored(name: str) -> bool:
+    n = (name or "").lower()
+    return any(w in n for w in IGNORE_WEEKS)
 
 
 def _usable_key(k) -> bool:

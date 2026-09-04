@@ -88,14 +88,22 @@ def _albums_in(drive, pool_folder, week_name):
 
 
 def _wanted(week_name, only_week):
-    return not week_name.startswith("_") and (not only_week or week_name.strip() == only_week.strip())
+    """A week folder this run should look at. Sandbox weeks (config.IGNORE_WEEKS) are skipped
+    unless they are named outright with --week, which is how they stay usable for trials."""
+    if week_name.startswith("_"):
+        return False
+    if only_week:
+        return week_name.strip() == only_week.strip()
+    return not config.week_ignored(week_name)
 
 
 def scan_inbox(drive, inbox_id, only_week=None):
     """Inbox/<Week …>/Pool/<group>/<album>/ — the production layout."""
     albums = []
     for wk in sorted(drive.list_folders(inbox_id), key=lambda f: f["name"]):
-        if not wk["name"].strip().lower().startswith("week") or not _wanted(wk["name"], only_week):
+        if not _wanted(wk["name"], only_week):
+            continue
+        if not only_week and not wk["name"].strip().lower().startswith("week"):
             continue
         for child in drive.list_folders(wk["id"]):
             if child["name"].strip().lower() in POOL_FOLDER_NAMES:

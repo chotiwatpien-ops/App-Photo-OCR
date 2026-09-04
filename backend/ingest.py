@@ -183,6 +183,8 @@ def discover(drive, inbox_id):
         if top["id"] == (_cfg.DRIVE_EXPORTS_FOLDER_ID or ""):
             continue  # the Exports folder lives inside the Inbox — never read our own outputs
         top_name = clean_name(top["name"])
+        if config.week_ignored(top_name):
+            continue                     # a sandbox week (config.IGNORE_WEEKS) — not production data
         rng = parse_range(top_name) if top_name.lower().startswith("week") else None
         if rng:  # production: Week D-D Mon / <category> / <Admin X> / <rider>
             d1, d2 = rng
