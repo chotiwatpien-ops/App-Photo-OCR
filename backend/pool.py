@@ -473,7 +473,9 @@ def round_step(drive, inbox_id, run_id=None, dry_run=False, log=log):
         if not albums:
             log("กอง: ว่าง")
             return None
-        return run_pool(drive, albums, move=not dry_run, preview=dry_run, use_db=not dry_run,
+        # a dry run touches nothing: no move, no preview upload (346 stitched files is minutes of
+        # Drive calls), no database row — the report goes to the log
+        return run_pool(drive, albums, move=not dry_run, preview=False, use_db=not dry_run,
                         run_id=run_id, log=log)
     except Exception as e:  # noqa: BLE001
         log(f"⚠ ขั้นจัดกองล้มเหลว (ข้ามไป รอบยังทำงานต่อ): {str(e)[:200]}")
