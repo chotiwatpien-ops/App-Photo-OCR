@@ -820,6 +820,9 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--exports-only", action="store_true", help="regenerate Excel + customer images for existing jobs")
+    ap.add_argument("--xlsx-only", action="store_true",
+                    help="rewrite Rider Trips.xlsx from the database only — no pictures, no reading. "
+                         "For a column-rule change: the workbook holds every week, so one pass fixes all")
     ap.add_argument("--exports-jobs", metavar="IDS",
                     help="regenerate customer images for these job ids only (comma-separated)")
     ap.add_argument("--fix-hidden-turbo", action="store_true",
@@ -884,7 +887,10 @@ def main():
         for jid in only - set(failed):
             db.resolve_issue(f"images:{jid}")
         sys.exit(1 if errors else 0)
-    if a.exports_only:
+    if a.xlsx_only:
+        # only_job_ids=set() matches no job, so the picture sweep is skipped entirely
+        errors, _ = export_only(drive, exports, only_job_ids=set(), with_xlsx=True)
+    elif a.exports_only:
         errors, _ = export_only(drive, exports)
     else:
         errors = run(drive, inbox, exports, dry_run=a.dry_run, limit=a.limit, only=a.only)

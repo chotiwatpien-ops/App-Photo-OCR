@@ -20,6 +20,10 @@ on:
         description: "Regenerate Excel + customer images only (no Gemini cost)"
         type: boolean
         default: false
+      xlsx_only:
+        description: "เขียน Rider Trips.xlsx ใหม่อย่างเดียว (ไม่สร้างรูป ไม่อ่าน AI) — ใช้เมื่อแก้กฎคอลัมน์"
+        type: boolean
+        default: false
       exports_jobs:
         description: "สร้างรูปส่งลูกค้าใหม่เฉพาะ job id (คั่นด้วยจุลภาค) — ไม่เสียค่า AI"
         type: string
@@ -109,6 +113,7 @@ jobs:
           if [ "${{ github.event_name }}" = "schedule" ]; then ARGS="$ARGS --min-gap 3.5"; fi
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
           if [ "${{ github.event.inputs.exports_only }}" = "true" ]; then ARGS="$ARGS --exports-only"; fi
+          if [ "${{ github.event.inputs.xlsx_only }}" = "true" ]; then ARGS="$ARGS --xlsx-only"; fi
           if [ -n "${{ github.event.inputs.exports_jobs }}" ]; then ARGS="$ARGS --exports-jobs ${{ github.event.inputs.exports_jobs }}"; fi
           if [ -n "${{ github.event.inputs.redo_model }}" ]; then ARGS="$ARGS --redo-model ${{ github.event.inputs.redo_model }}"; fi
           if [ -n "${{ github.event.inputs.delete_jobs }}" ]; then ARGS="$ARGS --delete-jobs ${{ github.event.inputs.delete_jobs }}"; fi
