@@ -115,6 +115,16 @@ drive_files = Table(
 )
 
 # batches handed to Gemini and not yet collected — a round submits, the next one picks up
+# small key/value scratchpad for the round itself: what the workbook was last written from,
+# where the Drive probe last looked. Both answer "has anything changed since?", which is the
+# only question that keeps a quiet round from doing a busy round's work.
+app_state = Table(
+    "app_state", meta,
+    Column("key", String(48), primary_key=True),
+    Column("value", Text),
+    Column("updated_at", String(19), nullable=False),
+)
+
 batch_jobs = Table(
     "batch_jobs", meta,
     Column("name", String(200), primary_key=True),   # "batches/xxxx" from the API
@@ -1127,6 +1137,29 @@ def search_trips(date_from=None, date_to=None, driver=None, status="all", q=None
         rows = c.execute(base.order_by(trips.c.trip_date.desc(), trips.c.trip_time.desc(), trips.c.id.desc())
                          .limit(limit).offset(offset)).mappings().all()
         return [dict(r) for r in rows], total
+
+
+def state_get(key, default=None):
+    with engine.begin() as c:
+        r = c.execute(select(app_state.c.value).where(app_state.c.key == key)).first()
+        return r[0] if r else default
+
+
+def state_set(key, value):
+    with engine.begin() as c:
+        vals = {"value": None if value is None else str(value), "updated_at": _now()}
+        n = c.execute(app_state.update().where(app_state.c.key == key).values(**vals)).rowcount
+        if not n:
+            c.execute(app_state.insert().values(key=key, **vals))
+
+
+def committed_fingerprint() -> str:
+    """One cheap line that changes whenever the workbook would come out different: a row added,
+    a row approved, or a figure edited. Three numbers instead of 13,000 rows."""
+    with engine.begin() as c:
+        r = c.execute(select(func.count(), func.max(trips.c.id), func.sum(trips.c.net_earnings))
+                      .where(trips.c.committed == 1)).first()
+    return f"{r[0] or 0}|{r[1] or 0}|{round(float(r[2] or 0), 2)}"
 
 
 def review_queue():

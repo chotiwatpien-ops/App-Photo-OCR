@@ -144,6 +144,21 @@ class DriveClient:
                                     fields="id", supportsAllDrives=True).execute()
         self._retry(_mv)
 
+    def images_modified_since(self, since_rfc3339, limit=100):
+        """Every image this token can see that was touched after a moment, newest first.
+
+        Walking the Inbox tree costs 600-odd list calls and five minutes, and four rounds out of
+        four lately found nothing to do. This is the same question in ONE call. It searches the
+        whole Drive rather than a subtree — Drive cannot filter by ancestor — so it answers with
+        more than the Inbox; the caller checks the ids it gets back against what it has already
+        ingested, which is exact. Returning a full page means 'too many to judge'."""
+        def _q():
+            return self.svc.files().list(
+                q=f"mimeType contains 'image/' and trashed=false and modifiedTime > '{since_rfc3339}'",
+                fields="files(id, name)", pageSize=limit, orderBy="modifiedTime desc",
+                supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
+        return [{"id": r["id"], "name": r.get("name")} for r in self._retry(_q).get("files", [])]
+
 
 class LocalDrive:
     """Same interface over a local directory tree — for testing ingest without Google."""
