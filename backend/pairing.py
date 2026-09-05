@@ -88,18 +88,30 @@ def _amount_from_block(im, mask, y0, y1):
     scale = max(2, int(140 / max(1, h)))
 
     def read(c):
+        """(digits, was the ฿ recognised as a symbol?) — the second half decides whether the
+        first digit is real. '฿43' comes back as 'B43': the currency mark was read AS a mark, so
+        every digit after it belongs to the fare. Only when it is read as a digit ('494' for ฿94)
+        is there a leading digit to remove."""
         txt = _read_text(c.resize((c.width * scale, c.height * scale), Image.LANCZOS))
-        nums = re.findall(r'(?<![\d.])(\d{1,4}(?:\.\d{1,2})?)(?![\d])', txt)
-        return nums[-1] if nums else None
+        m = None
+        for m in re.finditer(r'(?<![\d.])(\d{1,4}(?:\.\d{1,2})?)(?![\d])', txt):
+            pass
+        if not m:
+            return None, False
+        before = txt[:m.start()].rstrip()
+        return m.group(1), before.endswith(("฿", "B", "b"))
 
-    d1 = read(crop)
+    d1, marked = read(crop)
     gap = max(2, h // 8)
     breaks = np.where(np.diff(cols) > gap)[0]
-    if len(breaks):
+    if len(breaks) and not marked:
+        # Only worth a second look when the ฿ did NOT come through as a symbol. It cost 3 trips
+        # in one album to learn the difference: '฿43' read as 'B43' had its 4 taken away as if
+        # the 4 were the currency mark, leaving ฿3 — and 43 was the fare.
         first_end = cols[breaks[0]]                            # last column of the leftmost glyph
         crop2 = crop.copy()
         crop2.paste((255, 255, 255), (0, 0, first_end - x0 + gap, crop2.height))
-        d2 = read(crop2)
+        d2, _ = read(crop2)
         if d2 and d1 and len(d1) == len(d2) + 1 and d1.endswith(d2) and d1[0] in "48B":
             return float(d2), []                              # the '฿' had been read as a 4/8
         if d2 and not d1:
@@ -276,6 +288,13 @@ def match_tier(top, bottom):
     cards = _fee_card(bottom.get("seq") or [])
     card_figs = {x for card in cards for x in card}
     greens = [g for g in [bottom.get("amount")] + list(bottom.get("alts") or []) if g is not None]
+    # A green figure the rest of its own page never repeats is a misreading, not evidence. The
+    # round income is printed again inside the fare cards, so a real one always turns up in the
+    # numbers; '฿72' read as 372 on a page whose largest number is 72 does not. Letting it stand
+    # as the strongest evidence blocked a pair its own page could confirm — and because the
+    # strongest kind decides alone, nothing weaker was ever consulted behind it.
+    if nums and greens:
+        greens = [g for g in greens if any(abs(g - n) <= 1 for n in nums)]
     best = None
     if greens:                                                   # A
         for net in nets:
@@ -374,11 +393,40 @@ def _natural(name):
 
 
 def album_of(name):
-    return re.sub(r'^LINE_ALBUM_|_\d{6}_\d+\.\w+$', '', name)
+    """Which album a picture belongs to. Files now arrive as 'album/photo.jpg' when a training
+    set is dropped in as whole album folders, and the folder is the better answer — a name built
+    from the full path put a separator in every output file name and the writes all failed."""
+    head, _, tail = name.replace("\\", "/").rpartition("/")
+    return head or re.sub(r'^LINE_ALBUM_|_\d{6}_\d+\.\w+$', '', tail)
+
+
+PAIRED_DIR = "1 จับคู่ได้"
+LEFT_DIR = "2 จับคู่ไม่ได้"
+
+
+def why_left(i):
+    """Why this half is still on its own, in the words the pool report uses."""
+    if i["role"] == "top" and i["amount"] is None:
+        return "อ่านยอดไม่ออก"
+    return "ไม่มีคู่ที่ยอดตรง"
+
+
+def _images_under(src):
+    """Every picture in the folder and in one level of album folders below it, as paths
+    relative to src. A training set arrives as whole LINE albums, not loose files."""
+    out = []
+    for f in sorted(os.listdir(src), key=_natural):
+        p = os.path.join(src, f)
+        if os.path.isdir(p):
+            out += [os.path.join(f, g) for g in sorted(os.listdir(p), key=_natural)
+                    if g.lower().endswith((".jpg", ".jpeg", ".png"))]
+        elif f.lower().endswith((".jpg", ".jpeg", ".png")):
+            out.append(f)
+    return out
 
 
 def run_folder(src, out=None, log=print):
-    files = sorted((f for f in os.listdir(src) if f.lower().endswith((".jpg", ".jpeg", ".png"))), key=_natural)
+    files = _images_under(src)
     t0 = time.time()
     info = {f: inspect(os.path.join(src, f)) for f in files}
     pairs, leftovers = [], []
@@ -388,11 +436,27 @@ def run_folder(src, out=None, log=print):
         pairs += p
         leftovers += l
     if out:
-        os.makedirs(os.path.join(out, "คู่ที่ต่อแล้ว"), exist_ok=True)
+        # Two folders, because the two piles are read for different reasons: the first to spot a
+        # pair that should never have been made, the second to see what the reader still cannot
+        # do. The leftovers carry their role, what was read off them and why they are here, so
+        # the folder can be judged without opening anything else.
+        import shutil
+        paired, left_dir = os.path.join(out, PAIRED_DIR), os.path.join(out, LEFT_DIR)
+        os.makedirs(paired, exist_ok=True)
+        os.makedirs(left_dir, exist_ok=True)
         for i, (t, b, d) in enumerate(pairs, 1):
             tn, bn = (re.search(r'(\d+)\.\w+$', x).group(1) for x in (t, b))
+            gap = f"_ห่าง{d}" if d > 3 else ""          # a pair from opposite ends of the album
             stitch(os.path.join(src, t), os.path.join(src, b)).save(
-                os.path.join(out, "คู่ที่ต่อแล้ว", f"{i:03d}_{album_of(t)}_฿{info[t]['amount']:g}_{tn}+{bn}.jpg"), quality=88)
+                os.path.join(paired, f"{i:03d}_{album_of(t)}_฿{info[t]['amount']:g}_{tn}+{bn}{gap}.jpg"),
+                quality=88)
+        for i, f in enumerate(sorted(leftovers, key=_natural), 1):
+            n = info[f]
+            amt = f"฿{n['amount']:g}" if n["amount"] is not None else "ไม่มียอด"
+            side = {"top": "บน", "bottom": "ล่าง", "long": "ยาว"}.get(n["role"], n["role"])
+            base = re.search(r'(\d+)\.\w+$', f).group(1)
+            shutil.copy2(os.path.join(src, f),
+                         os.path.join(left_dir, f"{i:03d}_{side}_{amt}_{why_left(n)}_{base}.jpg"))
         with open(os.path.join(out, "pairing.json"), "w", encoding="utf-8") as fh:
             json.dump({"pairs": pairs, "leftovers": leftovers, "long": longs, "info": info}, fh, ensure_ascii=False, indent=1)
     halves = len(files) - len(longs)

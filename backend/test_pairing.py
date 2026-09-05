@@ -78,11 +78,15 @@ if os.path.isdir(sample) and os.environ.get("PAIRING_SAMPLE", "1") == "1":
     except ImportError as e:
         print("(ข้ามการทดสอบกับรูปจริง: ไม่มี rapidocr —", e, ")")
 
-# The Saver slips of 2026-09-05: a paler map whose pick-up pin and 'เส้นทางที่แนะนำ' legend line
-# up into a band wider than it is tall — printed text, as far as the block test can tell — and
-# TALLER than the ฿ figure below it. Choosing the tallest block read the map (฿3352 off one, no
-# number at all off the next) and, since the map sits above the 40% line, filed both halves of
-# every trip as a bottom. 24 of 26 leftovers in that album were this, all of them matchable.
+# The Saver slips of 2026-09-05, which took one album from 87% to 100% and cost three readings
+# to get there. Each of these seven trips failed a different way:
+#   · the map's pick-up pin and 'เส้นทางที่แนะนำ' legend line up into a band wider than it is
+#     tall — printed text, as far as the block test can tell — and TALLER than the ฿ figure
+#     below. Taking the tallest block read the map, and because the map sits above the 40% line
+#     both halves of every trip were filed as bottoms with nothing to pair against.
+#   · '฿43' comes back as 'B43'; the rule that removes a ฿ misread as a digit took the 4 with it.
+#   · '฿72' came back as 372 on a page whose largest number is 72, and that misreading, being
+#     the strongest kind of evidence, was allowed to block a pair its own page could confirm.
 maps = "Phase2/Saver map green"
 if os.path.isdir(maps) and os.environ.get("PAIRING_SAMPLE", "1") == "1":
     try:
@@ -93,9 +97,13 @@ if os.path.isdir(maps) and os.environ.get("PAIRING_SAMPLE", "1") == "1":
         check("ครึ่งบนที่มีแผนที่ ยังถูกอ่านว่าเป็นครึ่งบน",
               all(i["role"] == "top" for i in tops.values()))
         check("ยอดมาจากตัวเลขจริง ไม่ใช่สีเขียวบนแผนที่",
-              sorted(i["amount"] for i in tops.values()) == [30.0, 33.0, 35.0, 38.0])
+              sorted(i["amount"] for i in tops.values()) == [30.0, 33.0, 35.0, 38.0, 43.0, 43.0, 72.0])
+        check("฿43 ไม่ถูกตัดเหลือ ฿3 (OCR อ่าน 'B43' มาถูกแล้ว)",
+              [seen[n]["amount"] for n in (125, 126, 127, 128)] == [43.0] * 4)
         pairs, left = pairing.pair_album(sorted(seen.items()))
-        check("อัลบั้มนี้จับคู่ได้ครบทั้ง 4 คู่", len(pairs) == 4 and left == [])
+        check("อัลบั้มนี้จับคู่ได้ครบทั้ง 7 คู่", len(pairs) == 7 and left == [])
+        check("ทุกคู่เป็นรูปที่อยู่ติดกัน ไม่ใช่จับข้ามอัลบั้ม",
+              all(d == 1 for _, _, d in pairs))
     except ImportError as e:
         print("(ข้ามการทดสอบแผนที่เขียว: ไม่มี rapidocr —", e, ")")
 
