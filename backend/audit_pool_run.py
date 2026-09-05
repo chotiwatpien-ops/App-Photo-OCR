@@ -24,6 +24,13 @@ import db
 FAR = 6                    # halves further apart than this were never sent as a pair by a rider
 
 
+def when(s):
+    """pool_runs writes '2026-09-06 00:38:06' and jobs write the ISO '…T00:38:06'. Compared
+    as text the T sorts after the space, so every job of the morning looked later than a run
+    that started after it. One shape, then compare."""
+    return (s or "").replace("T", " ")
+
+
 def pairs_of(run):
     """[(file name, distance between the two halves, where it was filed)] for one pool run."""
     report = json.loads(run["report"] or "{}")
@@ -65,14 +72,24 @@ def main(argv=None):
     print(f"  ในนั้นครึ่งบน/ครึ่งล่างห่างกันเกิน {FAR} ใบ: {len(far)} ไฟล์  ← น่าสงสัยว่าจับผิดคู่")
 
     # --- the rows those files became -----------------------------------------------------------
+    # The stitched name is '<album>_<top>+<bottom>_฿<amount>', so two runs over the same album
+    # produce the SAME name whenever they pair the same positions for the same fare — which a
+    # re-upload does constantly, and the name alone then picks up both runs' rows. The job's
+    # creation time separates them: a row belongs to this run only if its job was opened before
+    # the next run started.
     by_name = {p["file"]: p for p in mine}
+    nxt = [when(r["started_at"]) for r in runs.values() if when(r["started_at"]) > when(runs[a.run]["started_at"])]
+    cutoff = min(nxt) if nxt else None
     from sqlalchemy import select
     with db.engine.begin() as c:
-        rows = [dict(r) for r in c.execute(
-            select(db.trips, db.jobs.c.driver_name, db.jobs.c.category)
+        every = [dict(r) for r in c.execute(
+            select(db.trips, db.jobs.c.driver_name, db.jobs.c.category, db.jobs.c.created_at)
             .select_from(db.trips.join(db.jobs, db.trips.c.job_id == db.jobs.c.id))
             .where(db.trips.c.file_name.in_(list(by_name)))).mappings().all()]
+    rows = [r for r in every if cutoff is None or when(r.get("created_at")) < cutoff]
     print(f"\nกลายเป็นแถวในฐานข้อมูล {len(rows)} แถว")
+    if cutoff:
+        print(f"  (ชื่อไฟล์ชนกับรอบหลัง {len(every) - len(rows)} แถว — คัดออกด้วยเวลาเปิด job ก่อน {cutoff})")
     if len(rows) < len(mine):
         print(f"  (อีก {len(mine) - len(rows)} ไฟล์ยังไม่ได้อ่าน หรืออ่านแล้วแต่ชื่อไม่ตรง)")
 
@@ -86,7 +103,12 @@ def main(argv=None):
     far_names = {p["file"] for p in far}
     far_rows = [r for r in rows if r["file_name"] in far_names]
     bad = [r for r in far_rows if r.get("check_status") == "fail"]
-    print(f"\nแถวที่มาจากคู่ห่างเกิน {FAR} ใบ: {len(far_rows)} แถว · ในนั้นเลขขัดกัน {len(bad)} แถว")
+    quiet = [r for r in far_rows if r.get("check_status") != "fail"]
+    sent = [r for r in quiet if r.get("committed")]
+    print(f"\nแถวที่มาจากคู่ห่างเกิน {FAR} ใบ: {len(far_rows)} แถว")
+    print(f"  เลขขัดกัน (คิวตรวจจับได้): {len(bad)} แถว")
+    print(f"  ผ่านการตรวจเลข: {len(quiet)} แถว  ← ไม่มีอะไรเตือน แต่เป็นสองเที่ยวคนละเที่ยว")
+    print(f"    ในนั้นลงไฟล์ส่งงานไปแล้ว: {len(sent)} แถว")
     print(f"แถวที่มาจากคู่ติดกัน: {len(rows) - len(far_rows)} แถว")
 
     # --- what a later run has already redone ---------------------------------------------------
@@ -99,14 +121,16 @@ def main(argv=None):
         codes = {r["booking_code"] for r in rows if r.get("booking_code")}
         from sqlalchemy import select
         with db.engine.begin() as c:
-            later = [dict(r) for r in c.execute(
-                select(db.trips.c.id, db.trips.c.file_name, db.trips.c.booking_code)
+            after = [dict(r) for r in c.execute(
+                select(db.trips.c.booking_code, db.jobs.c.created_at)
+                .select_from(db.trips.join(db.jobs, db.trips.c.job_id == db.jobs.c.id))
                 .where(db.trips.c.file_name.in_([p["file"] for p in theirs]))).mappings().all()]
-        later_codes = {r["booking_code"] for r in later if r.get("booking_code")}
+        start = when(runs[a.against]["started_at"])
+        later_codes = {r["booking_code"] for r in after
+                       if r.get("booking_code") and when(r.get("created_at")) >= start}
         both = codes & later_codes
-        print(f"  รหัสการจองที่รอบ #{a.against} อ่านได้ซ้ำกับรอบ #{a.run}: {len(both)} เที่ยว")
-        print(f"  รหัสที่มีเฉพาะรอบ #{a.run}: {len(codes - later_codes)} เที่ยว  "
-              f"← ส่วนใหญ่คือคู่ที่จับผิด รหัสจึงไม่ตรงกับใคร")
+        print(f"  รหัสการจองที่รอบ #{a.against} อ่านได้ซ้ำกับรอบ #{a.run}: {len(both)} เที่ยว ← เที่ยวเดียวกันมีสองแถว")
+        print(f"  รหัสที่มีเฉพาะรอบ #{a.run}: {len(codes - later_codes)} เที่ยว")
 
     if a.list:
         print(f"\n--- ไฟล์ที่ครึ่งบน/ครึ่งล่างห่างกันเกิน {FAR} ใบ ---")
