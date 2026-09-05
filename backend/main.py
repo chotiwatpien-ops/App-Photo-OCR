@@ -700,9 +700,16 @@ def diag_summary():
 
 
 @app.get("/api/review-queue/discarded")
-def discarded(limit: int = 200):
-    """Rows the system dropped by itself as already-counted repeats — kept visible, and undoable."""
-    return db.discarded_duplicates(limit)
+def discarded(limit: int = 200, everything: bool = False):
+    """Rows the system dropped by itself as already-counted repeats — kept visible, and undoable.
+    Shows what has arrived since the log was last cleared; `everything` brings back the rest."""
+    return db.discarded_duplicates(limit, everything=everything)
+
+
+@app.post("/api/review-queue/discarded/clear")
+def clear_discarded():
+    """Hide what is in the log today and count again from here. Nothing is deleted."""
+    return {"hidden": db.clear_discarded_log()}
 
 
 @app.post("/api/trips/{trip_id}/restore")

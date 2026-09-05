@@ -133,9 +133,17 @@ function Field({ label, value, onSave, type = 'number', hint, need }) {
 
 function DiscardedLog() {
   const [rows, setRows] = useState(null)
+  const [hidden, setHidden] = useState(0)
+  const [everything, setEverything] = useState(false)
   const [open, setOpen] = useState(false)
   const [msg, setMsg] = useState('')
-  useEffect(() => { api.discarded().then(setRows).catch((e) => setMsg(e.message)) }, [])
+
+  const load = useCallback((all = false) => {
+    api.discarded(all)
+      .then((r) => { setRows(r.rows); setHidden(r.hidden); setEverything(all) })
+      .catch((e) => setMsg(e.message))
+  }, [])
+  useEffect(() => { load(false) }, [load])
 
   const restore = async (t) => {
     if (!confirm(`เอา ${t.file_name} กลับเข้าคิวตรวจ?`)) return
@@ -146,15 +154,48 @@ function DiscardedLog() {
     } catch (e) { setMsg(e.message) }
   }
 
-  if (!rows || rows.length === 0) return null
+  // hides, never deletes: the rows keep their note, their picture and their restore button
+  const clear = async () => {
+    if (!confirm(`ซ่อนรายการเก่า ${rows.length} รายการ แล้วเริ่มนับใหม่?\nไม่ได้ลบ — กด "ดูของเก่า" กลับมาดูได้ทุกเมื่อ`)) return
+    try {
+      const r = await api.clearDiscarded()
+      setMsg(`ซ่อนไว้ ${r.hidden} รายการ — จากนี้จะนับเฉพาะของใหม่`)
+      load(false)
+    } catch (e) { setMsg(e.message) }
+  }
+
+  if (!rows || (rows.length === 0 && !hidden)) return null
   return (
     <section className="bg-white rounded-xl border border-slate-200">
-      <button onClick={() => setOpen(!open)} className="w-full text-left px-5 py-3 text-sm">
-        <span className="text-slate-400">{open ? '▾' : '▸'}</span>
-        <span className="ml-2 text-slate-600">รูปซ้ำที่ระบบทิ้งเอง</span>
-        <span className="ml-2 font-semibold">{rows.length}</span>
-        <span className="ml-2 text-slate-400 text-xs">— งานเดิมถูกนับไปแล้ว ไม่ต้องทำอะไร กดดูได้ถ้าอยากตรวจ</span>
-      </button>
+      <div className="flex items-center justify-between gap-3 px-5 py-3">
+        <button onClick={() => setOpen(!open)} className="text-left text-sm flex-1 min-w-0">
+          <span className="text-slate-400">{open ? '▾' : '▸'}</span>
+          <span className="ml-2 text-slate-600">รูปซ้ำที่ระบบทิ้งเอง</span>
+          <span className="ml-2 font-semibold">{rows.length}</span>
+          <span className="ml-2 text-slate-400 text-xs">
+            {rows.length === 0
+              ? '— ยังไม่มีของใหม่'
+              : '— งานเดิมถูกนับไปแล้ว ไม่ต้องทำอะไร กดดูได้ถ้าอยากตรวจ'}
+          </span>
+        </button>
+        <div className="flex items-center gap-3 text-xs shrink-0">
+          {hidden > 0 && !everything && (
+            <button onClick={() => { load(true); setOpen(true) }} className="text-blue-600 hover:underline">
+              ดูของเก่าอีก {hidden}
+            </button>
+          )}
+          {everything && (
+            <button onClick={() => load(false)} className="text-blue-600 hover:underline">
+              ดูเฉพาะของใหม่
+            </button>
+          )}
+          {rows.length > 0 && !everything && (
+            <button onClick={clear} className="text-slate-400 hover:text-slate-700">
+              เคลียร์ เริ่มนับใหม่
+            </button>
+          )}
+        </div>
+      </div>
       {open && (
         <div className="px-5 pb-4">
           {msg && <p className="text-sm text-slate-600 mb-2">{msg}</p>}

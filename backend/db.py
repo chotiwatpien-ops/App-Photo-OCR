@@ -506,14 +506,40 @@ def discard_settled_duplicates(job_id) -> int:
         return n
 
 
-def discarded_duplicates(limit=200):
-    """The auto-discard log — newest first, for the panel on the review queue."""
+DISCARD_SEEN_KEY = "discarded_seen_id"
+
+
+def discarded_duplicates(limit=200, everything=False):
+    """The auto-discard log — newest first, for the panel on the review queue.
+
+    Only what has piled up since the log was last cleared. Ops 2026-09-05: the 145 rows sitting
+    there were three weeks of settled repeats nobody was going to look at again, and a counter
+    that only ever grows stops being read. Clearing hides, never deletes — everything=True still
+    shows the lot, and the rows keep their note, their image and their restore button."""
     q = (select(*TRIP_COLS, jobs.c.driver_name)
          .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
-         .where(trips.c.status == "duplicate")
-         .order_by(trips.c.id.desc()).limit(limit))
+         .where(trips.c.status == "duplicate"))
+    if not everything:
+        seen = state_get(DISCARD_SEEN_KEY)
+        if seen:
+            q = q.where(trips.c.id > int(seen))
     with engine.begin() as c:
-        return [dict(r) for r in c.execute(q).mappings().all()]
+        rows = [dict(r) for r in c.execute(q.order_by(trips.c.id.desc()).limit(limit)).mappings().all()]
+        hidden = c.execute(select(func.count()).select_from(trips)
+                           .where(trips.c.status == "duplicate")).scalar() or 0
+    return {"rows": rows, "hidden": max(0, hidden - len(rows)) if not everything else 0}
+
+
+def clear_discarded_log() -> int:
+    """Start the count again from here. Returns how many rows this hides."""
+    with engine.begin() as c:
+        top = c.execute(select(func.max(trips.c.id))
+                        .where(trips.c.status == "duplicate")).scalar()
+        n = c.execute(select(func.count()).select_from(trips)
+                      .where(trips.c.status == "duplicate")).scalar() or 0
+    if top:
+        state_set(DISCARD_SEEN_KEY, top)
+    return n
 
 
 def restore_discarded(trip_id) -> bool:

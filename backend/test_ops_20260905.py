@@ -95,7 +95,7 @@ db.auto_approve_job(g)
 check("ไม่มี booking code: ยังอนุมัติได้ตามปกติ", db.get_trip(t8)["committed"] == 1)
 
 check("ใบที่ถูกทิ้งโผล่ในบันทึกให้กู้คืนได้",
-      any(x["id"] == t2 for x in db.discarded_duplicates()))
+      any(x["id"] == t2 for x in db.discarded_duplicates()["rows"]))
 db.restore_discarded(t2)
 check("กู้กลับเข้าคิวได้", db.get_trip(t2)["status"] == "done")
 
@@ -158,6 +158,26 @@ check("ไม่มีที่อยู่: Phase 2 ถอยไปใช้โ
       openpyxl.load_workbook(io.BytesIO(excel_writer.build_location_workbook(
           [row("2026-09-07", pu=None, do=None)]))
       )[excel_writer.LOCATION_SHEET].cell(2, 6).value == "Downtown")
+
+# --- เคลียร์บันทึกรูปซ้ำ (Ops: ของเก่า ignore ไป เริ่มนับใหม่) --------------------------------
+before = db.discarded_duplicates()
+n_before = len(before["rows"])
+check("บันทึกรูปซ้ำมีของอยู่ก่อนเคลียร์", n_before > 0 and before["hidden"] == 0)
+
+n = db.clear_discarded_log()
+after = db.discarded_duplicates()
+check("เคลียร์แล้วนับใหม่จากศูนย์", after["rows"] == [])
+check("บอกจำนวนที่ซ่อนไว้", after["hidden"] == n_before and n == n_before)
+check("ไม่ได้ลบ — ขอดูทั้งหมดยังเห็นครบ",
+      len(db.discarded_duplicates(everything=True)["rows"]) == n_before)
+
+# ของใหม่ที่ถูกทิ้งหลังเคลียร์ ต้องโผล่ขึ้นมาเอง
+h = db.create_job("ธนา", "Trips", *WEEK)
+t9 = trip(h, "A-9AAAAAAAAAAAAAV", name="after-clear.jpg")
+db.auto_approve_job(h)
+fresh = db.discarded_duplicates()
+check("ของใหม่หลังเคลียร์ยังขึ้นตามปกติ", [r["id"] for r in fresh["rows"]] == [t9])
+check("ของเก่ายังนับแยกไว้ ไม่หายไปเฉยๆ", fresh["hidden"] == n_before)
 
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)
