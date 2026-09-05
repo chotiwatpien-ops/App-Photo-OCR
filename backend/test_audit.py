@@ -72,5 +72,46 @@ check("รู้ว่ารอบหลังทำเที่ยวไหน�
 check("รายไฟล์บอกลำดับที่เอามาต่อกัน", "(8 กับ 29)" in out)
 check("ไม่แก้อะไรในฐานข้อมูล", db.trips_count() == 3 if hasattr(db, "trips_count") else True)
 
+# --- เอาแถวจากคู่ผิดออก (ไม่ลบ) --------------------------------------------------------------
+import void_pool_pairs as void                                  # noqa: E402
+from sqlalchemy import select as _sel                           # noqa: E402
+
+r = audit.resolve(1)
+check("resolve เห็นแถวของรอบนี้ 2 แถว", len(r["rows"]) == 2)
+check("แยกแถวที่มาจากคู่ห่างผิดปกติได้ 1 แถว", len(r["far_rows"]) == 1)
+check("ติดระยะห่างมากับแถวด้วย", r["far_rows"][0]["distance"] == 21)
+check("อ่าน id ของไฟล์บน Drive จากลิงก์",
+      void.drive_id("https://drive.google.com/file/d/1AbC_dEf/view?usp=sharing") == "1AbC_dEf")
+
+buf2 = io.StringIO()
+with redirect_stdout(buf2):
+    rc2 = void.main(["--run", "1"])
+check("รายงานอย่างเดียวไม่แตะฐานข้อมูล", rc2 == 0 and "ยังไม่ได้แตะอะไร" in buf2.getvalue())
+
+far_id = r["far_rows"][0]["id"]
+with db.engine.begin() as c:
+    was = c.execute(_sel(db.trips.c.status, db.trips.c.committed)
+                    .where(db.trips.c.id == far_id)).mappings().one()
+check("ก่อนสั่งจริง แถวยังเป็น done และยังลงไฟล์อยู่", (was["status"], was["committed"]) == ("done", 1))
+
+with redirect_stdout(io.StringIO()):
+    void.main(["--run", "1", "--apply", "--keep-images"])
+with db.engine.begin() as c:
+    now = c.execute(_sel(db.trips.c.status, db.trips.c.committed, db.trips.c.note)
+                    .where(db.trips.c.id == far_id)).mappings().one()
+    kept = c.execute(_sel(db.trips.c.status)
+                     .where(db.trips.c.file_name == "X_3+2_฿24.jpg",
+                            db.trips.c.job_id == j7)).mappings().one()
+check("แถวคู่ผิดถูกพักแล้ว ออกจากไฟล์ส่งงาน", (now["status"], now["committed"]) == ("voided", 0))
+check("บันทึกเหตุผลไว้ในโน้ต", "คู่ผิดจาก pool run #1" in (now["note"] or ""))
+check("ไม่ไปแตะแถวที่จับคู่ติดกัน", kept["status"] == "done")
+check("แถวที่พักไว้หลุดจากไฟล์ส่งงานจริง",
+      all(t["file_name"] != "X_8+29_฿56.jpg" for t in db.query_trips(committed_only=True)))
+check("กู้คืนได้", db.restore_voided(far_id))
+with db.engine.begin() as c:
+    back = c.execute(_sel(db.trips.c.status).where(db.trips.c.id == far_id)).mappings().one()
+check("กู้แล้วกลับเข้าคิวตรวจ", back["status"] == "done")
+
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

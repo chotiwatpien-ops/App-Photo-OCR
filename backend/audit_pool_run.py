@@ -51,6 +51,35 @@ def digits(name):
     return (int(m.group(1)), int(m.group(2))) if m else None
 
 
+def resolve(run_id, far=FAR):
+    """(run, every pair it filed, the far ones, the rows they became, the far rows).
+
+    Shared with void_pool_pairs.py on purpose: a tool that removes rows must be looking at
+    exactly the same set the report showed, decided by the same rule."""
+    from sqlalchemy import select
+    runs = {r["id"]: r for r in db.recent_pool_runs(50, with_report=True)}
+    if run_id not in runs:
+        return None
+    run = runs[run_id]
+    mine = pairs_of(run)
+    nxt = [when(r["started_at"]) for r in runs.values()
+           if when(r["started_at"]) > when(run["started_at"])]
+    cutoff = min(nxt) if nxt else None
+    with db.engine.begin() as c:
+        every = [dict(r) for r in c.execute(
+            select(db.trips, db.jobs.c.driver_name, db.jobs.c.category, db.jobs.c.created_at)
+            .select_from(db.trips.join(db.jobs, db.trips.c.job_id == db.jobs.c.id))
+            .where(db.trips.c.file_name.in_([p["file"] for p in mine]))).mappings().all()]
+    rows = [r for r in every if cutoff is None or when(r.get("created_at")) < cutoff]
+    far_files = {p["file"] for p in mine if p["distance"] > far}
+    by_file = {p["file"]: p for p in mine}
+    far_rows = [dict(r, distance=by_file[r["file_name"]]["distance"])
+                for r in rows if r["file_name"] in far_files]
+    return {"runs": runs, "run": run, "pairs": mine, "far": [by_file[f] for f in far_files],
+            "rows": rows, "far_rows": far_rows, "cutoff": cutoff, "shared": len(every) - len(rows)}
+
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", type=int, required=True, help="เลข pool run ที่จะตรวจ")

@@ -1,0 +1,54 @@
+name: Void — เอาแถวที่จับคู่ผิดออก (ไม่ลบ)
+
+# Run 7 paired an album Ops had only uploaded a third of, so the matcher glued halves 8 to 52
+# pictures apart — two different trips in one picture. Those rows cannot be corrected by hand:
+# the booking code and date come from one trip and the fare from the other, so editing the
+# numbers would invent a trip. The real ones are already in from the later, complete run.
+#
+# Nothing is deleted. The picture moves to <week>/_ทิ้ง-จับคู่ผิด/ and the row is parked as
+# 'voided' with a note saying why. Report-only unless `apply` is ticked.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run:
+        description: "เลข pool run"
+        type: string
+        required: true
+        default: "7"
+      min_distance:
+        description: "ครึ่งบน/ครึ่งล่างห่างกันกี่ใบขึ้นไปถึงถือว่าผิดคู่"
+        type: string
+        default: "7"
+      apply:
+        description: "ทำจริง (ไม่ติ๊ก = รายงานอย่างเดียว ไม่แตะอะไร)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: void-pairs
+  cancel-in-progress: false
+
+jobs:
+  void:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: Take those rows back
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.DRIVE_OAUTH_TOKEN_JSON }}
+          DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
+          TZ: Asia/Bangkok
+        run: |
+          ARGS="--run ${{ github.event.inputs.run }} --min-distance ${{ github.event.inputs.min_distance }}"
+          if [ "${{ github.event.inputs.apply }}" = "true" ]; then ARGS="$ARGS --apply"; fi
+          python void_pool_pairs.py $ARGS

@@ -555,6 +555,34 @@ def clear_discarded_log() -> int:
     return n
 
 
+def void_trips(ids, why: str) -> int:
+    """Park rows that should never have existed: out of the workbook, out of the queue, kept.
+
+    Not 'duplicate' — a duplicate is one photo of a trip that did happen. These are two halves of
+    two different trips stitched into one picture, so the trip they describe never took place and
+    there is nothing to reconcile or approve. Every view selects status == 'done', so 'voided'
+    disappears from all of them at once; committed=0 takes them out of the delivered file the
+    next time it is written. The row, its note and its image stay for the record — see
+    restore_voided()."""
+    if not ids:
+        return 0
+    with engine.begin() as c:
+        r = c.execute(update(trips).where(trips.c.id.in_(list(ids)))
+                      .values(status="voided", committed=0,
+                              note=func.coalesce(trips.c.note + " | ", "") + why))
+        return r.rowcount
+
+
+def restore_voided(trip_id) -> bool:
+    """Undo one void — back into the queue for a person to look at."""
+    with engine.begin() as c:
+        r = c.execute(update(trips)
+                      .where(trips.c.id == trip_id, trips.c.status == "voided")
+                      .values(status="done",
+                              note=func.coalesce(trips.c.note + " | ", "") + "กู้คืนโดยผู้ใช้"))
+        return r.rowcount > 0
+
+
 def restore_discarded(trip_id) -> bool:
     """Put an auto-discarded row back in the queue — the undo behind the log panel's button."""
     with engine.begin() as c:
