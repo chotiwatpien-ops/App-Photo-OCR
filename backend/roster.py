@@ -236,7 +236,11 @@ def main():
 
     pools = {w: db.name_pool_for(w) for w in ("2W", "4W")}
     if not any(pools.values()):
-        log("✗ ยังไม่มีรายชื่อในฐานข้อมูล — สั่ง --import ก่อน")
+        # the pool lives in the database, and a laptop that cannot reach it imports into its own
+        # SQLite instead — where Actions will never see the names
+        log("✗ ยังไม่มีรายชื่อในฐานข้อมูลนี้")
+        log("  บน GitHub Actions: วางไฟล์ Excel ของ Ops ไว้ใน Inbox บน Drive แล้วติ๊ก import_names")
+        log("  ในเครื่อง: python backend/roster.py --import '<ไฟล์.xlsx>' (ต้องตั้ง DATABASE_URL ให้ชี้ฐานข้อมูลจริง)")
         return 1
     drive = _drive()
     inbox = config.DRIVE_INBOX_FOLDER_ID
