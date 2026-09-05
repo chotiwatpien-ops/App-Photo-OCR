@@ -52,7 +52,16 @@ class FakeDrive:
         return [{"id": v, "name": k} for k, v in self.tree.get(pid, {}).items()]
 
     def list_images(self, pid):
-        return [None] * self.images.get(pid, 0)
+        n = self.images.get(pid, 0)
+        if isinstance(n, list):
+            return n
+        return [None] * n
+
+    def move_file(self, fid, new_parent):
+        for pid, n in list(self.images.items()):
+            if isinstance(n, list):
+                self.images[pid] = [f for f in n if f["id"] != fid]
+        self.images[new_parent] = self.images.get(new_parent, 0) + 1
 
 
 POOL = {("2W", "Win"): ["ก", "ข", "ค"], ("2W", "Home"): ["ง", "จ"],
@@ -107,6 +116,43 @@ d5.images[d5.ensure_folder(cat5, "01-ง Home")] = 0    # empty, but Home
 a5 = distribute.Allocator(d5, "week", POOL, per_rider=3, seed=5)
 got5, _ = a5.folder_for("2 W Saver", "2W", "Win")
 check("งาน Win ไม่ถูกยัดใส่โฟลเดอร์ของคน Home", got5.endswith("Win"))
+
+# --- backfill: งานที่ลอยอยู่ในโฟลเดอร์ประเภทรถอยู่แล้ว ------------------------------------------
+check("อ่านประเภทคนขับจากชื่อไฟล์ที่ต่อแล้ว",
+      distribute.kind_of_file("2W-Home bike 150_1+2_฿86.jpg") == ("2W", "Home"))
+check("ชื่อไฟล์ที่ไม่บอกประเภท ก็ไม่เดา",
+      distribute.kind_of_file("2W-saver wk5_1+2_฿86.jpg") is None)
+
+d6 = FakeDrive()
+cat6 = d6.ensure_folder("week", "2 W Saver")
+d6.images[cat6] = [{"id": f"f{i}", "name": n} for i, n in enumerate(
+    ["2W-Win kan_1+2_฿86.jpg", "2W-Win kan_3+4_฿90.jpg",
+     "2W-Home bike_5+6_฿70.jpg", "LINE_ALBUM_x_7+8_฿60.jpg"])]
+moved, stuck = distribute.backfill(d6, "week", ["2 W Saver"], POOL, per_rider=5, seed=6,
+                                   dry_run=False, log=lambda *a: None)
+check("ย้ายเฉพาะไฟล์ที่อ่านประเภทได้", (moved, len(stuck)) == (3, 1))
+check("ไฟล์ที่อ่านไม่ได้ถูกรายงานไว้ ไม่ถูกย้าย", "LINE_ALBUM_x" in stuck[0][1])
+riders = set(d6.tree["week/2 W Saver"])
+check("Win สองใบไปคนเดียว · Home อีกคน", len(riders) == 2
+      and any(r.endswith("Win") for r in riders) and any(r.endswith("Home") for r in riders))
+check("เหลือแต่ไฟล์ที่อ่านไม่ได้ลอยอยู่", len(d6.images[cat6]) == 1)
+
+# ชื่ออัลบั้มบอกล้อไม่ตรงกับโฟลเดอร์ที่ไฟล์ไปอยู่ — สลิปเป็นคนตัดสินบริการ ฉะนั้นเชื่อโฟลเดอร์
+d7 = FakeDrive()
+cat7 = d7.ensure_folder("week", "2 W Standard")
+d7.images[cat7] = [{"id": "g0", "name": "4W-Home car_1+2_฿86.jpg"}]
+moved7, stuck7 = distribute.backfill(d7, "week", ["2 W Standard"], POOL, per_rider=5, seed=7,
+                                     dry_run=False, log=lambda *a: None)
+check("ล้อไม่ตรงโฟลเดอร์ → เชื่อโฟลเดอร์ แต่เอาประเภทคนขับจากชื่อไฟล์",
+      moved7 == 1 and not stuck7
+      and all(k.endswith("Home") for k in d7.tree["week/2 W Standard"]))
+
+d8 = FakeDrive()
+cat8 = d8.ensure_folder("week", "2 W Saver")
+d8.images[cat8] = [{"id": "h0", "name": "2W-Win kan_1+2_฿86.jpg"}]
+m8, _ = distribute.backfill(d8, "week", ["2 W Saver"], POOL, per_rider=5, seed=8,
+                            dry_run=True, log=lambda *a: None)
+check("รายงานอย่างเดียวไม่ย้ายไฟล์", m8 == 1 and len(d8.images[cat8]) == 1)
 
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

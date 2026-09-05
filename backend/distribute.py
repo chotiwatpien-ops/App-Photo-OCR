@@ -15,8 +15,10 @@ so one name in two folders is one rider to everything downstream. Riders who are
 weekly quota are filled before anyone new is drawn, which keeps a week to the fewest names it can
 be done with and leaves no half-empty folders behind.
 """
+import argparse
 import random
 import re
+import sys
 
 import config
 
@@ -110,3 +112,87 @@ class Allocator:
         self.made += 1
         self.log(f"    + {category}/{folder_label(len(g['riders']), name)}")
         return fid, None
+
+
+# --- one-off: work already sitting loose in a vehicle-group folder -----------------------------
+# Rounds before 2026-09-05 dropped stitched pairs straight into Week/<group>/, where discover()
+# never looks — a rider folder is what it reads. Those files carry the album they came from in
+# their own name ('2W-Home bike 150_1+2_฿86.jpg'), so the driver kind is recoverable and nothing
+# has to be guessed at. Anything whose name does not say is reported and left alone.
+
+def kind_of_file(file_name):
+    return driver_kind((file_name or "").rsplit("_", 2)[0])
+
+
+def backfill(drive, week_id, categories, pool, per_rider=None, seed=None, dry_run=True, log=print):
+    """Move loose images in each category folder into rider folders. Returns (moved, stuck)."""
+    alloc = Allocator(drive, week_id, pool, per_rider=per_rider, seed=seed, log=log)
+    alloc.prime(categories)
+    moved, stuck = 0, []
+    for cat in categories:
+        g = alloc._load(cat)
+        loose = drive.list_images(g["id"])
+        log(f"\n{cat}: ไฟล์ลอย {len(loose)} รูป")
+        for f in sorted(loose, key=lambda x: x["name"]):
+            kind = kind_of_file(f["name"])
+            if kind is None:
+                stuck.append((cat, f["name"]))
+                continue
+            wheel = f'{cat.replace(" ", "")[0]}W'
+            if wheel != kind[0]:
+                # the album says one thing and the folder it landed in says another; the folder
+                # is what the slip decided, so trust it and only take the driver kind from the name
+                kind = (wheel, kind[1])
+            fid, err = alloc.folder_for(cat, *kind)
+            if err:
+                stuck.append((cat, f"{f['name']} — {err}"))
+                continue
+            if not dry_run:
+                drive.move_file(f["id"], fid)
+            moved += 1
+        log(f"  ย้าย {moved} · ค้าง {len(stuck)}")
+    return moved, stuck
+
+
+def main(argv=None):
+    import db
+    import roster                        # its _drive() already knows both credential shapes
+
+    ap = argparse.ArgumentParser(description="ย้ายงานที่ลอยอยู่ในโฟลเดอร์ประเภทรถ เข้าโฟลเดอร์ไรเดอร์")
+    ap.add_argument("--week", required=True, help="ชื่อโฟลเดอร์สัปดาห์ เช่น 'Week 31 Aug-6 Sep'")
+    ap.add_argument("--group", action="append", default=[],
+                    help="กลุ่มรถที่จะจัด (ใส่ซ้ำได้) — ว่าง = ทุกกลุ่มที่มี")
+    ap.add_argument("--per-rider", type=int, default=None)
+    ap.add_argument("--seed", type=int, default=None)
+    ap.add_argument("--move", action="store_true", help="ย้ายจริง (ไม่ใส่ = รายงานอย่างเดียว)")
+    a = ap.parse_args(argv)
+    db.init_db()
+
+    drive = roster._drive()
+    inbox = config.DRIVE_INBOX_FOLDER_ID
+    wk = next((f for f in drive.list_folders(inbox) if f["name"].strip() == a.week.strip()), None)
+    if wk is None:
+        print(f"✗ ไม่พบสัปดาห์ {a.week!r} ใน Inbox")
+        return 1
+    groups = a.group or [f["name"] for f in drive.list_folders(wk["id"])
+                         if f["name"].strip().lower() not in ("pool", "กอง")
+                         and not f["name"].startswith("_")]
+    pool = {k: [n for n, kd in db.name_pool_for(k[0]) if kd == k[1]]
+            for k in (("2W", "Win"), ("2W", "Home"), ("4W", "Taxi"), ("4W", "Home"))}
+    if not any(pool.values()):
+        print("✗ ยังไม่มีรายชื่อในฐานข้อมูล — สั่ง roster.py --import-drive ก่อน")
+        return 1
+    print(f"{'ย้ายจริง' if a.move else 'รายงานอย่างเดียว'} · {a.week} · {len(groups)} กลุ่ม")
+    moved, stuck = backfill(drive, wk["id"], groups, pool, per_rider=a.per_rider,
+                            seed=a.seed, dry_run=not a.move)
+    print(f"\nรวม: ย้าย {moved} · ค้าง {len(stuck)}")
+    for cat, why in stuck[:40]:
+        print(f"  ✗ [{cat}] {why}")
+    if len(stuck) > 40:
+        print(f"  … อีก {len(stuck) - 40} รายการ")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.exit(main())
