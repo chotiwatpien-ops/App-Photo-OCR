@@ -93,5 +93,38 @@ check("ดึงตามล้อได้", db.name_pool_for("2W") == [("ก",
 db.name_pool_load([("ง", "4W", "Taxi")])
 check("โหลดใหม่แทนที่ของเดิม ไม่ต่อท้าย", db.name_pool_for("2W") == [])
 
+# --- สั่งสร้างซ้ำต้องไม่บวกทบ -----------------------------------------------------------------
+class FakeDrive:
+    """Drive จำลองแค่พอให้รู้ว่ามีโฟลเดอร์อะไรอยู่ — การสุ่มไม่ล็อก seed สั่งสองรอบจึงได้คนละชุด"""
+
+    def __init__(self):
+        self.tree = {"inbox": {}}
+
+    def list_folders(self, pid):
+        return [{"id": f"{pid}/{n}", "name": n} for n in self.tree.get(pid, {})]
+
+    def ensure_folder(self, pid, name):
+        fid = f"{pid}/{name}"
+        self.tree.setdefault(pid, {})[name] = fid
+        self.tree.setdefault(fid, {})
+        return fid
+
+
+fd = FakeDrive()
+fd.ensure_folder("inbox", "Week 7-13 Sep")
+p1, _ = roster.plan({"2 W Saver": []}, {"2W": pool(50, "Win")}, per_group=10, keep=0.8, seed=11)
+roster.apply(fd, "inbox", "Week 7-13 Sep", p1, dry_run=False, per_group=10)
+check("สร้างรอบแรกได้ครบ 10", len(fd.tree["inbox/Week 7-13 Sep/2 W Saver"]) == 10)
+p2, _ = roster.plan({"2 W Saver": []}, {"2W": pool(50, "Win")}, per_group=10, keep=0.8, seed=99)
+roster.apply(fd, "inbox", "Week 7-13 Sep", p2, dry_run=False, per_group=10)
+check("สั่งซ้ำด้วยชุดสุ่มใหม่: ไม่บวกทบ ยังคง 10",
+      len(fd.tree["inbox/Week 7-13 Sep/2 W Saver"]) == 10)
+
+fd2 = FakeDrive()
+fd2.ensure_folder("inbox", "W")
+roster.apply(fd2, "inbox", "W", {"2 W Saver": p1["2 W Saver"][:4]}, dry_run=False, per_group=10)
+roster.apply(fd2, "inbox", "W", p1, dry_run=False, per_group=10)
+check("มีอยู่บางส่วน: เติมจนครบ 10 พอดี", len(fd2.tree["inbox/W/2 W Saver"]) == 10)
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

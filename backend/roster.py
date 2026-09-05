@@ -170,7 +170,7 @@ def folder_name(i, name):
     return f"{i:02d}-{name}"
 
 
-def apply(drive, inbox_id, week_name, chosen, dry_run=True):
+def apply(drive, inbox_id, week_name, chosen, dry_run=True, per_group=PER_GROUP):
     made = 0
     wk = next((f for f in drive.list_folders(inbox_id) if f["name"].strip() == week_name.strip()), None)
     if not wk and dry_run:
@@ -186,14 +186,22 @@ def apply(drive, inbox_id, week_name, chosen, dry_run=True):
                 cat = {"id": drive.ensure_folder(wk["id"], group)}
             existing = {bare(f["name"]) for f in drive.list_folders(cat["id"])} if cat else set()
         have = existing or set()
-        todo = [n for n in names if n not in have]
+        # Never grow a group past its size. The draw is random, so a second run picks a different
+        # 70 and, left alone, would add them all on top of the first — 140 riders in a group that
+        # wants 70, with nothing said about it. Whoever is there already keeps their place.
+        room = max(0, per_group - len(have))
+        todo = [n for n in names if n not in have][:room]
         if not dry_run:
-            for i, n in enumerate(names, 1):
-                if n not in have:
-                    drive.ensure_folder(cat["id"], folder_name(i, n))
+            start = len(have)
+            for i, n in enumerate(todo, start + 1):
+                drive.ensure_folder(cat["id"], folder_name(i, n))
         made += len(todo)
-        log(f"  {group}: {'จะสร้าง' if dry_run else 'สร้างแล้ว'} {len(todo)} โฟลเดอร์"
-            + (f" · มีอยู่แล้ว {len(have & set(names))}" if have else ""))
+        note = f"  {group}: {'จะสร้าง' if dry_run else 'สร้างแล้ว'} {len(todo)} โฟลเดอร์"
+        if have:
+            note += f" · มีอยู่แล้ว {len(have)}"
+        if len(have) >= per_group:
+            note += " · ครบแล้ว ไม่ต้องเพิ่ม"
+        log(note)
     return made
 
 
@@ -260,7 +268,7 @@ def main():
     log(f"\nแผนสำหรับ {a.week}:")
     for g in sorted(chosen):
         log(f"  {g}: {notes[g]}")
-    n = apply(drive, inbox, a.week, chosen, dry_run=a.dry_run)
+    n = apply(drive, inbox, a.week, chosen, dry_run=a.dry_run, per_group=a.per_group)
     log(f"\n{'(ทดลอง) จะสร้าง' if a.dry_run else 'สร้าง'} {n} โฟลเดอร์")
     return 0
 
