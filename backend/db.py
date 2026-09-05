@@ -118,6 +118,19 @@ drive_files = Table(
 # small key/value scratchpad for the round itself: what the workbook was last written from,
 # where the Drive probe last looked. Both answer "has anything changed since?", which is the
 # only question that keeps a quiet round from doing a busy round's work.
+# The names Ops hands out to riders — pseudonyms, rotated week to week. Kept in the database
+# rather than a file in the repo: they are not the riders' own names, but they are Ops' list and
+# the repo may go public. 'kind' is the label that goes into the folder and the workbook after
+# the name (Win, Home, Taxi), 'wheel' says which groups may draw from it.
+name_pool = Table(
+    "name_pool", meta,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("name", Text, nullable=False),
+    Column("wheel", String(4), nullable=False),        # 2W | 4W
+    Column("kind", String(8), nullable=False),         # Win | Home | Taxi
+    Column("added_at", String(19), nullable=False),
+)
+
 app_state = Table(
     "app_state", meta,
     Column("key", String(48), primary_key=True),
@@ -1191,6 +1204,25 @@ def search_trips(date_from=None, date_to=None, driver=None, status="all", q=None
         rows = c.execute(base.order_by(trips.c.trip_date.desc(), trips.c.trip_time.desc(), trips.c.id.desc())
                          .limit(limit).offset(offset)).mappings().all()
         return [dict(r) for r in rows], total
+
+
+def name_pool_load(rows) -> int:
+    """Replace the pool with `rows` of (name, wheel, kind). Returns how many went in."""
+    with engine.begin() as c:
+        c.execute(name_pool.delete())
+        now = _now()
+        c.execute(name_pool.insert(), [{"name": n.strip(), "wheel": w, "kind": k, "added_at": now}
+                                       for n, w, k in rows if n and n.strip()])
+        return c.execute(select(func.count()).select_from(name_pool)).scalar() or 0
+
+
+def name_pool_for(wheel):
+    """[(display name, kind)] for one wheel count, ordered so a run is repeatable."""
+    with engine.begin() as c:
+        rows = c.execute(select(name_pool.c.name, name_pool.c.kind)
+                         .where(name_pool.c.wheel == wheel)
+                         .order_by(name_pool.c.name, name_pool.c.kind)).all()
+    return [(r[0], r[1]) for r in rows]
 
 
 def state_get(key, default=None):
