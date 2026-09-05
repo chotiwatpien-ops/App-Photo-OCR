@@ -66,6 +66,16 @@ def _green_blocks(a):
     return mask, [(y0, y1) for y0, y1 in blocks if blue[y0:y1 + 1].sum() < 40]
 
 
+def _try_amount(im, mask, y0, y1):
+    """_amount_from_block that never raises. Every green block on the screen is read now, not
+    just the chosen one, and a decoration can crop to a shape the OCR refuses to resize —
+    which killed a whole run before this existed. An unreadable block simply has no amount."""
+    try:
+        return _amount_from_block(im, mask, y0, y1)
+    except Exception:  # noqa: BLE001 — a block we cannot read is a block with no number in it
+        return None, []
+
+
 def _amount_from_block(im, mask, y0, y1):
     """The figure printed in a green block → (best guess, [other plausible readings]).
     The '฿' glyph is sometimes read as a digit glued to the number (฿94 → '494', ฿99 → '899').
@@ -140,8 +150,17 @@ def inspect(source):
     if im.width / im.height < 0.36:
         info["role"] = "long"
     elif big:
-        y0, y1 = max(big, key=lambda t: t[1] - t[0])
-        info["amount"], info["alts"] = _amount_from_block(im, mask, y0, y1)
+        # The map carries green of its own — the pick-up pin and the 'เส้นทางที่แนะนำ' legend sit
+        # on one row, wide enough to pass for printed text and often TALLER than the ฿ figure
+        # underneath. Taking the tallest block therefore picked the map on a whole album of Saver
+        # slips: 24 of 26 leftovers read a decoration instead of the fare (฿3352 off one, nothing
+        # off the next) and, because the map sits above the 40% line, every one of them was filed
+        # as a bottom half with no top to pair with. The fare is the LOWEST green block that reads
+        # as money; the map never does. Tallest stays the fallback when none of them read.
+        read = {t: _try_amount(im, mask, *t) for t in big}
+        priced = [t for t in big if (read[t][0] or 0) >= MIN_AMOUNT]
+        y0, y1 = max(priced, key=lambda t: t[1]) if priced else max(big, key=lambda t: t[1] - t[0])
+        info["amount"], info["alts"] = read[(y0, y1)]
         if (y0 + y1) / 2 > im.height * 0.4:
             info["role"] = "top"                             # route + map above, amount below
         else:
