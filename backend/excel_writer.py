@@ -25,6 +25,20 @@ from zones import zone_for
 
 SHEET = "Sheet1"
 ANALYSIS_SHEET = "Analysis"
+LOCATION_FILE = "Rider Trips Phase 2.xlsx"
+LOCATION_SHEET = "Location"
+# Ops 2026-09-05 asked for the real pick-up and drop-off. Sheet1's own columns hold a zone that
+# said "Downtown" for 84% of rows, but rewriting them would change three weeks already delivered
+# and break whatever the customer pivots on — so the places go in a workbook of their own,
+# 'Phase 2' in the name so nobody confuses it with the file the customer already has.
+# Only from W36, the first week read with the addresses switched back on: W35 was read with the
+# field off for 1,271 of its rows, and half a week of places is worse than none.
+LOCATION_FROM_WEEK = str(getattr(config, "LOCATION_FROM_WEEK", "2026-W36"))
+
+LOCATION_HEADERS = [
+    "Driver Name", "Date", "Time", "Booking Code", "Week", "Pick-up", "Drop-off", "Image",
+]
+LOCATION_WIDTHS = [24, 11, 7, 18, 8, 46, 46, 22]
 
 HEADERS = [
     "Driver Name", "Date & Time", "Time", "Service Type", "Payment Method",
@@ -151,8 +165,8 @@ def _write_main_row(ws, row, driver_name, t):
         time_band(t.get("trip_time")),                          # C  6-hour band (team format)
         t.get("service_type"),                                  # D
         t.get("payment_method"),                                # E
-        place(t.get("pickup_text"), t.get("pickup_district"), t.get("pickup_code")),    # F
-        place(t.get("dropoff_text"), t.get("dropoff_district"), t.get("dropoff_code")),  # G
+        zone_for(t.get("pickup_district"), t.get("pickup_code"), t.get("pickup_text")),    # F
+        zone_for(t.get("dropoff_district"), t.get("dropoff_code"), t.get("dropoff_text")),  # G
         t.get("distance_km"),                                   # H
         t.get("duration_mins"),                                 # I
         f"=K{row}+M{row}+N{row}",                               # J net (template formula)
@@ -179,6 +193,38 @@ def _write_main_row(ws, row, driver_name, t):
         est_font = Font(name=_BODY_FONT.name, size=_BODY_FONT.size, italic=True, color="7F7F7F")
         ws.cell(row=row, column=16).font = est_font
         ws.cell(row=row, column=17).font = est_font
+
+
+def iso_week(trip_date: str) -> str:
+    """'2026-09-07' -> '2026-W36'. Zero-padded so plain string comparison orders weeks."""
+    y, w, _ = datetime.strptime(trip_date, "%Y-%m-%d").isocalendar()
+    return f"{y}-W{w:02d}"
+
+
+def in_location_scope(trip_date: str) -> bool:
+    return bool(trip_date) and iso_week(trip_date) >= LOCATION_FROM_WEEK
+
+
+def _write_location_row(ws, row, driver_name, t):
+    d = datetime.strptime(t["trip_date"], "%Y-%m-%d")
+    values = [
+        driver_name, d, _parse_time(t.get("trip_time")), t.get("booking_code"),
+        iso_week(t["trip_date"]),
+        place(t.get("pickup_text"), t.get("pickup_district"), t.get("pickup_code")),
+        place(t.get("dropoff_text"), t.get("dropoff_district"), t.get("dropoff_code")),
+        t.get("customer_image"),
+    ]
+    for col, v in enumerate(values, start=1):
+        cell = ws.cell(row=row, column=col)
+        cell.value = v
+        cell.font = _BODY_FONT
+        cell.border = _THIN_BORDER
+        if col == 2:
+            cell.number_format = "d-mmm-yy"
+        elif col == 3 and v is not None:
+            cell.number_format = "HH:MM"
+        elif col in (6, 7):
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
 
 
 def _write_analysis_row(ws, row, driver_name, t):
@@ -251,6 +297,28 @@ def build_workbook(rows: list[dict]) -> bytes:
     for i, t in enumerate(rows, start=2):
         _write_main_row(ws, i, t["driver_name"], t)
         _write_analysis_row(wa, i, t["driver_name"], t)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def build_location_workbook(rows: list[dict]) -> bytes | None:
+    """The Phase 2 file: where each trip started and ended, as printed on the slip.
+
+    A separate workbook on purpose — the customer's Rider Trips.xlsx keeps the columns and the
+    zone it has always had. Returns None when no trip is in scope yet, so a file of nothing but
+    headers never lands on Drive."""
+    wanted = [t for t in rows if in_location_scope(t.get("trip_date"))]
+    if not wanted:
+        return None
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = LOCATION_SHEET
+    _style_header(ws, LOCATION_HEADERS, LOCATION_WIDTHS, medium=False)
+    ws.freeze_panes = "A2"
+    for i, t in enumerate(sorted(wanted, key=lambda x: (x.get("trip_date") or "", x["driver_name"])),
+                          start=2):
+        _write_location_row(ws, i, t["driver_name"], t)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

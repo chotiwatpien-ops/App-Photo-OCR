@@ -411,6 +411,9 @@ def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True, force=Fals
         rows = db.query_trips(committed_only=True)
         try:
             fid = drive.upload_xlsx(exports_id, "Rider Trips.xlsx", excel_writer.build_workbook(rows))
+            loc = excel_writer.build_location_workbook(rows)
+            if loc:
+                drive.upload_xlsx(exports_id, excel_writer.LOCATION_FILE, loc)
             for (d_from, _), _js in db.jobs_by_week().items():
                 db.record_drive_file(week_label(d_from), "xlsx", fid, "Rider Trips.xlsx")
             log(f"📄 Rider Trips.xlsx: {len(rows)} แถวรวมทุกสัปดาห์")
@@ -854,6 +857,13 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             for (d_from, _), _js in db.jobs_by_week().items():
                 db.record_drive_file(week_label(d_from), "xlsx", fid, name)
             log(f"📄 {name}: {len(rows)} แถวรวมทุกสัปดาห์")
+            # the Phase 2 file rides along on the same trigger: same rows, same moment, so the
+            # two never disagree about what is approved
+            loc = excel_writer.build_location_workbook(rows)
+            if loc:
+                drive.upload_xlsx(exports_id, excel_writer.LOCATION_FILE, loc)
+                log(f"📄 {excel_writer.LOCATION_FILE}: ต้นทาง-ปลายทางจริง "
+                    f"ตั้งแต่ {excel_writer.LOCATION_FROM_WEEK}")
             db.state_set(XLSX_KEY, stamp)
         except Exception as e:  # noqa: BLE001
             log(f"✗ upload {name}: {e}")
