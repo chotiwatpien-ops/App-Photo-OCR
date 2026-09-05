@@ -38,11 +38,11 @@ COL_WIDTHS = [11.4, 9.7, 12.9, 12.5, 13.5, 12.5, 13.4, 10.5, 12.0, 14.1, 11.9, 1
 ANALYSIS_HEADERS = [
     "Driver Name", "Date", "Time", "Booking Code", "Week", "Pick-up Zone", "Drop-off Zone",
     "Pick-up District", "Drop-off District", "Pick-up Province", "Drop-off Province",
-    "Pick-up Address", "Drop-off Address", "Surge", "Queue Type", "Stops",
+    "Surge", "Queue Type", "Stops",
     "Passenger Paid (THB)", "Passenger Total (THB)", "App Fee (THB)", "Other Adjustments (THB)", "Fare Refund (THB)",
     "Tip (THB)", "Check", "Approved By", "Group", "Admin", "Source File",
 ]
-ANALYSIS_WIDTHS = [24, 11, 7, 16, 6, 12, 12, 14, 14, 9, 9, 36, 36, 6, 11, 6, 12, 12, 10, 12, 12, 8, 8, 11, 14, 12, 22]
+ANALYSIS_WIDTHS = [24, 11, 7, 16, 6, 12, 12, 14, 14, 9, 9, 6, 11, 6, 12, 12, 10, 12, 12, 8, 8, 11, 14, 12, 22]
 
 # --- template styling (copied from the team's file) ---
 _MED = Side(style="medium", color="000000")
@@ -130,6 +130,18 @@ def passenger_fare_estimated(t) -> bool:
             and bool(t.get("base_fare")))
 
 
+def place(address, district, province_code) -> str:
+    """What Sheet1 shows for pick-up and drop-off.
+
+    It used to be the zone, and 10,942 of 13,077 rows came out "Downtown" — the fallback for any
+    Bangkok district the zone table does not name, which made the column say almost nothing. Ops
+    asked on 2026-09-05 for the place printed on the slip instead. The zone is still the answer
+    when there is no address: rows read between 2026-09-02 and 2026-09-05 have none, because the
+    field was switched off to save output tokens, and a blank cell would be worse than a coarse
+    one. Analysis keeps the zone columns, so nothing is lost by this."""
+    return (address or "").strip() or zone_for(district, province_code, None)
+
+
 def _write_main_row(ws, row, driver_name, t):
     d = datetime.strptime(t["trip_date"], "%Y-%m-%d")
     pf = passenger_fare(t)
@@ -139,8 +151,8 @@ def _write_main_row(ws, row, driver_name, t):
         time_band(t.get("trip_time")),                          # C  6-hour band (team format)
         t.get("service_type"),                                  # D
         t.get("payment_method"),                                # E
-        zone_for(t.get("pickup_district"), t.get("pickup_code"), t.get("pickup_text")),    # F
-        zone_for(t.get("dropoff_district"), t.get("dropoff_code"), t.get("dropoff_text")),  # G
+        place(t.get("pickup_text"), t.get("pickup_district"), t.get("pickup_code")),    # F
+        place(t.get("dropoff_text"), t.get("dropoff_district"), t.get("dropoff_code")),  # G
         t.get("distance_km"),                                   # H
         t.get("duration_mins"),                                 # I
         f"=K{row}+M{row}+N{row}",                               # J net (template formula)
@@ -178,7 +190,6 @@ def _write_analysis_row(ws, row, driver_name, t):
         zone_for(t.get("dropoff_district"), t.get("dropoff_code"), t.get("dropoff_text")),
         t.get("pickup_district"), t.get("dropoff_district"),
         t.get("pickup_code"), t.get("dropoff_code"),
-        t.get("pickup_text"), t.get("dropoff_text"),
         "Y" if t.get("surge") else None, t.get("queue_type"), t.get("num_stops"),
         t.get("passenger_paid"), t.get("passenger_total"),
         t.get("app_fee"), t.get("other_adj"), t.get("fare_refund"),

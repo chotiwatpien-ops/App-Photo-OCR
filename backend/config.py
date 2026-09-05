@@ -113,13 +113,18 @@ GEMINI_PRICE = {
     "gemini-2.5-flash-lite": (0.10, 0.40),
 }
 USD_THB = 35.0
-# Fields the model is NOT asked for. Output is billed at 5x input, and the two full addresses
-# were 95 of the ~450 output tokens a slip costs — 9.8% of the bill, measured by reading the
-# same 30 images both ways. Ops confirmed 2026-09-02 that nobody opens them; the districts and
-# zones Sheet1 actually uses are separate, much shorter fields and stay.
+# Fields the model is NOT asked for. Output is billed at 5x input, so dropping one is worth
+# real money: the two full addresses were 95 of the ~450 output tokens a slip costs — 9.8% of
+# the bill, measured by reading the same 30 images both ways.
+#
+# They were dropped on 2026-09-02 ("nobody opens them") and asked for again on 2026-09-05, this
+# time as the pick-up and drop-off shown on Sheet1 itself, where the zone had been saying
+# "Downtown" for 84% of rows. At ~4,400 images a week that is about ฿40 a week, halved again by
+# batch reading. Nothing is dropped now; the setting stays so a field can be switched off again
+# without a code change.
 EXTRACT_DROP_FIELDS = tuple(
-    f for f in str(_setting("EXTRACT_DROP_FIELDS", "extract_drop_fields",
-                            "pickup_text,dropoff_text")).split(",") if f.strip())
+    f for f in str(_setting("EXTRACT_DROP_FIELDS", "extract_drop_fields", "")).split(",")
+    if f.strip())
 GEMINI_THINKING_LEVEL = _setting("GEMINI_THINKING_LEVEL", "thinking_level", "low")
 _tb = _setting("GEMINI_THINKING_BUDGET", "thinking_budget", 0)
 GEMINI_THINKING_BUDGET = int(_tb) if _tb not in (None, "") else None

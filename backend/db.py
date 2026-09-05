@@ -432,20 +432,36 @@ def mark_orphan_bottom_duplicates(job_id) -> int:
         return n
 
 
-def _approved_twin(c, job_id, row):
-    """The approved row this one repeats: same booking code, same rider, same week — the very
-    condition that forbids approving it. The twin usually sits in ANOTHER job, because the rider's
-    photos were dropped in two folders, so the in-job duplicate check never saw it."""
-    if not row["booking_code"]:
+# A booking code Grab printed in full names exactly one trip, so it settles the question on its
+# own. Below this length the reader may have cut it short — 'รหัสการจอง' wraps onto a second line,
+# and 1,169 of the 12,177 codes on file came back under 15 characters — so a short code is a hint,
+# not an identity, and has to agree on fare and clock time before anything is called a repeat.
+DUP_FULL_CODE = 15
+
+
+def _twin_filter(q, code, base_fare, trip_time):
+    return q if len(code) >= DUP_FULL_CODE else q.where(trips.c.base_fare == base_fare,
+                                                        trips.c.trip_time == trip_time)
+
+
+def _approved_twin(c, row):
+    """The approved trip this row repeats — ANY rider, ANY week.
+
+    Until 2026-09-05 only a repeat by the same rider inside the same week counted, because Ops
+    wanted slips to be reusable across weeks. Ops has now asked for repeated work to be taken out
+    instead: the same slip handed in under two rider names is one trip and is counted once. The
+    copy that is already approved is the one that stays, which is 'first in wins' by construction.
+
+    Measured over W33-W35 the widened rule would have caught 1,521 rows (11.6%) — the change is
+    forward-only by Ops' decision, so those delivered rows are left exactly as they are."""
+    code = row["booking_code"]
+    if not code:
         return None
-    jm = c.execute(select(jobs.c.driver_name, jobs.c.date_from)
-                   .where(jobs.c.id == job_id)).mappings().first()
-    return c.execute(select(trips.c.id, trips.c.file_name, trips.c.committed,
-                            trips.c.net_earnings, trips.c.base_fare)
-                     .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
-                     .where(trips.c.committed == 1, trips.c.booking_code == row["booking_code"],
-                            jobs.c.driver_name == jm["driver_name"],
-                            jobs.c.date_from == jm["date_from"])).mappings().first()
+    q = (select(trips.c.id, trips.c.file_name, trips.c.committed,
+                trips.c.net_earnings, trips.c.base_fare)
+         .where(trips.c.committed == 1, trips.c.booking_code == code))
+    q = _twin_filter(q, code, row.get("base_fare"), row.get("trip_time"))
+    return c.execute(q.order_by(trips.c.id)).mappings().first()
 
 
 def discard_settled_duplicates(job_id) -> int:
@@ -463,7 +479,8 @@ def discard_settled_duplicates(job_id) -> int:
 
     with engine.begin() as c:
         rows = c.execute(select(trips.c.id, trips.c.duplicate_of, trips.c.net_earnings,
-                                trips.c.base_fare, trips.c.note, trips.c.booking_code)
+                                trips.c.base_fare, trips.c.trip_time, trips.c.note,
+                                trips.c.booking_code)
                          .where(trips.c.job_id == job_id, trips.c.status == "done",
                                 trips.c.committed == 0,
                                 trips.c.duplicate_of.isnot(None)
@@ -476,7 +493,7 @@ def discard_settled_duplicates(job_id) -> int:
             .where(trips.c.id.in_([r["duplicate_of"] for r in rows if r["duplicate_of"]]))).mappings().all()}
         n = 0
         for r in rows:
-            twin = twins.get(r["duplicate_of"]) if r["duplicate_of"] else _approved_twin(c, job_id, r)
+            twin = twins.get(r["duplicate_of"]) if r["duplicate_of"] else _approved_twin(c, r)
             if not twin or not twin["committed"]:
                 continue                                   # twin not approved — decide together
             a, b = amount(r), amount(twin)
@@ -509,6 +526,16 @@ def restore_discarded(trip_id) -> bool:
         return r.rowcount > 0
 
 
+def _is_repeat(row, seen, seen_short) -> bool:
+    """Has this booking code already been approved somewhere? See _approved_twin for the rule."""
+    code = row["booking_code"]
+    if not code:
+        return False
+    if len(code) >= DUP_FULL_CODE:
+        return code in seen
+    return (code, row["base_fare"], row["trip_time"]) in seen_short
+
+
 def auto_approve_job(job_id, fresh_ids=()) -> dict:
     """Commit rows that passed every check (✓, not a duplicate, booking code unseen);
     leave the rest for a person. Returns {approved, flagged}.
@@ -522,7 +549,8 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
     fresh_ids = set(fresh_ids or ())
     with engine.begin() as c:
         rows = c.execute(select(trips.c.id, trips.c.check_status, trips.c.duplicate_of,
-                                trips.c.booking_code, trips.c.trip_date, trips.c.kind,
+                                trips.c.booking_code, trips.c.trip_date,
+                                trips.c.trip_time, trips.c.kind,
                                 trips.c.net_earnings, trips.c.base_fare, trips.c.file_name,
                                 trips.c.note)
                          .where(trips.c.job_id == job_id, trips.c.status == "done",
@@ -531,26 +559,26 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
                                           .where(trips.c.job_id == job_id,
                                                  trips.c.merged_into.isnot(None))).all()}
         codes = [r["booking_code"] for r in rows if r["booking_code"]]
-        seen = set()
+        seen, seen_short = set(), set()
         if codes:
-            # team rules: a code approved under ANOTHER rider never blocks, and neither does
-            # the same rider in ANOTHER week (Ops: slips get reused across weeks — let them
-            # flow). Only a repeat by the same rider within the same week is a duplicate.
-            jm = c.execute(select(jobs.c.driver_name, jobs.c.date_from)
-                           .where(jobs.c.id == job_id)).mappings().first()
-            seen = {r[0] for r in c.execute(
-                select(trips.c.booking_code)
-                .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
-                .where(trips.c.committed == 1, trips.c.booking_code.in_(codes),
-                       jobs.c.driver_name == jm["driver_name"],
-                       jobs.c.date_from == jm["date_from"])).all()}
+            # Ops 2026-09-05: repeated work comes out. A booking code already approved anywhere
+            # in the project is the same trip, whichever rider handed the slip in and whichever
+            # week it lands in — the approved copy is the one that stays. Short codes may be
+            # truncated, so they only count as a repeat when the fare and clock time match too.
+            for t in c.execute(select(trips.c.booking_code, trips.c.base_fare, trips.c.trip_time)
+                               .where(trips.c.committed == 1,
+                                      trips.c.booking_code.in_(codes))).mappings().all():
+                if len(t["booking_code"]) >= DUP_FULL_CODE:
+                    seen.add(t["booking_code"])
+                else:
+                    seen_short.add((t["booking_code"], t["base_fare"], t["trip_time"]))
         ok_ids = [r["id"] for r in rows
                   if r["check_status"] == "pass" and not r["duplicate_of"] and r["trip_date"]
                   # team rule 2026-08-25: balanced money is the bar — a missing booking code
                   # (some Grab screens don't show one) or km does NOT hold a row back. Stray
                   # lower halves are handled by mark_orphan_bottom_duplicates() above: the
                   # ones matching a counted trip carry duplicate_of and are excluded here.
-                  and (not r["booking_code"] or r["booking_code"] not in seen)
+                  and not _is_repeat(r, seen, seen_short)
                   # a top half read this very round with no lower half yet: wait one round
                   and not (r["kind"] == "top" and r["id"] in fresh_ids and r["id"] not in paired)]
         # A code-less lower half whose amount equals a full/top row approved in the SAME batch is
