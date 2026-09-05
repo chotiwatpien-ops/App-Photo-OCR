@@ -25,6 +25,22 @@ check("ยอดไม่ตรง → ไม่จับ", not pairing.matches(
 check("ค่าโดยสารผู้โดยสารไม่ใช่รายได้เพิ่ม: 149+199 ≠ คู่ของ ฿348",
       not pairing.matches({"amount": 348.0}, {"amount": 149.0, "numbers": [7, 9, 50, 149, 199]}))
 check("รายได้เพิ่มเล็ก ๆ ยังบวกได้: 149+7 = ฿156", pairing.matches({"amount": 156.0}, {"amount": 149.0, "numbers": [7, 9, 50, 149, 199]}))
+# A tip is the passenger's money, not Grab's, so it has no ceiling: Home bike riders were handed
+# ฿40-50 on fares of ฿25-52 and the pairs were thrown away by the rule above, which exists to
+# stop a passenger figure posing as a bonus. What tells them apart is how often the slip prints
+# the figure — a tip three times (ค่าทิป, its section total, and again as a deduction in the
+# passenger card), a passenger fare once.
+tip = {"amount": 32.0, "numbers": [1, 32, 50, 83], "seq": [32, 32, 50, 50, 83, 1, 50, 32, 32, 32]}
+check("ทิป ฿50 บนค่าโดยสาร ฿32 → จับกับครึ่งบน ฿82 ได้", pairing.matches({"amount": 82.0}, tip))
+check("ทิปเป็นหลักฐานอ่อน ต้องชนะด้วยระยะห่าง", pairing.match_tier({"amount": 82.0}, tip) == 3)
+check("เลขที่พิมพ์ครั้งเดียวไม่ใช่ทิป: 149+199 ยังห้ามจับ",
+      not pairing.matches({"amount": 348.0},
+                          {"amount": 149.0, "numbers": [7, 9, 50, 149, 199],
+                           "seq": [149, 149, 7, 7, 50, 199, 149, 50]}))
+check("ช่องว่างที่ตรงกับตัวเลขในการ์ดค่าธรรมเนียม ไม่นับเป็นทิป",
+      not pairing.matches({"amount": 500.0},
+                          {"amount": 426.0, "numbers": [21, 25, 54, 74, 426, 500],
+                           "seq": [426, 426, 74, 74, 500, 426, 74]}))
 # bottoms the user caught being paired wrongly (Test 9, 2026-09-03) — the fee card at the foot
 # of every bottom half (passenger fare, income, Grab's cut) must decide the income
 b426 = {"amount": 426.0, "numbers": [21, 25, 54, 142, 426, 568], "seq": [426, 426, 21, 21, 25, 568, 426, 142]}
@@ -106,6 +122,31 @@ if os.path.isdir(maps) and os.environ.get("PAIRING_SAMPLE", "1") == "1":
               all(d == 1 for _, _, d in pairs))
     except ImportError as e:
         print("(ข้ามการทดสอบแผนที่เขียว: ไม่มี rapidocr —", e, ")")
+
+# Standard slips, where Grab's cut is real. Every sample above is Saver, whose commission is
+# near zero — the 'ค่าบริการที่แกร็บได้รับ' card is all but empty there, so nothing was holding
+# the fee-card branch of match_tier to a real screenshot. Trip 37+38 is the one that matters:
+# its lower half has no readable green figure at all, and only the card (184 − 150 = 34) says
+# which top it belongs to.
+std = "Phase2/Standard fee card"
+if os.path.isdir(std) and os.environ.get("PAIRING_SAMPLE", "1") == "1":
+    try:
+        seen = {n: pairing.inspect(os.path.join(std, f))
+                for f in sorted(os.listdir(std)) if f.endswith(".jpg")
+                for n in [int(f.rsplit("_", 1)[1].split(".")[0])]}
+        cards = {n: pairing._fee_card(i.get("seq") or []) for n, i in seen.items()}
+        check("Standard: การ์ดค่าธรรมเนียมอ่านออก (ค่าโดยสาร − รายได้ = ส่วนที่แกร็บหัก)",
+              [cards[n][-1] for n in (29, 37, 69)] == [(40.0, 33.0, 7.0), (184.0, 150.0, 34.0),
+                                                       (25.0, 21.0, 4.0)])
+        check("ครึ่งล่างที่อ่านเลขสีเขียวไม่ออก ยังจับคู่ได้ด้วยการ์ด",
+              seen[37]["amount"] is None
+              and pairing.match_tier(seen[38], seen[37]) is not None)
+        pairs, left = pairing.pair_album(sorted(seen.items()))
+        check("Standard: จับคู่ได้ครบทั้ง 3 คู่", len(pairs) == 3 and left == [])
+        check("Standard: ยอดถูกทุกคู่",
+              sorted(seen[t]["amount"] for t, _, _ in pairs) == [21.0, 33.0, 150.0])
+    except ImportError as e:
+        print("(ข้ามการทดสอบ Standard: ไม่มี rapidocr —", e, ")")
 
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

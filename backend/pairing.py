@@ -270,6 +270,26 @@ def _tier_one(net, green, nums):
     return None
 
 
+def _tip_gap(nets, greens, seq, card_figs):
+    """Tier 3 when the gap between the two halves is a tip, else None.
+
+    A tip has no ceiling: a passenger can add ฿50 to a ฿32 fare, so the rule that keeps a
+    passenger figure from posing as a bonus — the extra must be smaller than the income — throws
+    real pairs away. Three Home bike trips were left unpaired for exactly this.
+
+    What marks a tip out is that the slip prints it three times over: as ค่าทิป in the driver's
+    extra income, again as that section's total, and once more as a deduction inside the
+    passenger's card. The figure this rule must never admit, a passenger fare, is printed once —
+    ฿348 against an income of 149 with 199 on the page is the wrong pair this guards. Weak by
+    design, so pair_album() can only take it as the nearest unambiguous candidate."""
+    for net in nets:
+        for green in greens:
+            gap = net - green
+            if gap > 0 and not any(abs(gap - c) < 0.01 for c in card_figs)                     and sum(1 for v in seq if abs(v - gap) < 0.01) >= 2:
+                return 3
+    return None
+
+
 def match_tier(top, bottom):
     """How strongly a top half and a bottom half agree, or None. Evidence is ranked and the
     strongest kind available DECIDES — weaker kinds are never consulted behind it:
@@ -303,6 +323,8 @@ def match_tier(top, bottom):
                 t = _tier_one(net, green, pool)
                 if t in (0, 1) and (best is None or t < best):
                     best = t
+        if best is None:
+            best = _tip_gap(nets, greens, bottom.get("seq") or [], card_figs)
         return best
     if cards:                                                    # B
         for net in nets:
