@@ -1,0 +1,48 @@
+name: Audit — ตรวจว่ารอบจัดกองไหนสร้างแถวอะไรไว้
+
+# Read-only. Nothing here writes to the database, to Drive, or to Excel.
+#
+# Run #7 paired an album Ops had only uploaded a third of, so the matcher glued together halves
+# that are 17-52 pictures apart. Run #8, on the complete upload, paired the same album in
+# sequence. This says which rows came from which before anyone decides what to do about it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run:
+        description: "เลข pool run ที่จะตรวจ"
+        type: string
+        required: true
+        default: "7"
+      against:
+        description: "เทียบกับ pool run ที่ทำซ้ำทีหลัง (ว่าง = ไม่เทียบ)"
+        type: string
+        default: "8"
+      list:
+        description: "พิมพ์รายไฟล์ที่ครึ่งบน/ครึ่งล่างห่างกันมาก"
+        type: boolean
+        default: true
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: Read what that run left behind
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TZ: Asia/Bangkok
+        run: |
+          ARGS="--run ${{ github.event.inputs.run }}"
+          if [ -n "${{ github.event.inputs.against }}" ]; then
+            ARGS="$ARGS --against ${{ github.event.inputs.against }}"
+          fi
+          if [ "${{ github.event.inputs.list }}" = "true" ]; then ARGS="$ARGS --list"; fi
+          python audit_pool_run.py $ARGS

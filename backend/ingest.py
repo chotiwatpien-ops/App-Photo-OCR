@@ -416,7 +416,9 @@ def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True, force=Fals
                 drive.upload_xlsx(exports_id, excel_writer.LOCATION_FILE, loc)
             for (d_from, _), _js in db.jobs_by_week().items():
                 db.record_drive_file(week_label(d_from), "xlsx", fid, "Rider Trips.xlsx")
-            log(f"📄 Rider Trips.xlsx: {len(rows)} แถวรวมทุกสัปดาห์")
+            old_n = sum(1 for t in rows if not excel_writer.in_location_scope(t.get("trip_date")))
+            log(f"📄 Rider Trips.xlsx: {old_n} แถว (ถึง {excel_writer.LOCATION_FROM_WEEK} เท่านั้น) · "
+                f"Phase 2: {len(rows) - old_n} แถว")
         except Exception as e:  # noqa: BLE001
             log(f"✗ upload xlsx: {e}")
             errors += 1
@@ -845,7 +847,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     # made in the web app between rounds still reached Drive; four quiet rounds a day was
     # 5 MB each of a 5 GB monthly transfer allowance spent producing a byte-identical file.
     # The fingerprint answers the same question for three numbers.
-    stamp = db.committed_fingerprint()
+    stamp = f"{excel_writer.LAYOUT}:{db.committed_fingerprint()}"
     if stamp == db.state_get(XLSX_KEY):
         log("📄 Rider Trips.xlsx: ไม่มีอะไรเปลี่ยนตั้งแต่รอบก่อน — ไม่ต้องเขียนใหม่")
         rows = []
@@ -857,7 +859,9 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             fid = drive.upload_xlsx(exports_id, name, excel_writer.build_workbook(rows))
             for (d_from, _), _js in db.jobs_by_week().items():
                 db.record_drive_file(week_label(d_from), "xlsx", fid, name)
-            log(f"📄 {name}: {len(rows)} แถวรวมทุกสัปดาห์")
+            old_n = sum(1 for t in rows if not excel_writer.in_location_scope(t.get("trip_date")))
+            log(f"📄 {name}: {old_n} แถว — หยุดที่ก่อน {excel_writer.LOCATION_FROM_WEEK} "
+                f"(อีก {len(rows) - old_n} แถวอยู่ใน {excel_writer.LOCATION_FILE})")
             # the Phase 2 file rides along on the same trigger: same rows, same moment, so the
             # two never disagree about what is approved
             loc = excel_writer.build_location_workbook(rows)

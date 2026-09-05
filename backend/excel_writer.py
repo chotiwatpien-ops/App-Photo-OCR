@@ -35,10 +35,11 @@ LOCATION_SHEET = "Location"
 # field off for 1,271 of its rows, and half a week of places is worse than none.
 LOCATION_FROM_WEEK = str(getattr(config, "LOCATION_FROM_WEEK", "2026-W36"))
 
-LOCATION_HEADERS = [
-    "Driver Name", "Date", "Time", "Booking Code", "Week", "Pick-up", "Drop-off", "Image",
-]
-LOCATION_WIDTHS = [24, 11, 7, 18, 8, 46, 46, 22]
+# Bump whenever the shape of either workbook changes — columns, sheets, which rows go where.
+# Uploads are skipped when no row has changed since the last round, which is right for data and
+# wrong for layout: the Phase 2 file would have kept its old columns until the next approval
+# happened to come along. Folding this into that fingerprint forces exactly one rewrite.
+LAYOUT = "2026-09-06"
 
 HEADERS = [
     "Driver Name", "Date & Time", "Time", "Service Type", "Payment Method",
@@ -156,7 +157,10 @@ def place(address, district, province_code) -> str:
     return (address or "").strip() or zone_for(district, province_code, None)
 
 
-def _write_main_row(ws, row, driver_name, t):
+def _write_main_row(ws, row, driver_name, t, locations=False):
+    """One trip in the team's column order. `locations` swaps the zone in F/G for the place the
+    slip actually names — the Phase 2 file is this same sheet with those two cells filled in,
+    which is what Ops asked for: everything they already read, plus the real address."""
     d = datetime.strptime(t["trip_date"], "%Y-%m-%d")
     pf = passenger_fare(t)
     values = [
@@ -165,8 +169,10 @@ def _write_main_row(ws, row, driver_name, t):
         time_band(t.get("trip_time")),                          # C  6-hour band (team format)
         t.get("service_type"),                                  # D
         t.get("payment_method"),                                # E
-        zone_for(t.get("pickup_district"), t.get("pickup_code"), t.get("pickup_text")),    # F
-        zone_for(t.get("dropoff_district"), t.get("dropoff_code"), t.get("dropoff_text")),  # G
+        (place(t.get("pickup_text"), t.get("pickup_district"), t.get("pickup_code")) if locations
+         else zone_for(t.get("pickup_district"), t.get("pickup_code"), t.get("pickup_text"))),   # F
+        (place(t.get("dropoff_text"), t.get("dropoff_district"), t.get("dropoff_code")) if locations
+         else zone_for(t.get("dropoff_district"), t.get("dropoff_code"), t.get("dropoff_text"))),  # G
         t.get("distance_km"),                                   # H
         t.get("duration_mins"),                                 # I
         f"=K{row}+M{row}+N{row}",                               # J net (template formula)
@@ -188,6 +194,8 @@ def _write_main_row(ws, row, driver_name, t):
             cell.number_format = "d-mmm-yy"
         elif col == 3:
             cell.alignment = Alignment(horizontal="center")
+        elif locations and col in (6, 7):
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
     if pf is not None and passenger_fare_estimated(t):
         # estimated P (and its Q) render italic grey so readers can tell them from read values
         est_font = Font(name=_BODY_FONT.name, size=_BODY_FONT.size, italic=True, color="7F7F7F")
@@ -203,28 +211,6 @@ def iso_week(trip_date: str) -> str:
 
 def in_location_scope(trip_date: str) -> bool:
     return bool(trip_date) and iso_week(trip_date) >= LOCATION_FROM_WEEK
-
-
-def _write_location_row(ws, row, driver_name, t):
-    d = datetime.strptime(t["trip_date"], "%Y-%m-%d")
-    values = [
-        driver_name, d, _parse_time(t.get("trip_time")), t.get("booking_code"),
-        iso_week(t["trip_date"]),
-        place(t.get("pickup_text"), t.get("pickup_district"), t.get("pickup_code")),
-        place(t.get("dropoff_text"), t.get("dropoff_district"), t.get("dropoff_code")),
-        t.get("customer_image"),
-    ]
-    for col, v in enumerate(values, start=1):
-        cell = ws.cell(row=row, column=col)
-        cell.value = v
-        cell.font = _BODY_FONT
-        cell.border = _THIN_BORDER
-        if col == 2:
-            cell.number_format = "d-mmm-yy"
-        elif col == 3 and v is not None:
-            cell.number_format = "HH:MM"
-        elif col in (6, 7):
-            cell.alignment = Alignment(vertical="top", wrap_text=True)
 
 
 def _write_analysis_row(ws, row, driver_name, t):
@@ -291,7 +277,12 @@ def _new_workbook():
 # ---------- export (cloud + local) ----------
 
 def build_workbook(rows: list[dict]) -> bytes:
-    """Rows from db.query_trips (each carries driver_name). Returns xlsx bytes."""
+    """Rows from db.query_trips (each carries driver_name). Returns xlsx bytes.
+
+    Stops at the week Phase 2 begins. From LOCATION_FROM_WEEK on, a trip belongs to the Phase 2
+    file and to nothing else — this workbook is finished, and each round rebuilding it with the
+    new weeks folded in was exactly the 'still writing the old file' Ops asked us to stop."""
+    rows = [t for t in rows if not in_location_scope(t.get("trip_date"))]
     wb = _new_workbook()
     ws, wa = wb[SHEET], wb[ANALYSIS_SHEET]
     for i, t in enumerate(rows, start=2):
@@ -303,22 +294,25 @@ def build_workbook(rows: list[dict]) -> bytes:
 
 
 def build_location_workbook(rows: list[dict]) -> bytes | None:
-    """The Phase 2 file: where each trip started and ended, as printed on the slip.
+    """The Phase 2 file: the delivered sheet, with the place the slip names in Pick-up/Drop-off.
 
-    A separate workbook on purpose — the customer's Rider Trips.xlsx keeps the columns and the
-    zone it has always had. Returns None when no trip is in scope yet, so a file of nothing but
-    headers never lands on Drive."""
+    Same columns as the customer's Rider Trips.xlsx, so it reads the same and can be handed over
+    the same way — only F and G differ, carrying the address instead of the zone. A separate
+    workbook on purpose: the customer's own file keeps the zone it has always had. Returns None
+    when no trip is in scope yet, so a file of nothing but headers never lands on Drive."""
     wanted = [t for t in rows if in_location_scope(t.get("trip_date"))]
     if not wanted:
         return None
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = LOCATION_SHEET
-    _style_header(ws, LOCATION_HEADERS, LOCATION_WIDTHS, medium=False)
+    widths = list(COL_WIDTHS)
+    widths[5] = widths[6] = 46                     # an address, not a one-word zone
+    _style_header(ws, HEADERS, widths, medium=True)
     ws.freeze_panes = "A2"
     for i, t in enumerate(sorted(wanted, key=lambda x: (x.get("trip_date") or "", x["driver_name"])),
                           start=2):
-        _write_location_row(ws, i, t["driver_name"], t)
+        _write_main_row(ws, i, t["driver_name"], t, locations=True)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

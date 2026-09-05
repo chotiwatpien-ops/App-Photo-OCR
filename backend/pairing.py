@@ -116,6 +116,18 @@ def _amount_from_block(im, mask, y0, y1):
             return float(d2), []                              # the '฿' had been read as a 4/8
         if d2 and not d1:
             return float(d2), []
+    elif d1 and not marked and len(d1) >= 3 and d1[0] in "48":
+        # '฿78' kerned tight enough that the mark leaves no column gap behind it: the check above
+        # never runs and 878 stands as the fare. Paint out one glyph's width and read again — if
+        # what comes back is exactly the number without its first digit, that digit was the '฿'.
+        # Without a gap to corroborate it this is a second reading, not a correction, so it is
+        # offered alongside the first and the pairing decides which one its partner agrees with.
+        crop2 = crop.copy()
+        wide = (cols[-1] - cols[0] + 1) // len(d1)        # one glyph, the figure evenly split
+        crop2.paste((255, 255, 255), (0, 0, cols[0] - x0 + wide + gap, crop2.height))
+        d2, _ = read(crop2)
+        if d2 and d1.endswith(d2) and len(d1) == len(d2) + 1:
+            return float(d1), [float(d2)]
     return (float(d1), []) if d1 else (None, [])
 
 
@@ -225,6 +237,15 @@ def category_folder(wheels, tier):
 
 
 # --- matching -----------------------------------------------------------------------------
+# Grab's cut is a platform rate, not a free number: every card read off a real slip so far sits
+# between 20% and 25% of the passenger fare. Three figures that satisfy a - b = c on a much
+# thinner margin are a coincidence somewhere else on the page. On a trip where Grab took nothing
+# ('ค่าบริการที่แกร็บได้รับ ฿0') the passenger card offers exactly that: 29 - 28 = 1, a 3% "cut",
+# which then decided alone and threw the pair away. Half the smallest real rate leaves room for
+# a promotion without letting the coincidences back in.
+MIN_CUT = 0.10
+
+
 def _fee_card(seq):
     """The 'ค่าบริการที่แกร็บได้รับ' card prints, one under the other: passenger fare a,
     driver income b ('รายได้จากรอบขับ'), Grab's cut a − b (rounded, so ±1). Three consecutive
@@ -233,7 +254,7 @@ def _fee_card(seq):
     out = []
     for i in range(len(seq) - 2):
         a, b, c = seq[i], seq[i + 1], seq[i + 2]
-        if a > b > 0 and 0 < c < b and abs((a - b) - c) <= 1:
+        if a > b > 0 and 0 < c < b and abs((a - b) - c) <= 1 and c >= MIN_CUT * a:
             out.append((a, b, c))
     return out
 

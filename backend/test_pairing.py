@@ -72,6 +72,29 @@ check("Test 8: ฿221 จับได้จากการ์ด 276/221/55", pa
 check("ยอดจิ๋วคือการอ่านพลาด: MIN_AMOUNT ≥ 10 (GitHub run 2026-09-03 ต่อ ฿4/฿6/฿8 ผิด 10 คู่)", pairing.MIN_AMOUNT >= 10)
 check("ครึ่งบนอ่านยอดไม่ได้ → ไม่จับ", not pairing.matches({"amount": None}, {"amount": 104.0, "numbers": [104]}))
 
+# A trip where Grab took nothing ('ค่าบริการที่แกร็บได้รับ ฿0', Saver, short hop) prints no fee
+# card worth the name — and the passenger card hands over a false one of exactly the right shape:
+# 29 (รวมรายได้จากรอบขับ) − 28 (ยอดที่ผู้โดยสารชำระ) = 1 (ค่าธรรมเนียมการใช้แอป). Production
+# 2026-09-06 threw away a pair over it, so a card that cannot agree must stay silent, not refuse.
+b29 = {"amount": None, "numbers": [1, 2, 28, 29], "seq": [29, 29, 28, 1, 2, 29, 29, 29]}
+check("แกร็บไม่หักค่าบริการ: การ์ดปลอม 29−28=1 ต้องไม่บล็อกคู่ ฿29", pairing.matches({"amount": 29.0}, b29))
+check("และยังเป็นหลักฐานอ่อน ต้องชนะด้วยระยะห่าง", pairing.match_tier({"amount": 29.0}, b29) == 2)
+check("ยอดที่ไม่มีในใบก็ยังไม่จับ", not pairing.matches({"amount": 55.0}, b29))
+check("การ์ดจริงที่อ่านได้ยังปฏิเสธได้เหมือนเดิม", not pairing.matches({"amount": 348.0}, b149))
+
+# '฿78' kerned tight leaves no gap for the leading-glyph check, so 878 stands as the fare. The
+# second reading is offered alongside it, never in place of it — the partner decides.
+check("อ่านสำรองจาก ฿ ที่ติดตัวเลข: 878 มีสำรอง 78 → จับกับครึ่งล่าง ฿78 ได้",
+      pairing.matches({"amount": 878.0, "alts": [78.0]},
+                      {"amount": 78.0, "numbers": [1, 2, 78, 80, 81], "seq": []}))
+check("ค่าหลักยังใช้ได้ตามปกติ",
+      pairing.matches({"amount": 878.0, "alts": [78.0]},
+                      {"amount": 878.0, "numbers": [878], "seq": []}))
+check("สำรองไม่ได้แปลว่าจับได้ทุกอย่าง",
+      not pairing.matches({"amount": 878.0, "alts": [78.0]},
+                          {"amount": 55.0, "numbers": [55], "seq": []}))
+
+
 items = [("1", {"role": "top", "amount": 30.0}), ("2", {"role": "bottom", "amount": 30.0, "numbers": [30]}),
          ("3", {"role": "top", "amount": 37.0}), ("4", {"role": "bottom", "amount": 37.0, "numbers": [37]}),
          ("5", {"role": "top", "amount": 37.0}), ("6", {"role": "bottom", "amount": 37.0, "numbers": [37]}),

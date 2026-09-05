@@ -126,12 +126,22 @@ def row(date_, name="สมชาย", pu="เอ็มสเฟียร์ ท
 
 import io                                                       # noqa: E402
 import openpyxl                                                 # noqa: E402
-wb = openpyxl.load_workbook(io.BytesIO(excel_writer.build_workbook([row("2026-09-07")])))
+wb = openpyxl.load_workbook(io.BytesIO(excel_writer.build_workbook([row("2026-08-20")])))
 ws = wb[excel_writer.SHEET]
 check("Sheet1 ยังเป็นโซนเหมือนเดิม ไม่ถูกทับ", ws.cell(2, 6).value == "Downtown")
 check("ไฟล์ลูกค้าไม่มีชีตสถานที่โผล่มา", excel_writer.LOCATION_SHEET not in wb.sheetnames)
 check("ไฟล์ลูกค้ายังมี 3 ชีตเท่าเดิม", len(wb.sheetnames) == 3)
 check("ความกว้าง F/G กลับเป็นของเดิม", excel_writer.COL_WIDTHS[5] == 12.5)
+
+# Ops 2026-09-06: ตกลงว่าไม่ยุ่งไฟล์เก่าแล้ว — ตั้งแต่ W36 ต้องไม่โผล่ในไฟล์ลูกค้าอีกเลย
+mixed = excel_writer.build_workbook([row("2026-08-20"), row("2026-09-07"),
+                                     row("2026-09-14", name="สมหญิง")])
+mw = openpyxl.load_workbook(io.BytesIO(mixed))[excel_writer.SHEET]
+check("ไฟล์เก่าหยุดที่ W35: 3 แถวเข้าไปแค่แถวเดียว", mw.max_row == 2)
+check("แถวที่เหลืออยู่คือของเก่าจริง", mw.cell(2, 2).value.strftime("%Y-%m-%d") == "2026-08-20")
+check("ไม่มีทริปเก่าเลย: ไฟล์ลูกค้าว่าง ไม่ error",
+      openpyxl.load_workbook(io.BytesIO(excel_writer.build_workbook(
+          [row("2026-09-07")])))[excel_writer.SHEET].max_row == 1)
 
 # --- ไฟล์ Phase 2 -----------------------------------------------------------------------------
 check("ชื่อไฟล์มี Phase 2", "Phase 2" in excel_writer.LOCATION_FILE)
@@ -149,11 +159,15 @@ lb = openpyxl.load_workbook(io.BytesIO(data))
 lw = lb[excel_writer.LOCATION_SHEET]
 check("Phase 2 มีชีตเดียว", len(lb.sheetnames) == 1)
 check("Phase 2 เอาเฉพาะตั้งแต่ W36 (2 จาก 3 แถว)", lw.max_row == 3)
+# Ops 2026-09-06: ขอคอลัมน์ชุดเดียวกับไฟล์ส่งงาน ไม่ใช่ตารางค้นสถานที่
+check("Phase 2 ใช้คอลัมน์ชุดเดียวกับ Sheet1",
+      [lw.cell(1, c).value for c in range(1, len(excel_writer.HEADERS) + 1)] == excel_writer.HEADERS)
 check("Phase 2 ต้นทางเป็นสถานที่จริง", lw.cell(2, 6).value == "เอ็มสเฟียร์ ทางออกป้ายรถเมล์")
 check("Phase 2 ปลายทางเป็นสถานที่จริง", lw.cell(2, 7).value == "มหานคร สกายวอล์ค")
-check("Phase 2 มีสัปดาห์กำกับ", lw.cell(2, 5).value == "2026-W37")
-check("Phase 2 โยงกลับไฟล์รูปได้", lw.cell(2, 8).value == "WK36-สมชาย1.jpg")
-check("Phase 2 เรียงตามวันที่", lw.cell(3, 5).value == "2026-W38")
+check("Phase 2 มีตัวเงินครบเหมือนไฟล์ส่งงาน", lw.cell(2, 11).value == 100)
+check("Phase 2 ยังคำนวณ Grab Service Fee ด้วยสูตรเดิม", lw.cell(2, 17).value == "=P2-J2")
+check("Phase 2 โยงกลับไฟล์รูปได้", lw.cell(2, 18).value == "WK36-สมชาย1.jpg")
+check("Phase 2 เรียงตามวันที่", lw.cell(3, 1).value == "สมหญิง")
 check("ไม่มีที่อยู่: Phase 2 ถอยไปใช้โซน ไม่ปล่อยว่าง",
       openpyxl.load_workbook(io.BytesIO(excel_writer.build_location_workbook(
           [row("2026-09-07", pu=None, do=None)]))

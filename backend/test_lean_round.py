@@ -59,6 +59,12 @@ db.approve_trip(t1)
 first = db.committed_fingerprint()
 check("ลายนิ้วมือคงที่ถ้าไม่มีอะไรเปลี่ยน", db.committed_fingerprint() == first)
 
+# Ops 2026-09-06: เปลี่ยนคอลัมน์ Phase 2 แล้วไฟล์ไม่ถูกเขียนใหม่ เพราะประตูดูแค่ข้อมูล ไม่ดูรูปแบบ
+import excel_writer                                             # noqa: E402
+check("ป้ายรูปแบบไฟล์มีอยู่จริง", bool(excel_writer.LAYOUT))
+check("ประตูเขียน xlsx นับรูปแบบไฟล์ด้วย ไม่ใช่แค่ข้อมูล",
+      f"{excel_writer.LAYOUT}:{first}" != first)
+
 db.update_trip(t1, {"net_earnings": 120})
 after_edit = db.committed_fingerprint()
 check("แก้ยอดเงินแล้วลายนิ้วมือเปลี่ยน", after_edit != first)
