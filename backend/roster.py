@@ -47,9 +47,24 @@ def label(name, kind):
     return f"{name} {kind}".strip()
 
 
+def _drive():
+    """Actions passes the token in the environment; a laptop keeps it in a file next to the code."""
+    import os
+    tok = None if os.environ.get("DRIVE_OAUTH_TOKEN_JSON") else "drive_token.json"
+    return DriveClient(oauth_token_json=tok)
+
+
+def _list_all(drive, parent_id):
+    """Everything in a folder, pictures or not — list_images filters to images."""
+    return drive._list(f"'{parent_id}' in parents and trashed=false", "id, name")
+
+
 def import_pool(path) -> int:
+    """path: a local .xlsx, or bytes already fetched from Drive."""
+    import io
     import openpyxl
-    wb = openpyxl.load_workbook(path, read_only=True)
+    wb = openpyxl.load_workbook(io.BytesIO(path) if isinstance(path, (bytes, bytearray)) else path,
+                                read_only=True)
     rows = []
     for sheet, (wheel, kind) in SHEETS.items():
         if sheet not in wb.sheetnames:
@@ -184,7 +199,9 @@ def apply(drive, inbox_id, week_name, chosen, dry_run=True):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--import", dest="imp", help="โหลดรายชื่อจากไฟล์ Excel ของ Ops เข้าฐานข้อมูล")
+    ap.add_argument("--import", dest="imp", help="โหลดรายชื่อจากไฟล์ Excel ในเครื่อง")
+    ap.add_argument("--import-drive", dest="imp_drive", default="",
+                    help="โหลดรายชื่อจากไฟล์ Excel ที่วางไว้ใน Inbox บน Drive (ใส่ชื่อไฟล์)")
     ap.add_argument("--week", help="ชื่อโฟลเดอร์สัปดาห์ที่จะสร้าง เช่น 'Week 7-13 Sep'")
     ap.add_argument("--from", dest="prev", default="", help="สัปดาห์ที่เอาชื่อเดิมมา (ว่าง = สัปดาห์ล่าสุดที่มี)")
     ap.add_argument("--per-group", type=int, default=PER_GROUP)
@@ -194,9 +211,23 @@ def main():
     a = ap.parse_args()
     db.init_db()
 
-    if a.imp:
-        log(f"นำเข้ารายชื่อจาก {a.imp}")
-        log(f"เก็บลงฐานข้อมูลแล้ว {import_pool(a.imp)} ชื่อ")
+    if a.imp or a.imp_drive:
+        if a.imp_drive:
+            drive = _drive()
+            f = next((x for x in drive.list_images(config.DRIVE_INBOX_FOLDER_ID)
+                      if x["name"].strip() == a.imp_drive.strip()), None)
+            if f is None:                       # list_images only yields pictures; look wider
+                f = next((x for x in _list_all(drive, config.DRIVE_INBOX_FOLDER_ID)
+                          if x["name"].strip() == a.imp_drive.strip()), None)
+            if f is None:
+                log(f"✗ ไม่พบไฟล์ {a.imp_drive!r} ใน Inbox บน Drive")
+                return 1
+            log(f"นำเข้ารายชื่อจาก Drive: {f['name']}")
+            src = drive.download(f["id"])
+        else:
+            log(f"นำเข้ารายชื่อจาก {a.imp}")
+            src = a.imp
+        log(f"เก็บลงฐานข้อมูลแล้ว {import_pool(src)} ชื่อ")
         if not a.week:
             return 0
 
@@ -207,8 +238,7 @@ def main():
     if not any(pools.values()):
         log("✗ ยังไม่มีรายชื่อในฐานข้อมูล — สั่ง --import ก่อน")
         return 1
-    drive = DriveClient(oauth_token_json="drive_token.json"
-                        if not config.IS_CLOUD else None)
+    drive = _drive()
     inbox = config.DRIVE_INBOX_FOLDER_ID
     prev_name = a.prev
     if not prev_name:
