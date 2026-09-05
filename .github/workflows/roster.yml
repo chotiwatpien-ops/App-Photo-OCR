@@ -1,41 +1,20 @@
-name: Roster — สร้างโฟลเดอร์ไรเดอร์ของสัปดาห์
+name: Roster — นำเข้ารายชื่อไรเดอร์จาก Ops
 
-# Ops keeps a pool of names per wheel count (Win / Home / Taxi) and wants them handed out week by
-# week: most of a week carries over from the one before, the rest rotates. This makes next week's
-# folders on Drive — Week …/<vehicle group>/NN-ชื่อ ป้าย/ — with no Admin level.
+# Ops keeps a pool of names per wheel count, tagged Win / Home / Taxi. This loads that list into
+# the database, and that is all it does.
 #
-# The name list itself is never in this repo. Drop the .xlsx into the Inbox on Drive and tick
-# `import_names` once; the pool then lives in the database until Ops sends a new list.
+# It used to also build next week's folders. It no longer does: since 2026-09-05 distribute.py
+# opens a rider's folder at the moment a paired trip needs one, so a week ends up with exactly the
+# folders it has work for. Pre-building would leave empty folders behind and, worse, spend the
+# names on them — the allocator would then run out of people who are free that week.
+#
+# The name list itself is never in this repo. Drop the .xlsx into the Inbox on Drive and run this.
 
 on:
   workflow_dispatch:
     inputs:
-      week:
-        description: "ชื่อโฟลเดอร์สัปดาห์ที่จะสร้าง เช่น Week 7-13 Sep"
-        type: string
-        required: true
-      from_week:
-        description: "เอาชื่อเดิมมาจากสัปดาห์ไหน (ว่าง = สัปดาห์ล่าสุดที่มีอยู่)"
-        type: string
-        default: ""
-      dry_run:
-        description: "ดูแผนอย่างเดียว ไม่แตะ Drive"
-        type: boolean
-        default: true
-      per_group:
-        description: "จำนวนไรเดอร์ต่อกลุ่มรถ (70 = เป้า 1,470 ÷ 21)"
-        type: string
-        default: "70"
-      keep:
-        description: "สัดส่วนชื่อเดิมที่เก็บไว้ (0.8 = 80%) — ได้เท่าที่พูลไหว"
-        type: string
-        default: "0.8"
-      import_names:
-        description: "โหลดรายชื่อจากไฟล์ Excel ใน Inbox ก่อน (ติ๊กเมื่อ Ops ส่งลิสต์ใหม่)"
-        type: boolean
-        default: false
       names_file:
-        description: "ชื่อไฟล์รายชื่อที่วางไว้ใน Inbox"
+        description: "ชื่อไฟล์รายชื่อที่วางไว้ใน Inbox บน Drive"
         type: string
         default: "Name list by Type (Rider Project).xlsx"
 
@@ -44,9 +23,9 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  roster:
+  import:
     runs-on: ubuntu-latest
-    timeout-minutes: 30      # ~210 folders, one Drive call each
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -54,7 +33,7 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r backend/requirements.txt
-      - name: Build the roster
+      - name: Import Ops' name list
         working-directory: backend
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -62,15 +41,4 @@ jobs:
           DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.DRIVE_OAUTH_TOKEN_JSON }}
           DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
           TZ: Asia/Bangkok
-        run: |
-          ARGS="--week '${{ github.event.inputs.week }}'"
-          if [ "${{ github.event.inputs.import_names }}" = "true" ]; then
-            ARGS="$ARGS --import-drive '${{ github.event.inputs.names_file }}'"
-          fi
-          if [ -n "${{ github.event.inputs.from_week }}" ]; then
-            ARGS="$ARGS --from '${{ github.event.inputs.from_week }}'"
-          fi
-          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
-          ARGS="$ARGS --per-group ${{ github.event.inputs.per_group }}"
-          ARGS="$ARGS --keep ${{ github.event.inputs.keep }}"
-          eval python roster.py $ARGS
+        run: python roster.py --import-drive "${{ github.event.inputs.names_file }}"

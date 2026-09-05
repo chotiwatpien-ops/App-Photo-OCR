@@ -34,17 +34,28 @@ db.init_db()
 
 root = os.path.join(WORK, "Inbox")
 week = os.path.join(root, "Week 17-23 Aug")
-pool_album = os.path.join(week, "Pool", "LINE_ALBUM_Dl-boy4 w")
+pool_album = os.path.join(week, "Pool", "4W-Taxi Dl-boy4 w")
 os.makedirs(pool_album)
 files = sorted(os.listdir(SAMPLE), key=lambda f: int(f.rsplit("_", 1)[1].split(".")[0]))[:8]   # 4 trips as halves
 for f in files:
     shutil.copy2(os.path.join(SAMPLE, f), os.path.join(pool_album, f))
 os.makedirs(os.path.join(week, "4 W Standard", "01 ทดสอบ"))                                # an empty rider folder
+db.name_pool_load([("สมชาย", "4W", "Taxi"), ("สมหญิง", "4W", "Home")])   # ops' list, for the folders below
 exports = os.path.join(WORK, "Exports")
 os.makedirs(exports)
 
-# no Gemini: nothing under a rider folder yet, so the round reads nothing; we only check the pool step
-pipeline.extractor.extract_image = lambda *a, **k: (_ for _ in ()).throw(AssertionError("ต้องไม่เรียก Gemini"))
+# the same round files the pool and then reads what it filed — stubbed, so no Gemini call goes out
+read = []
+
+
+def fake_extract(image_bytes, mime="image/jpeg", model=None, drop=()):
+    read.append(len(image_bytes or b""))
+    return {"kind": "full", "net_earnings": 100.0, "base_fare": 100.0,
+            "booking_code": f"A-{len(read):03d}",
+            "_usage": {"model": "test", "tok_in": 1, "tok_out": 1, "tok_think": 0}}
+
+
+pipeline.extractor.extract_image = fake_extract
 config.INGEST_BATCH = False
 ingest.config.INGEST_BATCH = False
 
@@ -54,12 +65,21 @@ print("1) รอบ ingest จบ · error", errors)
 ok = ok and errors == 0
 
 cat = os.path.join(week, "4 W Standard")
-stitched = [f for f in os.listdir(cat) if f.endswith(".jpg")]
+stitched = [os.path.join(r, f) for r, _, fs in os.walk(cat) for f in fs if f.endswith(".jpg")]
 left = [f for f in os.listdir(pool_album) if f.endswith(".jpg")]
-used = os.path.join(week, "Pool", "_ใช้แล้ว", "LINE_ALBUM_Dl-boy4 w")
+used = os.path.join(week, "Pool", "_ใช้แล้ว", "4W-Taxi Dl-boy4 w")
 used_n = len(os.listdir(used)) if os.path.isdir(used) else 0
 print(f"2) รอบเดียวกันจัดกองแล้ว: รูปต่อแล้วใน 4 W Standard {len(stitched)} · ต้นฉบับใน _ใช้แล้ว {used_n} · เหลือในกอง {len(left)}")
 ok = ok and len(stitched) >= 3 and used_n == 2 * len(stitched) and len(left) == 8 - used_n
+
+# and they land in a rider's folder — loose in the category folder is invisible to discover()
+riders = {os.path.basename(os.path.dirname(f)) for f in stitched}
+print("2b) รูปอยู่ในโฟลเดอร์ไรเดอร์ ไม่ลอยในโฟลเดอร์ประเภทรถ:", riders and all(
+    r != "4 W Standard" and r.endswith(" Taxi") for r in riders), sorted(riders))
+ok = ok and bool(riders) and all(r != "4 W Standard" and r.endswith(" Taxi") for r in riders)
+
+print(f"2c) รอบเดียวกันอ่านรูปที่เพิ่งจัดเข้าโฟลเดอร์: อ่านไป {len(read)} รูป")
+ok = ok and len(read) == len(stitched)
 
 runs = db.recent_pool_runs(1, with_report=True)
 print("3) บันทึก pool run พร้อมเลขรอบ ingest:", bool(runs) and runs[0]["mode"] == "move"

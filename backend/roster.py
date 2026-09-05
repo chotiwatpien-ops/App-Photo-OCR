@@ -216,6 +216,8 @@ def main():
     ap.add_argument("--keep", type=float, default=KEEP, help="สัดส่วนชื่อเดิมที่เก็บไว้ (0.8 = 80%%)")
     ap.add_argument("--seed", type=int, default=None, help="ล็อกการสุ่มให้ได้ผลเดิม (ทดสอบ)")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--force-prebuild", action="store_true",
+                    help="สร้างโฟลเดอร์จริง ทั้งที่ distribute.py เป็นคนสร้างให้แล้ว (ไม่ควรใช้)")
     a = ap.parse_args()
     db.init_db()
 

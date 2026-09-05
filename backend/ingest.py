@@ -513,7 +513,8 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         except ImportError as e:
             log(f"⏭ ข้ามขั้นจัดกอง (ไม่มีไลบรารี OCR ฟรีในเครื่องนี้: {e})")
         else:
-            pool.round_step(drive, inbox_id, run_id=run_id, dry_run=dry_run, log=log)
+            pool.round_step(drive, inbox_id, run_id=run_id, dry_run=dry_run, log=log,
+                            issues=issues)
     items, skipped = ([], []) if quiet else discover(drive, inbox_id)
     issues += [(f"folder:{s}", "folder", s) for s in skipped]
     if only:

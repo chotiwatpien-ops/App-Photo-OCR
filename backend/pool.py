@@ -22,12 +22,13 @@ What a run does (mode "report", the default):
      person can check the pairs by eye
   5. records the run in the database (pool_runs) so the web app can show it
 In report mode nothing in the pool is moved, renamed or deleted. With --move (mode "move"):
-paired trips become ONE stitched image in Week/<vehicle category>/ and their two originals go to
-Pool/_ใช้แล้ว/<album>/ (moved, never deleted); long screenshots move as they are into
-Week/<vehicle category>/; anything unpaired or of unknown vehicle type stays where it is, so a
-re-run only works on what is still open. The category comes from the service chip on the photo
-(Bike/Car, Saver/Standard), else the album name, else the album's majority — see CATEGORY_FALLBACK.
-Distributing into rider folders (the roster + 21-per-rider quota) is the next step, not here.
+paired trips become ONE stitched image in Week/<vehicle category>/<rider>/ and their two originals
+go to Pool/_ใช้แล้ว/<album>/ (moved, never deleted); long screenshots move the same way; anything
+unpaired or of unknown vehicle type stays where it is, so a re-run only works on what is still
+open. The category comes from the service chip on the photo (Bike/Car, Saver/Standard), else the
+album name, else the album's majority — see CATEGORY_FALLBACK. Which rider, and whether a new
+folder is opened at all, is distribute.py: the album name says Win / Home / Taxi, Ops' list
+supplies the names, and nobody new is drawn while someone is still short of the weekly quota.
 
     python pool.py                      # every week folder in the pool, report only
     python pool.py --week "Week 17-23 Aug" --album "kanjana" --move
@@ -44,6 +45,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 import config
+import distribute
 import pairing
 
 
@@ -298,34 +300,59 @@ def write_previews(drive, albums, data, report, log=log):
 USED_DIR = "_ใช้แล้ว"
 
 
-def apply_moves(drive, albums, data, report, log=log):
-    """Paired trips → one stitched image in Week/<category>/; their two originals → Pool/_ใช้แล้ว/
-    <album>/ (moved, never deleted). Long screenshots → moved as they are into Week/<category>/.
-    Anything unpaired or of unknown vehicle type stays exactly where it is."""
+def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=None):
+    """Paired trips → one stitched image in Week/<category>/<rider>/; their two originals →
+    Pool/_ใช้แล้ว/<album>/ (moved, never deleted). Long screenshots → the same rider folder.
+    Anything unpaired, of unknown vehicle type, or from an album that does not say what kind of
+    driver it belongs to stays exactly where it is."""
     by_key = {(a["week"], a["album"]): a for a in albums}
+    allocators = {} if allocators is None else allocators
+    issues = [] if issues is None else issues
     moved = 0
     for entry in report["albums"]:
         alb = by_key[(entry["week"], entry["album"])]
         week_id, pool_id = alb["week_id"], alb["pool_id"]
-        cats = {}
-
-        def cat_dir(name):
-            if name not in cats:
-                cats[name] = drive.ensure_folder(week_id, name)
-            return cats[name]
-
         # folders first (sequential — Drive must not be asked to create the same one twice),
         # then every upload/move in parallel: each item is independent, and Drive's per-call
         # latency, not bandwidth, is what made this phase slow
+        # Which rider each trip belongs to is decided here, before anything is uploaded: the
+        # allocator carries 'this name is taken' across every album and group of the week, and
+        # sharing that between threads would hand one name to two riders.
+        kind = distribute.driver_kind(entry["album"])
+        if kind is None and (entry["pairs"] or entry["long"]):
+            why = (f"อัลบั้ม '{entry['album']}' ไม่ได้บอกประเภทคนขับ — ตั้งชื่อขึ้นต้นด้วย "
+                   f"2W-Win / 2W-Home / 4W-Taxi / 4W-Home แล้วสั่งรอบใหม่")
+            log(f"  ⚠ {why}")
+            issues.append((f"album:{entry['album']}", "folder", why))
+            for x in entry["pairs"] + entry["long"]:
+                x["moved"] = "ไม่รู้ประเภทคนขับจากชื่ออัลบั้ม — ยังอยู่ในกอง"
+            continue
+        alloc = allocators.get(week_id)
+        if alloc is None:
+            import db                       # imported where used, as everywhere else in this file
+            alloc = allocators[week_id] = distribute.Allocator(
+                drive, week_id,
+                {k: [n for n, kd in db.name_pool_for(k[0]) if kd == k[1]]
+                 for k in (("2W", "Win"), ("2W", "Home"), ("4W", "Taxi"), ("4W", "Home"))},
+                log=log)
         for x in entry["pairs"] + entry["long"]:
-            if x["target"]:
-                cat_dir(x["target"])
+            x["dest"] = None
+            if not x["target"]:
+                continue
+            fid, err = alloc.folder_for(x["target"], *kind)
+            if err:
+                x["moved"] = err
+                if (f"pool:{err}", "folder", err) not in issues:
+                    issues.append((f"pool:{err}", "folder", err))
+            x["dest"] = fid
         used_dir = (drive.ensure_folder(drive.ensure_folder(pool_id, USED_DIR), entry["album"])
-                    if any(p["target"] for p in entry["pairs"]) else None)
+                    if any(p.get("dest") for p in entry["pairs"]) else None)
 
         def do_pair(p):
             if not p["target"]:
                 p["moved"] = "ไม่รู้ประเภทรถ — ยังอยู่ในกอง"
+                return 0
+            if not p.get("dest"):
                 return 0
             try:
                 img = pairing.stitch(io.BytesIO(data[p["top_id"]]), io.BytesIO(data[p["bottom_id"]]))
@@ -333,7 +360,7 @@ def apply_moves(drive, albums, data, report, log=log):
                 img.save(buf, "JPEG", quality=88)
                 tn, bn = (re.search(r'(\d+)\.\w+$', x).group(1) for x in (p["top"], p["bottom"]))
                 name = f"{entry['album']}_{tn}+{bn}_฿{p['amount']:g}.jpg"
-                drive.upload_file(cats[p["target"]], name, buf.getvalue(), "image/jpeg")
+                drive.upload_file(p["dest"], name, buf.getvalue(), "image/jpeg")
                 drive.move_file(p["top_id"], used_dir)
                 drive.move_file(p["bottom_id"], used_dir)
                 p["moved"] = f"{p['target']}/{name}"
@@ -347,8 +374,10 @@ def apply_moves(drive, albums, data, report, log=log):
             if not l["target"]:
                 l["moved"] = "ไม่รู้ประเภทรถ — ยังอยู่ในกอง"
                 return 0
+            if not l.get("dest"):
+                return 0
             try:
-                drive.move_file(l["id"], cats[l["target"]])
+                drive.move_file(l["id"], l["dest"])
                 l["moved"] = f"{l['target']}/{l['file']}"
                 return 1
             except Exception as e:  # noqa: BLE001
@@ -406,7 +435,8 @@ def main(argv=None):
     return 0
 
 
-def run_pool(drive, albums, move, preview=True, use_db=True, started=None, label="", run_id=None, log=log):
+def run_pool(drive, albums, move, preview=True, use_db=True, started=None, label="",
+             run_id=None, log=log, issues=None):
     """The whole pool step on an already-scanned album list. Used by the CLI and by every ingest
     round (ingest.py, POOL_IN_ROUND). Returns the report dict, or None when the pool is empty."""
     started = started or time.strftime("%Y-%m-%d %H:%M:%S")
@@ -434,7 +464,7 @@ def run_pool(drive, albums, move, preview=True, use_db=True, started=None, label
     report["mode"] = "move" if move else "report"
     log(f"ตรวจและจับคู่เสร็จใน {time.time() - t0:.0f} วิ" + (f" · ใช้ผล OCR เดิม {report['ocr_cached']} รูป" if report.get("ocr_cached") else ""))
     if move:
-        apply_moves(drive, albums, data, report, log=log)
+        apply_moves(drive, albums, data, report, log=log, issues=issues)
     summary = render(report)
     log(summary)
     if move:                                                  # the stitched files ARE the output; keep the text log
@@ -465,7 +495,7 @@ def run_pool(drive, albums, move, preview=True, use_db=True, started=None, label
     return report
 
 
-def round_step(drive, inbox_id, run_id=None, dry_run=False, log=log):
+def round_step(drive, inbox_id, run_id=None, dry_run=False, log=log, issues=None):
     """What an ingest round does first: pair and file whatever the Agent dropped into any
     Week/Pool. Report-only on a dry run. Never raises — a pool problem must not cost the round."""
     try:
@@ -476,7 +506,7 @@ def round_step(drive, inbox_id, run_id=None, dry_run=False, log=log):
         # a dry run touches nothing: no move, no preview upload (346 stitched files is minutes of
         # Drive calls), no database row — the report goes to the log
         return run_pool(drive, albums, move=not dry_run, preview=False, use_db=not dry_run,
-                        run_id=run_id, log=log)
+                        run_id=run_id, log=log, issues=issues)
     except Exception as e:  # noqa: BLE001
         log(f"⚠ ขั้นจัดกองล้มเหลว (ข้ามไป รอบยังทำงานต่อ): {str(e)[:200]}")
         return None
