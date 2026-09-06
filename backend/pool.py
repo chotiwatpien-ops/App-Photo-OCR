@@ -251,10 +251,15 @@ def render(report):
             lines.append(f"    คู่  {p['top']}  +  {p['bottom']}   ฿{p['amount']:g}"
                          + ("" if p["distance"] == 1 else f"  (ห่าง {p['distance']})")
                          + f"  → {p.get('target') or 'ไม่รู้ประเภทรถ'}"
-                         + (f"  ✔ {p['moved']}" if "/" in p.get("moved", "") else ""))
+                         + (f"  ✔ {p['moved']}" if "/" in p.get("moved", "")
+                            else (f"  ⚠ {p['moved']}" if p.get("moved") else "")))
         for l in a["long"]:
+            # A move that failed leaves its reason in 'moved', and only the success case was
+            # being printed — 230 pictures stayed in the pool with nothing on the line to say
+            # why, and the answer (the name list had run out) reached only the web.
+            why = l.get("moved") or ""
             lines.append(f"    ยาว {l['file']}  → {l.get('target') or 'ไม่รู้ประเภทรถ'}"
-                         + ("  ✔ ย้ายแล้ว" if "/" in l.get("moved", "") else ""))
+                         + ("  ✔ ย้ายแล้ว" if "/" in why else (f"  ⚠ {why}" if why else "")))
         for l in a["leftovers"]:
             amt = "" if l["amount"] is None else f" ฿{l['amount']:g}"
             lines.append(f"    ค้าง {l['file']}  ({'ครึ่งบน' if l['role'] == 'top' else 'ครึ่งล่าง'}{amt}) — {l['why']}")
@@ -346,6 +351,7 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
                 x["moved"] = err
                 if (f"pool:{err}", "folder", err) not in issues:
                     issues.append((f"pool:{err}", "folder", err))
+                    log(f"  ⚠ {err}")
             x["dest"] = fid
         used_dir = (drive.ensure_folder(drive.ensure_folder(pool_id, USED_DIR), entry["album"])
                     if any(p.get("dest") for p in entry["pairs"]) else None)
