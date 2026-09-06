@@ -151,6 +151,14 @@ def _all_numbers(im):
     return sorted(set(seq)), seq
 
 
+# Above this width/height a picture is two screens joined, not one screen. Measured, not chosen:
+# the widest of 2,830 single screenshots in this repo is 0.725, and the narrowest of the 608
+# pictures Ops joined and sent is 0.895 — two halves of 537px side by side. The first cut was
+# 'wider than tall', taken from the 1.37 our own joins produce, and every one of those 608 fell
+# under it and was read as a half. How wide a join comes out depends entirely on how wide the
+# screenshots going into it were.
+JOINED_MIN = 0.80
+
 MAX_FILL = 0.75    # ink density above which a green block is a bar or an icon, not a figure
 MIN_AMOUNT = 15    # no Grab trip nets less than this; a smaller "amount" is a misread digit
 
@@ -159,7 +167,7 @@ MIN_AMOUNT = 15    # no Grab trip nets less than this; a smaller "amount" is a m
 # stored 878, because the same bytes still hashed the same. Bump this whenever inspect() can give
 # a different answer for a picture it has already seen, and every cached reading is left behind.
 # Kept short — the cache key column holds 40 characters and the md5 takes 32 of them.
-READER = "r5"
+READER = "r6"
 
 
 def cache_key(md5_hex: str) -> str:
@@ -235,12 +243,12 @@ def inspect(source):
              if im.width * 0.015 <= y1 - y0 < im.width * 0.055 and y0 > im.height * 0.04 and is_text(y0, y1)]
     info = {"width": im.width, "height": im.height, "amount": None, "alts": [],
             "numbers": [], "seq": [], "cut_top": None}
-    if im.width / im.height < 0.36 or im.width >= im.height:
+    if im.width / im.height < 0.36 or im.width / im.height > JOINED_MIN:
         # 'long' means 'this picture is a whole trip already — move it, do not look for a
         # partner'. Two shapes qualify. A tall one is a single scrolling screenshot. A WIDE one
         # is two screens someone joined before sending: a phone screen is always taller than it
         # is wide (the widest of 2,830 real screenshots measures 0.725), and the pictures we join
-        # ourselves come out at 1.37, so wider-than-tall cannot be one screen. Ops dropped an
+        # ourselves come out at 1.37, so a picture this wide cannot be one screen. Ops dropped an
         # album of pre-joined pictures into the pool and every one of them would have been read
         # as a half, found no partner, and sat there for ever.
         info["role"] = "long"

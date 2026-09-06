@@ -272,10 +272,23 @@ finally:
 # รูปที่ Ops ต่อมาให้แล้ว วางลงกอง — ต้องรู้ว่าเป็นเที่ยวสมบูรณ์ ไม่ใช่ครึ่งใบที่ต้องหาคู่
 wide = pairing.inspect(_enc(_Img.new("RGB", (1759, 1280), "white")))
 check("รูปที่กว้างกว่าสูง = ต่อมาแล้ว ย้ายทั้งใบ ไม่ต้องจับคู่", wide["role"] == "long")
+# ของจริงจาก Ops: ต่อรูป 537px สองใบ ได้ 1074x1200 = 0.895 — ยังไม่กว้างกว่าสูง แต่ต่อมาแล้ว
+joined = pairing.inspect(_enc(_Img.new("RGB", (1074, 1200), "white")))
+check("ต่อจากรูปแคบ (0.895) ก็ต้องรู้ว่าต่อมาแล้ว", joined["role"] == "long")
+check("เกณฑ์อยู่ระหว่างใบเดียว (0.725) กับที่ต่อแล้ว (0.895)",
+      0.725 < pairing.JOINED_MIN < 0.895)
 tall = pairing.inspect(_enc(_Img.new("RGB", (576, 2600), "white")))
 check("สกรีนช็อตยาวยังเป็น long เหมือนเดิม", tall["role"] == "long")
 one = pairing.inspect(_enc(_Img.new("RGB", (928, 1280), "white")))
 check("จอเดียวที่กว้างที่สุดที่เคยเจอ (0.725) ยังไม่ถูกนับว่าต่อแล้ว", one["role"] != "long")
+
+panupong = "Phase2/For Train Model/2W-Home Panupong for train"
+if os.path.isdir(panupong) and os.environ.get("PAIRING_SAMPLE", "1") == "1":
+    from PIL import Image as _I
+    miss = [f for f in sorted(os.listdir(panupong))
+            if (lambda s: not (s[0] / s[1] < 0.36 or s[0] / s[1] > pairing.JOINED_MIN))(
+                _I.open(os.path.join(panupong, f)).size)]
+    check(f"ชุดที่ Ops ต่อมาให้: รู้ว่าต่อแล้วทุกใบ (พลาด {len(miss)})", not miss)
 
 
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
