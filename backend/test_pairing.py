@@ -193,5 +193,55 @@ check("เพดานหมึกต้องอยู่เหนือตั�
 check("แต่ยังต่ำกว่าแถบทึบ", pairing.MAX_FILL < 0.9)
 
 
+# --- แถบวันที่บนหัวสลิป (Ops 2026-09-06: ทีมกำหนดวันที่เอง วันที่บนรูปจึงขัดกับในไฟล์) --------
+check("จับแถบวันที่ได้แม้ OCR อ่านเดือนไทยเพี้ยน",
+      bool(pairing.DATE_BAR.search("05 n.8.2026, 02:51 PM 7.17 km")))
+check("ไม่ไปจับข้อความปกติในสลิป",
+      not pairing.DATE_BAR.search("nnnesuLCyIBLs 150 B150"))
+check("ตัวเลขเงินอย่างเดียวไม่ใช่แถบวันที่",
+      not pairing.DATE_BAR.search("2026 150 190"))
+
+from PIL import Image as _Img                                   # noqa: E402
+plain = _Img.new("RGB", (600, 1200), "white")
+check("รูปเปล่าไม่มีอะไรให้ตัด", pairing.date_bar_cut(plain) is None)
+# ครึ่งบนที่มีแถบสีแดง 120px อยู่ข้างบน — ตัดแล้วต้องไม่เหลือสีแดงในรูปที่ต่อเสร็จ
+a, b = _Img.new("RGB", (400, 1000), "white"), _Img.new("RGB", (400, 1000), "white")
+a.paste((255, 0, 0), (0, 0, 400, 120))
+check("ไม่สั่งตัด แถบยังอยู่", pairing.stitch(a, b).getpixel((5, 5)) == (255, 0, 0))
+cut = pairing.stitch(a, b, cut_top=120)
+check("สั่งตัดแล้วแถบหายจากรูปที่ต่อเสร็จ", cut.getpixel((5, 5)) == (255, 255, 255))
+check("ตัดเฉพาะครึ่งบน ครึ่งล่างไม่ถูกแตะ",
+      cut.getpixel((400 + 16 + 5, 995)) == (255, 255, 255) and cut.height == 1000)
+
+dates = "Phase2/For Train Model/Remove Date Train"
+if os.path.isdir(dates) and os.environ.get("PAIRING_SAMPLE", "1") == "1":
+    tops = bots = 0
+    for f in sorted(os.listdir(dates)):
+        im = _Img.open(os.path.join(dates, f)).convert("RGB")
+        cut = pairing.date_bar_cut(im)
+        if cut is None:
+            bots += 1
+        else:
+            tops += 1
+            if not 0.05 < cut / im.height < 0.15:
+                print("   ✗ ตัดผิดตำแหน่ง", f, cut / im.height)
+    check(f"ชุด Remove Date: เจอแถบ 15 ใบ (เจอ {tops})", tops == 15)
+    check(f"ครึ่งล่างไม่ถูกตัดสักใบ (ไม่ตัด {bots})", bots == 15)
+
+
+# ชุด Remove Date 2026-09-06: ครึ่งบน ฿161 ไปคว้าครึ่งล่าง ฿161 ที่ห่าง 15 ใบ (ยอดตรงเป๊ะ)
+# แทนที่จะจับกับใบที่ติดกัน (฿153 + ส่วนเพิ่ม 8) — ทำให้คู่ที่ถูกต้องกำพร้าไปสองคู่
+far = [("b1", {"role": "bottom", "amount": 161.0, "numbers": [8, 161]}),
+       ("t1", {"role": "top", "amount": 169.0}),
+       ("pad1", {"role": "long", "amount": None}), ("pad2", {"role": "long", "amount": None}),
+       ("b2", {"role": "bottom", "amount": 153.0, "numbers": [8, 153]}),
+       ("t2", {"role": "top", "amount": 161.0})]
+pairs, left = pairing.pair_album(far)
+got = sorted((t, b) for t, b, _ in pairs)
+check("ยอดตรงเป๊ะแต่อยู่ไกล ต้องแพ้ใบที่ติดกัน", got == [("t1", "b1"), ("t2", "b2")])
+check("ไม่เหลือครึ่งไหนกำพร้า", not left)
+check("รายงานระยะห่างที่ถูกต้อง", all(d == 1 for _, _, d in pairs))
+
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

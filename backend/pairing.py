@@ -153,11 +153,45 @@ MIN_AMOUNT = 15    # no Grab trip nets less than this; a smaller "amount" is a m
 # stored 878, because the same bytes still hashed the same. Bump this whenever inspect() can give
 # a different answer for a picture it has already seen, and every cached reading is left behind.
 # Kept short — the cache key column holds 40 characters and the md5 takes 32 of them.
-READER = "r3"
+READER = "r4"
 
 
 def cache_key(md5_hex: str) -> str:
     return f"{READER}:{md5_hex}"
+
+
+# The history screen puts a date above the trip ('05 ก.ย. 2026, 02:51 PM'). Ops assigns the date
+# in the workbook themselves, so a real one printed on the picture contradicts the one beside it —
+# it has to come off before the halves are joined. Anchored on the year and the clock, not on the
+# month: the free OCR renders 'ก.ย.' as 'n.8.' but reads Latin digits cleanly.
+DATE_BAR = re.compile(r"(20\d\d)\s*[,.]?\s*(\d{1,2})[:.](\d{2})\s*(AM|PM)", re.IGNORECASE)
+
+
+def date_bar_cut(im):
+    """Where to cut a top half so the date bar goes with it, or None when there is no bar.
+
+    The bar is the first band of dark text on the screen and the line under it ('7.17 km') is the
+    next; cutting between the two takes the bar and nothing else. Measured over 30 pictures the
+    line landed at 8.7-9.7% of the height, and none of the 15 bottom halves — which carry text
+    near the top too — was mistaken for one."""
+    band = im.crop((0, 0, im.width, int(im.height * 0.20)))
+    txt = " ".join(_read_text(band.resize((band.width * 2, band.height * 2), Image.LANCZOS)).split())
+    if not DATE_BAR.search(txt):
+        return None
+    dark = (np.asarray(band.convert("L")) < 140).sum(axis=1) > 3
+    runs, start = [], None
+    for y, on in enumerate(dark):
+        if on and start is None:
+            start = y
+        elif not on and start is not None:
+            runs.append((start, y - 1))
+            start = None
+    if start is not None:
+        runs.append((start, len(dark) - 1))
+    runs = [r for r in runs if r[1] - r[0] >= 8]          # ignore hairlines and specks
+    if len(runs) < 2:
+        return None                                        # nothing under it to cut above
+    return (runs[0][1] + runs[1][0]) // 2
 
 
 def inspect(source):
@@ -189,7 +223,8 @@ def inspect(source):
            if im.width * 0.055 <= y1 - y0 <= im.width * 0.16 and y0 > im.height * 0.04 and is_text(y0, y1)]
     small = [(y0, y1) for y0, y1 in blocks
              if im.width * 0.015 <= y1 - y0 < im.width * 0.055 and y0 > im.height * 0.04 and is_text(y0, y1)]
-    info = {"width": im.width, "height": im.height, "amount": None, "alts": [], "numbers": [], "seq": []}
+    info = {"width": im.width, "height": im.height, "amount": None, "alts": [],
+            "numbers": [], "seq": [], "cut_top": None}
     if im.width / im.height < 0.36:
         info["role"] = "long"
     elif big:
@@ -206,6 +241,7 @@ def inspect(source):
         info["amount"], info["alts"] = read[(y0, y1)]
         if (y0 + y1) / 2 > im.height * 0.4:
             info["role"] = "top"                             # route + map above, amount below
+            info["cut_top"] = date_bar_cut(im)
         else:
             # screenshot that STARTS at 'คุณได้รับ' and continues into the fare breakdown:
             # for pairing it plays the bottom (it carries the net and every breakdown number)
@@ -414,7 +450,16 @@ def pair_album(items):
         for b in bottoms:
             tier = match_tier(info[t], info[b])
             if tier is not None:
-                cands.append(((tier, abs(order[t] - order[b])), t, b))
+                # Sitting next to each other is evidence in its own right, and until now it
+                # counted for nothing until the tiers tied. A rider takes the two shots back to
+                # back, so halves 15 pictures apart are a pair only if the rider interleaved
+                # trips, which does not happen — while an exact figure matching across that gap
+                # happens all the time on an album of similar fares. Ranking the neighbours first
+                # cost nothing on the 878 pictures of a real week (every pair there is adjacent)
+                # and stopped an exact ฿161 at distance 15 from stealing a bottom off the pair
+                # beside it, which orphaned BOTH correct pairs.
+                dist = abs(order[t] - order[b])
+                cands.append(((0 if dist <= 1 else 1, tier, dist), t, b))
     cands.sort()
 
     def greedy(ranked):
@@ -428,7 +473,7 @@ def pair_album(items):
 
     # 1) pairs that are unambiguous (no other candidate at the same distance)
     best_t, best_b = {}, {}
-    for d, t, b in cands:                       # d = (tier, distance)
+    for d, t, b in cands:                       # d = (adjacent?, tier, distance)
         best_t.setdefault(t, d)
         best_b.setdefault(b, d)
     tie_t = {t for d, t, _ in cands if d == best_t[t]
@@ -446,14 +491,16 @@ def pair_album(items):
         habit = 1 if after > before else -1
         ranked = sorted(cands, key=lambda c: (c[0], 0 if (order[c[2]] - order[c[1]]) * habit > 0 else 1))
         pairs = greedy(ranked)
-    pairs = [(t, b, d[1]) for t, b, d in pairs]  # report the file distance, not the rank
+    pairs = [(t, b, d[2]) for t, b, d in pairs]  # report the file distance, not the rank
     used = {k for t, b, _ in pairs for k in (t, b)}
     leftovers = [k for k in tops + bottoms if k not in used]
     return pairs, leftovers
 
 
-def stitch(top_img, bottom_img, side_by_side=True, gap=16):
+def stitch(top_img, bottom_img, side_by_side=True, gap=16, cut_top=None):
     A, B = (x if isinstance(x, Image.Image) else Image.open(x).convert("RGB") for x in (top_img, bottom_img))
+    if cut_top:
+        A = A.crop((0, cut_top, A.width, A.height))       # the date bar never reaches the join
     if side_by_side:
         out = Image.new("RGB", (A.width + gap + B.width, max(A.height, B.height)), "white")
         out.paste(A, (0, 0))

@@ -203,7 +203,7 @@ def analyse(albums, data, workers, cache=None):
             "n_duplicates": len(alb["images"]) - len(alb["_keep"]),
             "long": [{"file": n, "id": by_name[n]["id"], "target": target_for(by_name[n]["id"], alb["album"])}
                      for n, i in items if i["role"] == "long"],
-            "pairs": [{"top": t, "bottom": b,
+            "pairs": [{"top": t, "bottom": b, "cut_top": d[t].get("cut_top"),
                        "amount": pairing.agreed_amount(d[t], d[b]), "distance": dist,
                        "top_id": by_name[t]["id"], "bottom_id": by_name[b]["id"],
                        "target": target_for(by_name[t]["id"], alb["album"])} for t, b, dist in pairs],
@@ -284,7 +284,8 @@ def write_previews(drive, albums, data, report, log=log):
             if a["group"] and a["group"] != a["album"]:          # only nest when there is a real group level
                 alb_dir = drive.ensure_folder(drive.ensure_folder(rep_dir, a["group"]), a["album"])
             for i, p in enumerate(a["pairs"], 1):
-                img = pairing.stitch(io.BytesIO(data[p["top_id"]]), io.BytesIO(data[p["bottom_id"]]))
+                img = pairing.stitch(io.BytesIO(data[p["top_id"]]),
+                                     io.BytesIO(data[p["bottom_id"]]), cut_top=p.get("cut_top"))
                 buf = io.BytesIO()
                 img.save(buf, "JPEG", quality=88)
                 tn, bn = (x.rsplit("_", 1)[1].rsplit(".", 1)[0] for x in (p["top"], p["bottom"]))
@@ -356,7 +357,8 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
             if not p.get("dest"):
                 return 0
             try:
-                img = pairing.stitch(io.BytesIO(data[p["top_id"]]), io.BytesIO(data[p["bottom_id"]]))
+                img = pairing.stitch(io.BytesIO(data[p["top_id"]]),
+                                     io.BytesIO(data[p["bottom_id"]]), cut_top=p.get("cut_top"))
                 buf = io.BytesIO()
                 img.save(buf, "JPEG", quality=88)
                 tn, bn = (re.search(r'(\d+)\.\w+$', x).group(1) for x in (p["top"], p["bottom"]))
