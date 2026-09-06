@@ -269,5 +269,14 @@ finally:
     pairing._engine = _real_engine
 
 
+# รูปที่ Ops ต่อมาให้แล้ว วางลงกอง — ต้องรู้ว่าเป็นเที่ยวสมบูรณ์ ไม่ใช่ครึ่งใบที่ต้องหาคู่
+wide = pairing.inspect(_enc(_Img.new("RGB", (1759, 1280), "white")))
+check("รูปที่กว้างกว่าสูง = ต่อมาแล้ว ย้ายทั้งใบ ไม่ต้องจับคู่", wide["role"] == "long")
+tall = pairing.inspect(_enc(_Img.new("RGB", (576, 2600), "white")))
+check("สกรีนช็อตยาวยังเป็น long เหมือนเดิม", tall["role"] == "long")
+one = pairing.inspect(_enc(_Img.new("RGB", (928, 1280), "white")))
+check("จอเดียวที่กว้างที่สุดที่เคยเจอ (0.725) ยังไม่ถูกนับว่าต่อแล้ว", one["role"] != "long")
+
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

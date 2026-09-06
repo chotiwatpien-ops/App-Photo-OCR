@@ -14,6 +14,10 @@ on:
     - cron: "23 */3 * * *"
   workflow_dispatch:
     inputs:
+      force_walk:
+        description: "เดินโฟลเดอร์ทุกอันแน่ ๆ (ใช้เมื่อวางโฟลเดอร์ใหม่แล้วรอบก่อนข้ามไป)"
+        type: boolean
+        default: false
       dry_run:
         description: "List only, don't process"
         type: boolean
@@ -110,6 +114,10 @@ jobs:
           DRIVE_EXPORTS_FOLDER_ID: ${{ secrets.DRIVE_EXPORTS_FOLDER_ID }}
           GEMINI_MODEL: ${{ github.event.inputs.model || vars.GEMINI_MODEL || 'gemini-3.7-flash' }}
           TZ: Asia/Bangkok        # runner clock is UTC; the app stamps Bangkok — keep logs comparable
+          # 0 turns the 'anything new?' probe off for this run, so the whole Inbox is walked.
+          # Moving files into a folder does not change their modifiedTime, so a delivery can be
+          # invisible to the probe; this is the way to make a round look anyway.
+          DRIVE_PROBE: ${{ github.event.inputs.force_walk == 'true' && '0' || '1' }}
           INGEST_BATCH: ${{ github.event.inputs.live_read == 'true' && '0' || '1' }}
           INGEST_PARALLEL: "24"
           # 8 was the calm-down after a 32-fault network storm on 2026-08-26, before every Drive

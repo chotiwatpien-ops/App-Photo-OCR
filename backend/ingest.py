@@ -208,6 +208,17 @@ def nothing_new(drive) -> bool:
         return False
     if len(found) >= PROBE_PAGE:
         return False                       # too many to judge; the walk decides
+    # A folder that appeared or changed is reason enough to walk, whatever the pictures say:
+    # moving a file into a folder leaves its modifiedTime alone, so a delivery of photos that
+    # already existed elsewhere shows up here and nowhere else. Ops made a folder and the round
+    # skipped straight past it on 2026-09-06.
+    if hasattr(drive, "folders_modified_since"):
+        try:
+            if drive.folders_modified_since(since, limit=5):
+                return False
+        except Exception as e:  # noqa: BLE001 — a probe must never be the reason a round fails
+            log(f"⚠ ถาม Drive เรื่องโฟลเดอร์ใหม่ไม่สำเร็จ ({str(e)[:80]}) — เดินโฟลเดอร์ตามปกติ")
+            return False
     if not found:
         return True
     ids = [f["id"] for f in found]

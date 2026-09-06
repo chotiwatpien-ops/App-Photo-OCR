@@ -159,6 +159,21 @@ class DriveClient:
                 supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
         return [{"id": r["id"], "name": r.get("name")} for r in self._retry(_q).get("files", [])]
 
+    def folders_modified_since(self, since_rfc3339, limit=20):
+        """Folders touched after a moment — the other half of 'is there anything new'.
+
+        Moving a file into a folder does not change the file's modifiedTime, so a folder Ops
+        filled with pictures that already existed elsewhere is invisible to the image probe.
+        The folder itself is always new. One more call, and a round stops being able to skip
+        past a delivery."""
+        def _q():
+            return self.svc.files().list(
+                q=("mimeType = 'application/vnd.google-apps.folder' and trashed=false "
+                   f"and modifiedTime > '{since_rfc3339}'"),
+                fields="files(id, name)", pageSize=limit, orderBy="modifiedTime desc",
+                supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
+        return [{"id": r["id"], "name": r.get("name")} for r in self._retry(_q).get("files", [])]
+
 
 class LocalDrive:
     """Same interface over a local directory tree — for testing ingest without Google."""
