@@ -236,6 +236,10 @@ def discover(drive, inbox_id):
                     _discover_category(drive, cat, clean_name(cat["name"]), d1.isoformat(), d2.isoformat(), wk, skipped, items)
                 elif clean_name(cat["name"]).lower() in POOL_FOLDER_NAMES:
                     continue  # Phase 2 album pool (pool.py) — whole albums, not yet sorted into riders
+                elif cat["name"].lstrip().startswith("_"):
+                    continue  # our own housekeeping — '_ใช้แล้ว', '_รายงาน', '_ทิ้ง-จับคู่ผิด'.
+                    # A leading underscore has meant 'the tools put this here' since the pool
+                    # step; warning about it every round is noise about a folder we made.
                 else:
                     skipped.append(f"'{top['name']}/{cat['name']}' ไม่ใช่กลุ่มรถ (4 W Standard ...) — ข้าม")
             continue

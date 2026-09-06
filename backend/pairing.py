@@ -145,7 +145,19 @@ def _all_numbers(im):
     return sorted(set(seq)), seq
 
 
+MAX_FILL = 0.75    # ink density above which a green block is a bar or an icon, not a figure
 MIN_AMOUNT = 15    # no Grab trip nets less than this; a smaller "amount" is a misread digit
+
+# What inspect() answered for a picture is cached on the picture's bytes, which is right until the
+# reader itself changes: the '฿78 read as 878' fix shipped and the very next round handed back the
+# stored 878, because the same bytes still hashed the same. Bump this whenever inspect() can give
+# a different answer for a picture it has already seen, and every cached reading is left behind.
+# Kept short — the cache key column holds 40 characters and the md5 takes 32 of them.
+READER = "r3"
+
+
+def cache_key(md5_hex: str) -> str:
+    return f"{READER}:{md5_hex}"
 
 
 def inspect(source):
@@ -156,13 +168,20 @@ def inspect(source):
 
     def is_text(y0, y1):
         """A printed figure ('฿ 28', '฿ 413') is always wider than it is tall; the green map
-        pin, the status-bar icon and other blobs are square or upright. Skip the blobs."""
+        pin, the status-bar icon and other blobs are square or upright. Skip the blobs.
+
+        The density ceiling used to be 0.6, which is where the real figures actually END: across
+        the 878 pictures of one week, the fattest '฿86' measured 0.600 exactly and was thrown out
+        as a blob, so its half read as a bottom and never found the top it belonged to. Digits
+        made of round strokes (8, 6, 0) pack more ink than 7s and 1s, so the ceiling has to sit
+        clear of the fullest of them, not on top of it. A solid bar — the thing this rejects —
+        measures above 0.9."""
         cols = np.where(mask[y0:y1 + 1].sum(axis=0) > 0)[0]
         if len(cols) < 2:
             return False
         width, height = cols[-1] - cols[0] + 1, y1 - y0 + 1
         fill = mask[y0:y1 + 1, cols[0]:cols[-1] + 1].mean()
-        return width >= 1.3 * height and fill < 0.6
+        return width >= 1.3 * height and fill < MAX_FILL
 
     # the big 'คุณได้รับ' figure is ≥5.5% of the width tall; the status bar (top 4% of the
     # screen) can hold a green LINE icon glued to a half-hidden line, so it never counts as big
@@ -364,6 +383,22 @@ def match_tier(top, bottom):
 
 def matches(top, bottom) -> bool:
     return match_tier(top, bottom) is not None
+
+
+def agreed_amount(top, bottom):
+    """Which reading of the top half its partner actually agrees with.
+
+    A '฿'-as-digit reading travels as an alternative, so a pair can be made on ฿78 while the top
+    still says 878. Reporting the primary then writes the wrong fare into the stitched file's own
+    name — and that name is what the audit reads back as evidence. Every reading is tried on its
+    own and the one that agrees most strongly wins; on a tie the primary keeps it."""
+    nets = [n for n in [top.get("amount")] + list(top.get("alts") or []) if n is not None and n > 0]
+    best, best_tier = top.get("amount"), None
+    for net in nets:
+        t = match_tier({"amount": net, "alts": []}, bottom)
+        if t is not None and (best_tier is None or t < best_tier):
+            best, best_tier = net, t
+    return best
 
 
 def pair_album(items):

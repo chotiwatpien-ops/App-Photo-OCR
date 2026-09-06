@@ -159,7 +159,7 @@ def analyse(albums, data, workers, cache=None):
                                              "file": where, "same_as": seen[h]})
                 continue
             seen[h] = where
-            hashes[img["id"]] = h
+            hashes[img["id"]] = pairing.cache_key(h)   # dedupe on the bytes, cache on the reader too
             alb["_keep"].append(img)
             todo.append((ai, img))
 
@@ -203,7 +203,8 @@ def analyse(albums, data, workers, cache=None):
             "n_duplicates": len(alb["images"]) - len(alb["_keep"]),
             "long": [{"file": n, "id": by_name[n]["id"], "target": target_for(by_name[n]["id"], alb["album"])}
                      for n, i in items if i["role"] == "long"],
-            "pairs": [{"top": t, "bottom": b, "amount": d[t]["amount"], "distance": dist,
+            "pairs": [{"top": t, "bottom": b,
+                       "amount": pairing.agreed_amount(d[t], d[b]), "distance": dist,
                        "top_id": by_name[t]["id"], "bottom_id": by_name[b]["id"],
                        "target": target_for(by_name[t]["id"], alb["album"])} for t, b, dist in pairs],
             "leftovers": [{"file": n, "role": d[n]["role"], "amount": d[n]["amount"],
@@ -453,7 +454,8 @@ def run_pool(drive, albums, move, preview=True, use_db=True, started=None, label
     if use_db:
         import db
         db.init_db()
-        cache = db.pool_ocr_cache_load(hashlib.md5(v).hexdigest() for v in data.values())
+        cache = db.pool_ocr_cache_load(pairing.cache_key(hashlib.md5(v).hexdigest())
+                                       for v in data.values())
     report = analyse(albums, data, config.POOL_PARALLEL, cache)
     fresh = report.pop("ocr_fresh", {})
     if use_db and fresh:

@@ -49,11 +49,17 @@ for week, rider_photos in (("Week xx-xx SEP Test", True), ("Week 7-13 Sep", Fals
         for f in files[:2]:
             shutil.copy2(os.path.join(SAMPLE, f), os.path.join(rider, f))
 
+# โฟลเดอร์เก็บของที่เครื่องมือเราสร้างเอง ต้องข้ามเงียบ ๆ ไม่ใช่เตือนซ้ำทุกรอบ
+os.makedirs(os.path.join(root, "Week 7-13 Sep", "_ทิ้ง-จับคู่ผิด"))
+os.makedirs(os.path.join(root, "Week 7-13 Sep", "ชื่อมั่ว"))
+
 drive = LocalDrive(root)
 items, skipped = ingest.discover(drive, root)
 weeks_seen = {i["date_from"] for i in items}
 check(f"ingest ไม่อ่านรูปในสัปดาห์ทดสอบ (เจอ {len(items)} รูป, ต้อง 0)", not items)
 check("ไม่มีคำเตือนเรื่องสัปดาห์ทดสอบ", not any("Test" in s for s in skipped))
+check("โฟลเดอร์ขึ้นต้นด้วย _ ถูกข้ามเงียบ ๆ", not any("_ทิ้ง" in s for s in skipped))
+check("โฟลเดอร์แปลกปลอมจริงยังเตือนอยู่", any("ชื่อมั่ว" in s for s in skipped))
 
 albums = pool.scan_inbox(drive, root)
 check(f"จัดกองอัตโนมัติข้ามสัปดาห์ทดสอบ (เจอ {len(albums)} อัลบั้ม, ต้อง 1 = ของสัปดาห์จริง)",
