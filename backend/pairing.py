@@ -69,7 +69,10 @@ def _green_blocks(a):
 def _try_amount(im, mask, y0, y1):
     """_amount_from_block that never raises. Every green block on the screen is read now, not
     just the chosen one, and a decoration can crop to a shape the OCR refuses to resize —
-    which killed a whole run before this existed. An unreadable block simply has no amount."""
+    which killed a whole run before this existed. An unreadable block simply has no amount.
+
+    Every caller goes through here. The bottom half's own line did not, and took a run down again
+    on 2026-09-06 — a guard only protects the paths that actually use it."""
     try:
         return _amount_from_block(im, mask, y0, y1)
     except Exception:  # noqa: BLE001 — a block we cannot read is a block with no number in it
@@ -138,7 +141,10 @@ def _all_numbers(im):
     w = 720
     im = im.crop((0, int(im.height * 0.04), im.width, im.height))
     im2 = im.resize((w, int(im.height * w / im.width)), Image.LANCZOS)
-    res, _ = _engine()(np.asarray(im2))
+    try:
+        res, _ = _engine()(np.asarray(im2))
+    except Exception:  # noqa: BLE001 — a page we cannot read has no numbers on it, and one
+        return [], []  # picture the OCR refuses must not take the round down with it
     seq = []
     for box, t, _ in sorted(res or [], key=lambda r: (r[0][0][1], r[0][0][0])):
         seq += [float(x) for x in re.findall(r'(?<![\d.:])(\d{1,4}(?:\.\d{1,2})?)(?![\d:])', t)]
@@ -175,7 +181,11 @@ def date_bar_cut(im):
     line landed at 8.7-9.7% of the height, and none of the 15 bottom halves — which carry text
     near the top too — was mistaken for one."""
     band = im.crop((0, 0, im.width, int(im.height * 0.20)))
-    txt = " ".join(_read_text(band.resize((band.width * 2, band.height * 2), Image.LANCZOS)).split())
+    try:
+        txt = " ".join(_read_text(
+            band.resize((band.width * 2, band.height * 2), Image.LANCZOS)).split())
+    except Exception:  # noqa: BLE001 — a band we cannot read is not a bar we can prove
+        return None
     if not DATE_BAR.search(txt):
         return None
     dark = (np.asarray(band.convert("L")) < 140).sum(axis=1) > 3
@@ -251,7 +261,7 @@ def inspect(source):
         info["role"] = "bottom"
         if small:
             y0, y1 = small[0]                                # topmost small green line = 'รวมรายได้จากรอบขับ'
-            info["amount"], info["alts"] = _amount_from_block(im, mask, y0, y1)
+            info["amount"], info["alts"] = _try_amount(im, mask, y0, y1)
         info["numbers"], info["seq"] = _all_numbers(im)
     if info["amount"] is not None and info["amount"] < MIN_AMOUNT:
         # ฿4, ฿8 … are never a fare: the OCR dropped digits (or read the bonus line). Treated

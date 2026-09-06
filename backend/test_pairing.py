@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 """Pairing rules must hold without any OCR; the folder run is checked when sample data exists."""
+import io
 import os
 import sys
 
@@ -241,6 +242,31 @@ got = sorted((t, b) for t, b, _ in pairs)
 check("ยอดตรงเป๊ะแต่อยู่ไกล ต้องแพ้ใบที่ติดกัน", got == [("t1", "b1"), ("t2", "b2")])
 check("ไม่เหลือครึ่งไหนกำพร้า", not left)
 check("รายงานระยะห่างที่ถูกต้อง", all(d == 1 for _, _, d in pairs))
+
+
+def _enc(im):
+    b = io.BytesIO()
+    im.save(b, "JPEG")
+    return b.getvalue()
+
+
+
+# OCR ปฏิเสธรูปทรงบางแบบแล้วโยน error — ถ้าไม่กัน ทั้งรอบตาย เพราะรูปเดียว
+class _Boom:
+    def __call__(self, *a, **k):
+        raise RuntimeError("ResizeImgError")
+
+
+_real_engine = pairing._engine
+pairing._engine = lambda: _Boom()
+try:
+    im_ok = _Img.new("RGB", (576, 1280), "white")
+    im_ok.paste((0, 200, 90), (40, 700, 120, 740))          # ก้อนสีเขียวขนาดตัวเลขใหญ่
+    got = pairing.inspect(_enc(im_ok))
+    check("OCR ล้มแล้วยังตรวจรูปต่อได้ ไม่พาทั้งรอบลงเหว", got["amount"] is None)
+    check("อ่านแถบวันที่ไม่ได้ ก็ไม่เดาว่ามีแถบ", pairing.date_bar_cut(im_ok) is None)
+finally:
+    pairing._engine = _real_engine
 
 
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")

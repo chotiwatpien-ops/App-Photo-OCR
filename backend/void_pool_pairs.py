@@ -35,6 +35,64 @@ def drive_id(source_url):
     return m.group(1) if m else ((source_url or "").rstrip("/").split("/")[-1] or None)
 
 
+def scan_week(week_name, min_distance, apply_it):
+    """Judge the stitched pictures already sitting in a week's rider folders, by name alone.
+
+    Backfill moved 150 of them out of the group folders and into riders, where the next round
+    will read them — and they were made by pool runs older than every pairing fix. The distance
+    between the two halves is in the file's own name, so a bad pair can be found and pulled
+    before it is ever read, without OCR, a model call or a database row to undo."""
+    import roster
+    drive = roster._drive()
+    inbox = config.DRIVE_INBOX_FOLDER_ID
+    week = next((f for f in drive.list_folders(inbox) if f["name"].strip() == week_name.strip()), None)
+    if week is None:
+        print(f"✗ ไม่พบสัปดาห์ {week_name!r} ใน Inbox")
+        return 1
+    found, far = 0, []
+    for cat in drive.list_folders(week["id"]):
+        if cat["name"].strip().lower() in ("pool", "กอง") or cat["name"].lstrip().startswith("_"):
+            continue
+        for rider in drive.list_folders(cat["id"]):
+            for img in drive.list_images(rider["id"]):
+                d = audit.digits(img["name"])
+                if d is None:
+                    continue
+                found += 1
+                gap = abs(d[0] - d[1])
+                if gap >= min_distance:
+                    far.append((gap, cat["name"], rider["name"], img["name"], img["id"]))
+    print(f"{week_name}: รูปที่ต่อแล้วในโฟลเดอร์ไรเดอร์ {found} ใบ")
+    print(f"  ครึ่งบน/ครึ่งล่างห่างกันตั้งแต่ {min_distance} ใบ: {len(far)} ใบ"
+          + ("  ← น่าสงสัยว่าจับผิดคู่" if far else "  ✓ ติดกันหมด"))
+    for gap, cat, rider, name, _ in sorted(far, reverse=True)[:40]:
+        print(f"    ห่าง {gap:>3}  {cat}/{rider}/{name}")
+    if not far:
+        return 0
+    if not apply_it:
+        print("\n(รายงานอย่างเดียว — ใส่ --apply เพื่อย้ายออกไปพักไว้)")
+        return 0
+    hold = drive.ensure_folder(week["id"], HOLD_DIR)
+    n = 0
+    for _gap, _cat, _rider, name, fid in far:
+        try:
+            drive.move_file(fid, hold)
+            n += 1
+        except Exception as e:                                    # noqa: BLE001
+            print(f"  ⚠ ย้ายไม่สำเร็จ {name}: {str(e)[:80]}")
+    print(f"\nย้ายไป {week_name}/{HOLD_DIR}/ แล้ว {n} ใบ (ไม่ได้ลบ) — "
+          f"รอบถัดไปจะไม่อ่านมันเข้าฐานข้อมูล")
+    from sqlalchemy import select
+    with db.engine.begin() as c:                      # any of them already read? park those too
+        ids = [r[0] for r in c.execute(select(db.trips.c.id).where(
+            db.trips.c.file_name.in_([f[3] for f in far]),
+            db.trips.c.status != "voided")).all()]
+    if ids:
+        db.void_trips(ids, "ทิ้ง: คู่ผิด (ตรวจจากระยะห่างในชื่อไฟล์)")
+        print(f"และพักแถวที่เคยอ่านไปแล้ว {len(ids)} แถว")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="เอาแถวที่เกิดจากคู่ผิดของ pool run ออก (ไม่ลบ)")
     ap.add_argument("--run", type=int, help="เลข pool run (ไม่ต้องใส่ถ้า --release-only)")
@@ -44,6 +102,8 @@ def main(argv=None):
     ap.add_argument("--keep-images", action="store_true", help="ไม่ต้องย้ายรูปบน Drive")
     ap.add_argument("--release-only", action="store_true",
                     help="ไม่พักแถวใหม่ แค่ปลดธงซ้ำของแถวที่ชี้ไปหาแถวที่พักไปแล้ว")
+    ap.add_argument("--scan-week", default="",
+                    help="ตรวจไฟล์ที่ต่อแล้วในโฟลเดอร์ไรเดอร์ของสัปดาห์นี้ จากชื่อไฟล์ (ยังไม่ต้องอ่าน)")
     a = ap.parse_args(argv)
     db.init_db()
 
@@ -51,8 +111,10 @@ def main(argv=None):
         n = db.release_dup_flags_pointing_at_voided()
         print(f"ปลดธงซ้ำให้ {n} แถวที่ชี้ไปหาแถวที่ถูกพักไว้แล้ว — กลับไปเข้าเส้นทางอนุมัติปกติ")
         return 0
+    if a.scan_week:
+        return scan_week(a.scan_week, a.min_distance, a.apply)
     if not a.run:
-        ap.error("ต้องระบุ --run หรือ --release-only")
+        ap.error("ต้องระบุ --run, --scan-week หรือ --release-only")
 
     r = audit.resolve(a.run, far=a.min_distance - 1)
     if r is None:

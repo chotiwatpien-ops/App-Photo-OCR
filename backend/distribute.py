@@ -130,6 +130,7 @@ def backfill(drive, week_id, categories, pool, per_rider=None, seed=None, dry_ru
     alloc.prime(categories)
     moved, stuck = 0, []
     for cat in categories:
+        before = moved
         g = alloc._load(cat)
         loose = drive.list_images(g["id"])
         log(f"\n{cat}: ไฟล์ลอย {len(loose)} รูป")
@@ -150,7 +151,7 @@ def backfill(drive, week_id, categories, pool, per_rider=None, seed=None, dry_ru
             if not dry_run:
                 drive.move_file(f["id"], fid)
             moved += 1
-        log(f"  ย้าย {moved} · ค้าง {len(stuck)}")
+        log(f"  ย้าย {moved - before} · ค้าง {len(stuck)}")   # this group, not the running total
     return moved, stuck
 
 

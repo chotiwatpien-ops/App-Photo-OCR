@@ -15,6 +15,10 @@ on:
         description: "เลข pool run"
         type: string
         default: "7"
+      scan_week:
+        description: "ตรวจไฟล์ที่ต่อแล้วในโฟลเดอร์ไรเดอร์ของสัปดาห์นี้ จากชื่อไฟล์ (เช่น Week 31 Aug-6 Sep)"
+        type: string
+        default: ""
       release_only:
         description: "ไม่พักแถวใหม่ — แค่ปลดธงซ้ำของแถวที่ชี้ไปหาแถวที่พักไปแล้ว (ทำได้เลย ปลอดภัย)"
         type: boolean
@@ -54,6 +58,12 @@ jobs:
         run: |
           if [ "${{ github.event.inputs.release_only }}" = "true" ]; then
             python void_pool_pairs.py --release-only
+            exit 0
+          fi
+          if [ -n "${{ github.event.inputs.scan_week }}" ]; then
+            ARGS="--scan-week '${{ github.event.inputs.scan_week }}' --min-distance ${{ github.event.inputs.min_distance }}"
+            if [ "${{ github.event.inputs.apply }}" = "true" ]; then ARGS="$ARGS --apply"; fi
+            eval python void_pool_pairs.py $ARGS
             exit 0
           fi
           ARGS="--run ${{ github.event.inputs.run }} --min-distance ${{ github.event.inputs.min_distance }}"

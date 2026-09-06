@@ -225,6 +225,7 @@ def main(argv=None):
                   f"{'  [' + str(r.get('check_status')) + ']' if r else '  [ยังไม่ได้อ่าน]'}"
                   f"{'  ' + str(r.get('booking_code')) if r.get('booking_code') else ''}"
                   + (f"  ({d[0]} กับ {d[1]})" if d else ""))
+    health(rows)
     print("\n(รายงานอย่างเดียว — ไม่ได้แก้อะไรทั้งสิ้น)")
     return 0
 

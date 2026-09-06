@@ -148,10 +148,18 @@ with db.engine.begin() as c:
                                    ("รอ.jpg", "pending", 0, None, "batch-1")]:
         c.execute(db.trips.insert().values(job_id=jh, file_name=fn, status=st, committed=com,
                                            booking_code=code, batch_name=bat))
+# เรียกผ่าน main() ไม่ใช่เรียก health() ตรง ๆ — รอบแรกฟังก์ชันถูกเขียนไว้แต่ไม่มีใครเรียก
+# แล้วเทสที่เรียกเองก็ผ่าน ทั้งที่รายงานจริงไม่เคยพิมพ์มันออกมาเลย
+db.record_pool_run("move", "W2", {"n_pairs": 1}, "s",
+                   {"albums": [{"album": "Z", "pairs": [
+                       {"moved": "2 W Saver/01-a/ซ้ำ1.jpg", "amount": 10, "distance": 1}]}],
+                    "started_at": "2026-09-08 01:00:00"})
 buf4 = io.StringIO()
 with redirect_stdout(buf4):
-    audit.health([{"date_from": "2026-09-07", "date_to": "2026-09-13"}])
+    audit.main(["--run", 
+                str(max(r["id"] for r in db.recent_pool_runs(9)))])
 h = buf4.getvalue()
+check("รายงานพิมพ์ส่วนสุขภาพของสัปดาห์ออกมาจริง", "สุขภาพของสัปดาห์" in h)
 check("บอกว่ายังรอผลจาก batch อยู่", "ยังรอผลจาก batch: 1 รูป" in h)
 check("เตือนว่าตัวเลขข้างล่างยังเชื่อไม่ได้", "ยังเชื่อไม่ได้" in h)
 check("จับเที่ยวที่ลงไฟล์ซ้ำสองรอบ", "ลงไฟล์ส่งงานซ้ำสองรอบ: 1" in h)
@@ -185,6 +193,55 @@ with db.engine.begin() as c:
 check("ซ่อมย้อนหลังได้", db.release_dup_flags_pointing_at_voided() >= 1)
 check("ซ่อมแล้วธงหาย",
       not {t["id"]: t for t in db.review_queue()}[right]["duplicate_of"])
+
+
+# --- ตรวจไฟล์ที่ย้ายเข้าโฟลเดอร์ไรเดอร์ไปแล้ว จากชื่อไฟล์อย่างเดียว --------------------------
+# Backfill ย้าย 150 ใบจากรอบเก่าเข้าโฟลเดอร์ไรเดอร์ รอบถัดไปจะอ่านทันที — ต้องดักได้ก่อนถูกอ่าน
+class FakeDrive:
+    def __init__(self):
+        self.tree = {"inbox": {"Week X": "wk"}, "wk": {"2 W Saver": "cat", "_ทิ้ง": "hold",
+                                                        "Pool": "pool"},
+                     "cat": {"01-a": "r1"}, "pool": {}, "hold": {}, "r1": {}}
+        self.imgs = {"r1": [{"id": "f1", "name": "A_3+2_฿24.jpg"},
+                            {"id": "f2", "name": "A_8+29_฿56.jpg"},
+                            {"id": "f3", "name": "ไม่ใช่คู่.jpg"}], "hold": []}
+        self.moved = []
+
+    def list_folders(self, pid):
+        return [{"id": v, "name": k} for k, v in self.tree.get(pid, {}).items()]
+
+    def list_images(self, pid):
+        return self.imgs.get(pid, [])
+
+    def ensure_folder(self, pid, name):
+        return self.tree.setdefault(pid, {}).setdefault(name, f"{pid}/{name}")
+
+    def move_file(self, fid, parent):
+        self.moved.append((fid, parent))
+
+
+import roster                                                    # noqa: E402
+fake = FakeDrive()
+roster._drive = lambda: fake
+import config                                                    # noqa: E402
+config.DRIVE_INBOX_FOLDER_ID = "inbox"
+
+buf5 = io.StringIO()
+with redirect_stdout(buf5):
+    rc5 = void.main(["--scan-week", "Week X", "--min-distance", "7"])
+sc = buf5.getvalue()
+check("นับเฉพาะไฟล์ที่ชื่อบอกคู่ได้", "รูปที่ต่อแล้วในโฟลเดอร์ไรเดอร์ 2 ใบ" in sc)
+check("ชี้ใบที่ห่างผิดปกติ", "ห่าง  21" in sc and "A_8+29" in sc)
+check("รายงานอย่างเดียวไม่ย้ายอะไร", rc5 == 0 and not fake.moved)
+
+with redirect_stdout(io.StringIO()):
+    void.main(["--scan-week", "Week X", "--min-distance", "7", "--apply"])
+check("สั่งจริงแล้วย้ายเฉพาะใบที่ห่าง", [m[0] for m in fake.moved] == ["f2"])
+
+fake.moved.clear()
+with redirect_stdout(io.StringIO()):
+    void.main(["--scan-week", "Week X", "--min-distance", "40", "--apply"])
+check("ตั้งเกณฑ์กว้างขึ้น ก็ไม่มีอะไรต้องย้าย", not fake.moved)
 
 
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
