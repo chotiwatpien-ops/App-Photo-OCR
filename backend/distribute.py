@@ -95,10 +95,14 @@ class Allocator:
     def folder_for(self, category, wheel, kind):
         """Folder id for the next trip, or (None, reason) when Ops' list has nobody left."""
         g = self._load(category)
-        want = f" {kind}"
+        # Case-folded on purpose. Everything else that reads a folder name off Drive ignores
+        # case, and this did not: a folder someone typed as '01-สมชาย WIN' would not be topped
+        # up, so the same person would be handed a second folder — two folders, two jobs, one
+        # rider, in a week where a name is supposed to appear once.
+        want = f" {kind}".lower()
         # someone already on this week's books who is not full yet — always before a new name
         for r in sorted(g["riders"], key=lambda r: (-r["n"], r["name"])):
-            if r["n"] < self.per_rider and r["name"].endswith(want):
+            if r["n"] < self.per_rider and r["name"].lower().endswith(want):
                 r["n"] += 1
                 return r["id"], None
         free = [n for n in self.pool.get((wheel, kind), []) if n not in self.used]

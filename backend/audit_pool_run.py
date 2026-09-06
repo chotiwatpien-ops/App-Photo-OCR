@@ -141,10 +141,34 @@ def health(rows):
     if elsewhere:
         print(f"  เที่ยวที่แถวในสัปดาห์นี้ถูกพักไว้ แต่ลงไฟล์ไปแล้วจาก job อื่น: {len(elsewhere)} ✓")
     print(f"  เที่ยวที่ไม่มีแถวไหนลงไฟล์เลยทั้งฐานข้อมูล: {len(lost)}"
-          + ("  ← ตกหล่นจริง ต้องกู้คืนหนึ่งแถว" if lost else " ✓"))
-    for code, v in list(lost.items())[:10]:
-        print(f"     {code}  " + " · ".join(f"{x['driver_name']}/{x['file_name']}({x['status']})"
-                                            for x in v))
+          + ("  ← ขาดไปจากไฟล์จริง" if lost else " ✓"))
+    if lost:
+        # What to do depends on WHY the rows were parked, and saying 'restore one' for all of
+        # them was wrong: a 'duplicate' was parked because a twin was counted, so restoring is
+        # right when no twin turns out to be committed. A 'voided' row is two different trips in
+        # one picture — putting it back means putting money we know is wrong in front of the
+        # customer. Missing three trips beats inventing three.
+        with db.engine.begin() as c:
+            every = [dict(r) for r in c.execute(
+                select(db.trips.c.id, db.trips.c.booking_code, db.trips.c.status,
+                       db.trips.c.committed, db.trips.c.file_name, db.jobs.c.driver_name)
+                .select_from(db.trips.join(db.jobs, db.trips.c.job_id == db.jobs.c.id))
+                .where(db.trips.c.booking_code.in_(list(lost)))).mappings().all()]
+        rows_by_code = {}
+        for r in every:
+            rows_by_code.setdefault(r["booking_code"], []).append(r)
+        for code in list(lost)[:20]:
+            here = rows_by_code.get(code, [])
+            kinds = {r["status"] for r in here}
+            if kinds <= {"voided"}:
+                what = "ทุกแถวเป็นคู่ผิด — อย่ากู้คืน ต้องได้รูปที่ถูกมาใหม่"
+            elif "duplicate" in kinds:
+                what = "มีแถวที่พักเพราะซ้ำ — กู้คืนแถวนั้นได้ (db.restore_discarded)"
+            else:
+                what = "มีแถวที่อ่านแล้วแต่ยังไม่อนุมัติ — อนุมัติในคิวตรวจได้"
+            print(f"     {code}  → {what}")
+            for r in here:
+                print(f"        #{r['id']} {r['status']:<10} {r['driver_name']}/{r['file_name']}")
 
 
 

@@ -154,5 +154,22 @@ m8, _ = distribute.backfill(d8, "week", ["2 W Saver"], POOL, per_rider=5, seed=8
                             dry_run=True, log=lambda *a: None)
 check("รายงานอย่างเดียวไม่ย้ายไฟล์", m8 == 1 and len(d8.images[cat8]) == 1)
 
+# ชื่อโฟลเดอร์ที่คนพิมพ์เอง ตัวเล็กตัวใหญ่ไม่ควรมีผล — ที่อื่นในระบบก็ไม่สนอยู่แล้ว
+d9 = FakeDrive()
+cat9 = d9.ensure_folder("week", "2 W Saver")
+half9 = d9.ensure_folder(cat9, "01-ก WIN")          # พิมพ์ตัวใหญ่หมด
+d9.images[half9] = 1
+a9 = distribute.Allocator(d9, "week", POOL, per_rider=3, seed=9)
+got9, _ = a9.folder_for("2 W Saver", "2W", "Win")
+check("โฟลเดอร์ '01-ก WIN' ถูกเติมต่อ ไม่เปิดคนใหม่", got9 == half9 and a9.made == 0)
+
+d10 = FakeDrive()
+cat10 = d10.ensure_folder("week", "2 W Saver")
+d10.images[d10.ensure_folder(cat10, "01-ง home")] = 1   # ตัวเล็กหมด
+a10 = distribute.Allocator(d10, "week", POOL, per_rider=3, seed=10)
+got10, _ = a10.folder_for("2 W Saver", "2W", "Win")
+check("แต่ยังไม่เอางาน Win ไปใส่โฟลเดอร์ของคน home", got10.endswith("Win"))
+
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

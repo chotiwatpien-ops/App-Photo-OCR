@@ -187,6 +187,23 @@ with redirect_stdout(buf6):
 h2 = buf6.getvalue()
 check("คู่แฝดอยู่คนละสัปดาห์ ต้องไม่ถูกนับว่าตกหล่น", "จาก job อื่น: 1 ✓" in h2)
 check("และตัวที่ตกหล่นจริงยังนับถูกอยู่", "ลงไฟล์เลยทั้งฐานข้อมูล: 1" in h2)
+
+# คำแนะนำต้องขึ้นกับเหตุผลที่แถวถูกพัก — คู่ผิดห้ามกู้คืน ส่วนที่พักเพราะซ้ำกู้ได้
+jv = db.create_job("ฉ", "Trips", "2026-09-14", "2026-09-20", category="2 W Saver")
+BAD, DUP = "A-" + "V" * 16, "A-" + "W" * 16
+with db.engine.begin() as c:
+    c.execute(db.trips.insert().values(job_id=jv, file_name="คู่ผิด_1+9.jpg", status="voided",
+                                       committed=0, booking_code=BAD))
+    c.execute(db.trips.insert().values(job_id=jv, file_name="ซ้ำ.jpg", status="duplicate",
+                                       committed=0, booking_code=DUP))
+buf7 = io.StringIO()
+with redirect_stdout(buf7):
+    audit.health([{"date_from": "2026-09-14", "date_to": "2026-09-20"}])
+h3 = buf7.getvalue()
+check("คู่ผิดต้องบอกว่าห้ามกู้คืน", "อย่ากู้คืน" in h3)
+check("ที่พักเพราะซ้ำต้องบอกว่ากู้คืนได้", "กู้คืนแถวนั้นได้" in h3)
+check("ไม่พูดรวมว่า 'ต้องกู้คืน' อีกแล้ว", "ต้องกู้คืนหนึ่งแถว" not in h3)
+check("พิมพ์แถวจริงให้เห็นด้วย", "คู่ผิด_1+9.jpg" in h3 and "voided" in h3)
 check("ไม่ก้าวก่ายสัปดาห์อื่น", "A-TWIN" not in h)
 
 
