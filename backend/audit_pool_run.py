@@ -117,16 +117,31 @@ def health(rows):
         if len(r["booking_code"]) >= db.DUP_FULL_CODE:
             by_code.setdefault(r["booking_code"], []).append(r)
     twice = {k: v for k, v in by_code.items() if sum(1 for x in v if x["committed"]) > 1}
-    lost = {k: v for k, v in by_code.items()
-            if not any(x["committed"] for x in v)
-            and all(x["status"] in ("duplicate", "voided") for x in v)}
+    maybe = {k: v for k, v in by_code.items()
+             if not any(x["committed"] for x in v)
+             and all(x["status"] in ("duplicate", "voided") for x in v)}
+    # A parked row was parked BECAUSE a twin was already approved, so the twin exists — it just
+    # may not be in this week's jobs. Asking only inside the week called 181 trips lost when the
+    # money was in the file all along. The database is asked for the whole truth before anything
+    # is called missing; only a code with no approved row ANYWHERE has actually fallen out.
+    elsewhere = set()
+    if maybe:
+        with db.engine.begin() as c:
+            for chunk in [list(maybe)[i:i + 400] for i in range(0, len(maybe), 400)]:
+                elsewhere |= {r[0] for r in c.execute(
+                    select(db.trips.c.booking_code)
+                    .where(db.trips.c.booking_code.in_(chunk),
+                           db.trips.c.committed == 1)).all()}
+    lost = {k: v for k, v in maybe.items() if k not in elsewhere}
     print(f"  เที่ยวที่ลงไฟล์ส่งงานซ้ำสองรอบ: {len(twice)}"
           + ("  ← นับเงินซ้ำ ต้องเอาออกหนึ่งแถว" if twice else " ✓"))
     for code, v in list(twice.items())[:10]:
         print(f"     {code}  " + " · ".join(f"{x['driver_name']}/{x['file_name']}"
                                             for x in v if x["committed"]))
-    print(f"  เที่ยวที่ทุกแถวถูกพักไว้ ไม่มีตัวไหนลงไฟล์: {len(lost)}"
-          + ("  ← ตกหล่น ต้องกู้คืนหนึ่งแถว" if lost else " ✓"))
+    if elsewhere:
+        print(f"  เที่ยวที่แถวในสัปดาห์นี้ถูกพักไว้ แต่ลงไฟล์ไปแล้วจาก job อื่น: {len(elsewhere)} ✓")
+    print(f"  เที่ยวที่ไม่มีแถวไหนลงไฟล์เลยทั้งฐานข้อมูล: {len(lost)}"
+          + ("  ← ตกหล่นจริง ต้องกู้คืนหนึ่งแถว" if lost else " ✓"))
     for code, v in list(lost.items())[:10]:
         print(f"     {code}  " + " · ".join(f"{x['driver_name']}/{x['file_name']}({x['status']})"
                                             for x in v))

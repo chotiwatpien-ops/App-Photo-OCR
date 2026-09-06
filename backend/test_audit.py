@@ -163,7 +163,22 @@ check("รายงานพิมพ์ส่วนสุขภาพของ�
 check("บอกว่ายังรอผลจาก batch อยู่", "ยังรอผลจาก batch: 1 รูป" in h)
 check("เตือนว่าตัวเลขข้างล่างยังเชื่อไม่ได้", "ยังเชื่อไม่ได้" in h)
 check("จับเที่ยวที่ลงไฟล์ซ้ำสองรอบ", "ลงไฟล์ส่งงานซ้ำสองรอบ: 1" in h)
-check("จับเที่ยวที่ตกหล่นไม่เหลือแถวไหนเลย", "ไม่มีตัวไหนลงไฟล์: 1" in h)
+check("จับเที่ยวที่ตกหล่นไม่เหลือแถวไหนเลย", "ลงไฟล์เลยทั้งฐานข้อมูล: 1" in h)
+
+# แถวที่ถูกพักเพราะคู่แฝดอนุมัติไปแล้ว — คู่แฝดอาจอยู่คนละสัปดาห์ ต้องไม่นับว่าตกหล่น
+jo = db.create_job("จ", "Trips", "2026-08-24", "2026-08-30", category="2 W Saver")
+LONG_C = "A-" + "Z" * 16
+with db.engine.begin() as c:
+    c.execute(db.trips.insert().values(job_id=jh, file_name="พักไว้.jpg", status="duplicate",
+                                       committed=0, booking_code=LONG_C))
+    c.execute(db.trips.insert().values(job_id=jo, file_name="อยู่วีคก่อน.jpg", status="done",
+                                       committed=1, booking_code=LONG_C))
+buf6 = io.StringIO()
+with redirect_stdout(buf6):
+    audit.health([{"date_from": "2026-09-07", "date_to": "2026-09-13"}])
+h2 = buf6.getvalue()
+check("คู่แฝดอยู่คนละสัปดาห์ ต้องไม่ถูกนับว่าตกหล่น", "จาก job อื่น: 1 ✓" in h2)
+check("และตัวที่ตกหล่นจริงยังนับถูกอยู่", "ลงไฟล์เลยทั้งฐานข้อมูล: 1" in h2)
 check("ไม่ก้าวก่ายสัปดาห์อื่น", "A-TWIN" not in h)
 
 
