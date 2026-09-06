@@ -151,7 +151,8 @@ def health(rows):
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", type=int, required=True, help="เลข pool run ที่จะตรวจ")
-    ap.add_argument("--against", type=int, default=0, help="เทียบกับ pool run ที่ทำซ้ำทีหลัง")
+    ap.add_argument("--against", type=int, default=0,
+                    help="เจาะจงรอบเดียว (ว่าง = ทุกรอบที่ทำหลังจากรอบนี้)")
     ap.add_argument("--list", action="store_true", help="พิมพ์รายไฟล์ทั้งหมด ไม่ใช่แค่สรุป")
     a = ap.parse_args(argv)
     db.init_db()
@@ -209,26 +210,32 @@ def main(argv=None):
     print(f"    ในนั้นลงไฟล์ส่งงานไปแล้ว: {len(sent)} แถว")
     print(f"แถวที่มาจากคู่ติดกัน: {len(rows) - len(far_rows)} แถว")
 
-    # --- what a later run has already redone ---------------------------------------------------
-    if a.against:
-        if a.against not in runs:
-            print(f"\n✗ ไม่พบ pool run #{a.against}")
-            return 1
-        theirs = pairs_of(runs[a.against])
-        print(f"\nเทียบกับ pool run #{a.against} ({len(theirs)} ไฟล์)")
+    # --- what the runs after this one have already redone ---------------------------------------
+    # Asking one run was the wrong question: 'has this trip been done again properly' does not
+    # care WHICH later run did it, and naming #8 while #9 had covered a trip reported it as
+    # still outstanding. Every run started after this one is asked together, and picking the
+    # wrong number is no longer a way to get a confident wrong answer.
+    later = [r for r in runs.values() if when(r["started_at"]) > when(runs[a.run]["started_at"])
+             and (not a.against or r["id"] == a.against)]
+    if later:
+        names = ", ".join(f"#{r['id']}" for r in sorted(later, key=lambda r: r["id"]))
+        files = [p["file"] for r in later for p in pairs_of(r)]
+        print(f"\nเทียบกับรอบที่ทำหลังจากนี้ ({names} · {len(files)} ไฟล์)")
         codes = {r["booking_code"] for r in rows if r.get("booking_code")}
         from sqlalchemy import select
+        start = min(when(r["started_at"]) for r in later)
         with db.engine.begin() as c:
             after = [dict(r) for r in c.execute(
                 select(db.trips.c.booking_code, db.jobs.c.created_at)
                 .select_from(db.trips.join(db.jobs, db.trips.c.job_id == db.jobs.c.id))
-                .where(db.trips.c.file_name.in_([p["file"] for p in theirs]))).mappings().all()]
-        start = when(runs[a.against]["started_at"])
+                .where(db.trips.c.file_name.in_(files))).mappings().all()]
         later_codes = {r["booking_code"] for r in after
                        if r.get("booking_code") and when(r.get("created_at")) >= start}
         both = codes & later_codes
-        print(f"  รหัสการจองที่รอบ #{a.against} อ่านได้ซ้ำกับรอบ #{a.run}: {len(both)} เที่ยว ← เที่ยวเดียวกันมีสองแถว")
-        print(f"  รหัสที่มีเฉพาะรอบ #{a.run}: {len(codes - later_codes)} เที่ยว")
+        print(f"  รหัสการจองที่รอบหลังทำซ้ำกับรอบ #{a.run}: {len(both)} เที่ยว ← เที่ยวเดียวกันมีสองแถว")
+        print(f"  รหัสที่มีเฉพาะรอบ #{a.run}: {len(codes - later_codes)} เที่ยว"
+              + ("  (ดูบรรทัดสุขภาพข้างล่าง ว่าตกหล่นจริงมั้ย)" if codes - later_codes else " ✓"))
+
 
     if a.list:
         print(f"\n--- ไฟล์ที่ครึ่งบน/ครึ่งล่างห่างกันเกิน {FAR} ใบ ---")

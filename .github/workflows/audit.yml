@@ -15,9 +15,9 @@ on:
         required: true
         default: "7"
       against:
-        description: "เทียบกับ pool run ที่ทำซ้ำทีหลัง (ว่าง = ไม่เทียบ)"
+        description: "เจาะจงเทียบกับรอบเดียว (ว่างไว้ = เทียบกับทุกรอบที่ทำหลังจากนี้ — แนะนำ)"
         type: string
-        default: "8"
+        default: ""
       list:
         description: "พิมพ์รายไฟล์ที่ครึ่งบน/ครึ่งล่างห่างกันมาก"
         type: boolean
