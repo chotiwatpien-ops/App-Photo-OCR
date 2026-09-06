@@ -37,13 +37,22 @@ def drive_id(source_url):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="เอาแถวที่เกิดจากคู่ผิดของ pool run ออก (ไม่ลบ)")
-    ap.add_argument("--run", type=int, required=True, help="เลข pool run")
+    ap.add_argument("--run", type=int, help="เลข pool run (ไม่ต้องใส่ถ้า --release-only)")
     ap.add_argument("--min-distance", type=int, default=audit.FAR + 1,
                     help=f"ห่างกันตั้งแต่กี่ใบถึงถือว่าผิดคู่ (ค่าเริ่มต้น {audit.FAR + 1})")
     ap.add_argument("--apply", action="store_true", help="ทำจริง (ไม่ใส่ = รายงานอย่างเดียว)")
     ap.add_argument("--keep-images", action="store_true", help="ไม่ต้องย้ายรูปบน Drive")
+    ap.add_argument("--release-only", action="store_true",
+                    help="ไม่พักแถวใหม่ แค่ปลดธงซ้ำของแถวที่ชี้ไปหาแถวที่พักไปแล้ว")
     a = ap.parse_args(argv)
     db.init_db()
+
+    if a.release_only:
+        n = db.release_dup_flags_pointing_at_voided()
+        print(f"ปลดธงซ้ำให้ {n} แถวที่ชี้ไปหาแถวที่ถูกพักไว้แล้ว — กลับไปเข้าเส้นทางอนุมัติปกติ")
+        return 0
+    if not a.run:
+        ap.error("ต้องระบุ --run หรือ --release-only")
 
     r = audit.resolve(a.run, far=a.min_distance - 1)
     if r is None:

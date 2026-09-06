@@ -67,7 +67,8 @@ def resolve(run_id, far=FAR):
     cutoff = min(nxt) if nxt else None
     with db.engine.begin() as c:
         every = [dict(r) for r in c.execute(
-            select(db.trips, db.jobs.c.driver_name, db.jobs.c.category, db.jobs.c.created_at)
+            select(db.trips, db.jobs.c.driver_name, db.jobs.c.category, db.jobs.c.created_at,
+                   db.jobs.c.date_from, db.jobs.c.date_to)
             .select_from(db.trips.join(db.jobs, db.trips.c.job_id == db.jobs.c.id))
             .where(db.trips.c.file_name.in_([p["file"] for p in mine]))).mappings().all()]
     rows = [r for r in every if cutoff is None or when(r.get("created_at")) < cutoff]
@@ -77,6 +78,58 @@ def resolve(run_id, far=FAR):
                 for r in rows if r["file_name"] in far_files]
     return {"runs": runs, "run": run, "pairs": mine, "far": [by_file[f] for f in far_files],
             "rows": rows, "far_rows": far_rows, "cutoff": cutoff, "shared": len(every) - len(rows)}
+
+
+
+def health(rows):
+    """Is the week finished, and did any trip end up counted twice or not at all?
+
+    Two runs over the same photos make two rows per trip, and which copy survives is decided by
+    the duplicate guard as each one is read. That is only safe to judge once every picture has
+    come back from its batch — until then a trip can look lost simply because its reading has
+    not arrived yet. So the readiness line comes first, and the two counts below it mean nothing
+    while it is above zero."""
+    from sqlalchemy import func, select
+    weeks = {(r["date_from"], r["date_to"]) for r in rows if r.get("date_from")}
+    if not weeks:
+        return
+    with db.engine.begin() as c:
+        ids = []
+        for a, b in weeks:
+            ids += [r[0] for r in c.execute(select(db.jobs.c.id).where(
+                db.jobs.c.date_from == a, db.jobs.c.date_to == b)).all()]
+        waiting = c.execute(select(func.count()).select_from(db.trips).where(
+            db.trips.c.job_id.in_(ids), db.trips.c.batch_name.isnot(None),
+            db.trips.c.status == "pending")).scalar() or 0
+        pending = c.execute(select(func.count()).select_from(db.trips).where(
+            db.trips.c.job_id.in_(ids), db.trips.c.status == "pending")).scalar() or 0
+        got = [dict(r) for r in c.execute(
+            select(db.trips.c.booking_code, db.trips.c.status, db.trips.c.committed,
+                   db.trips.c.file_name, db.jobs.c.driver_name)
+            .select_from(db.trips.join(db.jobs, db.trips.c.job_id == db.jobs.c.id))
+            .where(db.trips.c.job_id.in_(ids),
+                   db.trips.c.booking_code.isnot(None))).mappings().all()]
+    print(f"\nสุขภาพของสัปดาห์ ({len(ids)} job)")
+    print(f"  ยังรอผลจาก batch: {waiting} รูป · ยังไม่ได้อ่านเลย {pending} รูป"
+          + ("  ← ตัวเลขสองบรรทัดล่างยังเชื่อไม่ได้จนกว่าจะเป็น 0" if pending else "  ✓ อ่านครบแล้ว"))
+    by_code = {}
+    for r in got:
+        if len(r["booking_code"]) >= db.DUP_FULL_CODE:
+            by_code.setdefault(r["booking_code"], []).append(r)
+    twice = {k: v for k, v in by_code.items() if sum(1 for x in v if x["committed"]) > 1}
+    lost = {k: v for k, v in by_code.items()
+            if not any(x["committed"] for x in v)
+            and all(x["status"] in ("duplicate", "voided") for x in v)}
+    print(f"  เที่ยวที่ลงไฟล์ส่งงานซ้ำสองรอบ: {len(twice)}"
+          + ("  ← นับเงินซ้ำ ต้องเอาออกหนึ่งแถว" if twice else " ✓"))
+    for code, v in list(twice.items())[:10]:
+        print(f"     {code}  " + " · ".join(f"{x['driver_name']}/{x['file_name']}"
+                                            for x in v if x["committed"]))
+    print(f"  เที่ยวที่ทุกแถวถูกพักไว้ ไม่มีตัวไหนลงไฟล์: {len(lost)}"
+          + ("  ← ตกหล่น ต้องกู้คืนหนึ่งแถว" if lost else " ✓"))
+    for code, v in list(lost.items())[:10]:
+        print(f"     {code}  " + " · ".join(f"{x['driver_name']}/{x['file_name']}({x['status']})"
+                                            for x in v))
 
 
 
@@ -112,7 +165,8 @@ def main(argv=None):
     from sqlalchemy import select
     with db.engine.begin() as c:
         every = [dict(r) for r in c.execute(
-            select(db.trips, db.jobs.c.driver_name, db.jobs.c.category, db.jobs.c.created_at)
+            select(db.trips, db.jobs.c.driver_name, db.jobs.c.category, db.jobs.c.created_at,
+                   db.jobs.c.date_from, db.jobs.c.date_to)
             .select_from(db.trips.join(db.jobs, db.trips.c.job_id == db.jobs.c.id))
             .where(db.trips.c.file_name.in_(list(by_name)))).mappings().all()]
     rows = [r for r in every if cutoff is None or when(r.get("created_at")) < cutoff]

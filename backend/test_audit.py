@@ -113,5 +113,79 @@ with db.engine.begin() as c:
 check("กู้แล้วกลับเข้าคิวตรวจ", back["status"] == "done")
 
 
+# --- คิวตรวจ: 'น่าจะซ้ำ' ต่างจากคู่แฝดตรงไหน --------------------------------------------------
+import report_queue_dups as qd                                  # noqa: E402
+
+jq = db.create_job("ค", "Trips", "2026-08-31", "2026-09-06", category="2 W Saver")
+base = dict(status="done", check_status="pass", booking_code="A-TWIN",
+            trip_date="2026-09-02", net_earnings=30.0, base_fare=30.0)
+with db.engine.begin() as c:
+    keep = c.execute(db.trips.insert().values(job_id=jq, file_name="เก่า.jpg", committed=1,
+                                              **base)).inserted_primary_key[0]
+    c.execute(db.trips.insert().values(job_id=jq, file_name="ใหม่.jpg", committed=0,
+                                       duplicate_of=keep,
+                                       **dict(base, net_earnings=45.0)))
+buf3 = io.StringIO()
+with redirect_stdout(buf3):
+    rc3 = qd.main()
+q = buf3.getvalue()
+check("รายงานคู่แฝดจบปกติ", rc3 == 0)
+check("บอกว่าคู่แฝดอนุมัติไปแล้ว", "อนุมัติแล้ว" in q)
+check("ชี้ช่องที่ต่างกันให้เห็น", "รายได้" in q and "45" in q and "30" in q)
+check("ไม่ฟ้องช่องที่ตรงกัน", "ตรงกัน 10 ช่อง · ต่างกัน 1 ช่อง" in q)
+check("ยังไม่แตะฐานข้อมูล",
+      db.review_queue() and all(t["status"] == "done" for t in db.review_queue()))
+
+
+# --- สุขภาพของสัปดาห์: อ่านครบยัง · นับซ้ำมั้ย · ตกหล่นมั้ย ------------------------------------
+jh = db.create_job("ง", "Trips", "2026-09-07", "2026-09-13", category="2 W Saver")
+LONG_A, LONG_B = "A-" + "X" * 16, "A-" + "Y" * 16
+with db.engine.begin() as c:
+    for fn, st, com, code, bat in [("ซ้ำ1.jpg", "done", 1, LONG_A, None),
+                                   ("ซ้ำ2.jpg", "done", 1, LONG_A, None),      # นับเงินสองรอบ
+                                   ("ตก1.jpg", "duplicate", 0, LONG_B, None),
+                                   ("ตก2.jpg", "voided", 0, LONG_B, None),     # ไม่เหลือตัวไหนเลย
+                                   ("รอ.jpg", "pending", 0, None, "batch-1")]:
+        c.execute(db.trips.insert().values(job_id=jh, file_name=fn, status=st, committed=com,
+                                           booking_code=code, batch_name=bat))
+buf4 = io.StringIO()
+with redirect_stdout(buf4):
+    audit.health([{"date_from": "2026-09-07", "date_to": "2026-09-13"}])
+h = buf4.getvalue()
+check("บอกว่ายังรอผลจาก batch อยู่", "ยังรอผลจาก batch: 1 รูป" in h)
+check("เตือนว่าตัวเลขข้างล่างยังเชื่อไม่ได้", "ยังเชื่อไม่ได้" in h)
+check("จับเที่ยวที่ลงไฟล์ซ้ำสองรอบ", "ลงไฟล์ส่งงานซ้ำสองรอบ: 1" in h)
+check("จับเที่ยวที่ตกหล่นไม่เหลือแถวไหนเลย", "ไม่มีตัวไหนลงไฟล์: 1" in h)
+check("ไม่ก้าวก่ายสัปดาห์อื่น", "A-TWIN" not in h)
+
+
+# --- พักแถวหนึ่ง แล้วแถวที่เคยชนกับมันต้องได้ไปต่อ --------------------------------------------
+# ของจริง 2026-09-06: พักคู่ผิดของรอบ 7 แล้ว 3 แถวของรอบ 8 ที่จับถูก ค้างในคิวเพราะยังชี้มาหาศพ
+jr = db.create_job("จ", "Trips", "2026-09-14", "2026-09-20", category="2 W Saver")
+with db.engine.begin() as c:
+    wrong = c.execute(db.trips.insert().values(
+        job_id=jr, file_name="ผิด_4+12.jpg", status="done", committed=1,
+        check_status="pass", booking_code="A-REL")).inserted_primary_key[0]
+    right = c.execute(db.trips.insert().values(
+        job_id=jr, file_name="ถูก_10+9.jpg", status="done", committed=0,
+        check_status="pass", booking_code="A-REL",
+        duplicate_of=wrong)).inserted_primary_key[0]
+check("ก่อนพัก: แถวที่ถูกยังติดธงซ้ำ",
+      any(t["id"] == right and t["duplicate_of"] for t in db.review_queue()))
+db.void_trips([wrong], "ทิ้ง: คู่ผิด")
+after_q = {t["id"]: t for t in db.review_queue()}
+check("พักแล้ว แถวที่ถูกหลุดธงซ้ำ ไม่ค้างในคิวเพราะศพ",
+      right in after_q and not after_q[right]["duplicate_of"])
+check("บันทึกไว้ว่าปลดธงเพราะอะไร", "ปลดธงซ้ำ" in (after_q[right]["note"] or ""))
+check("แถวที่พักไม่โผล่ในคิว", wrong not in after_q)
+
+# ซ่อมของที่พักไปก่อนมีกลไกนี้
+with db.engine.begin() as c:
+    c.execute(db.trips.update().where(db.trips.c.id == right).values(duplicate_of=wrong))
+check("ซ่อมย้อนหลังได้", db.release_dup_flags_pointing_at_voided() >= 1)
+check("ซ่อมแล้วธงหาย",
+      not {t["id"]: t for t in db.review_queue()}[right]["duplicate_of"])
+
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

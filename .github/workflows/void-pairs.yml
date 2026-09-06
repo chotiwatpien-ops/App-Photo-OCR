@@ -14,8 +14,11 @@ on:
       run:
         description: "เลข pool run"
         type: string
-        required: true
         default: "7"
+      release_only:
+        description: "ไม่พักแถวใหม่ — แค่ปลดธงซ้ำของแถวที่ชี้ไปหาแถวที่พักไปแล้ว (ทำได้เลย ปลอดภัย)"
+        type: boolean
+        default: false
       min_distance:
         description: "ครึ่งบน/ครึ่งล่างห่างกันกี่ใบขึ้นไปถึงถือว่าผิดคู่"
         type: string
@@ -49,6 +52,10 @@ jobs:
           DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
           TZ: Asia/Bangkok
         run: |
+          if [ "${{ github.event.inputs.release_only }}" = "true" ]; then
+            python void_pool_pairs.py --release-only
+            exit 0
+          fi
           ARGS="--run ${{ github.event.inputs.run }} --min-distance ${{ github.event.inputs.min_distance }}"
           if [ "${{ github.event.inputs.apply }}" = "true" ]; then ARGS="$ARGS --apply"; fi
           python void_pool_pairs.py $ARGS

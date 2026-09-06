@@ -570,7 +570,30 @@ def void_trips(ids, why: str) -> int:
         r = c.execute(update(trips).where(trips.c.id.in_(list(ids)))
                       .values(status="voided", committed=0,
                               note=func.coalesce(trips.c.note + " | ", "") + why))
+        _release_dup_flags(c, list(ids))
         return r.rowcount
+
+
+def _release_dup_flags(c, voided_ids) -> int:
+    """A row held back as a repeat of one of these is not a repeat of anything any more.
+
+    duplicate_of is stored, not recomputed, so voiding the twin leaves the good row pointing at
+    a corpse and sitting in the queue for ever. Three of them turned up the round after the first
+    clean-up — all of them the LATER, correct pairing, blocked by the wrong one it replaced."""
+    n = c.execute(update(trips)
+                  .where(trips.c.duplicate_of.in_(voided_ids))
+                  .values(duplicate_of=None,
+                          note=func.coalesce(trips.c.note + " | ", "")
+                          + "ปลดธงซ้ำ: แถวที่เคยชนถูกพักไปแล้ว")).rowcount or 0
+    return n
+
+
+def release_dup_flags_pointing_at_voided() -> int:
+    """Repair for rows voided before _release_dup_flags existed."""
+    with engine.begin() as c:
+        dead = [r[0] for r in c.execute(
+            select(trips.c.id).where(trips.c.status == "voided")).all()]
+        return _release_dup_flags(c, dead) if dead else 0
 
 
 def restore_voided(trip_id) -> bool:

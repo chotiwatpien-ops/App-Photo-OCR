@@ -22,6 +22,10 @@ on:
         description: "พิมพ์รายไฟล์ที่ครึ่งบน/ครึ่งล่างห่างกันมาก"
         type: boolean
         default: true
+      queue_dups:
+        description: "และดูด้วยว่าแถว 'น่าจะซ้ำ' ในคิวตรวจ ต่างจากคู่แฝดตรงไหน"
+        type: boolean
+        default: true
 
 jobs:
   audit:
@@ -46,3 +50,7 @@ jobs:
           fi
           if [ "${{ github.event.inputs.list }}" = "true" ]; then ARGS="$ARGS --list"; fi
           python audit_pool_run.py $ARGS
+          if [ "${{ github.event.inputs.queue_dups }}" = "true" ]; then
+            echo; echo "================ คิวตรวจ: น่าจะซ้ำ ================"
+            python report_queue_dups.py
+          fi
