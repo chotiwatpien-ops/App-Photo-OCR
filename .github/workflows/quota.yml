@@ -45,7 +45,9 @@ on:
 jobs:
   quota:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Rebuilding a week takes about 22 seconds a job and there are 116 of them, plus the
+    # sweep that takes the old pictures down first. 45 minutes was cutting it fine.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
