@@ -291,5 +291,25 @@ if os.path.isdir(panupong) and os.environ.get("PAIRING_SAMPLE", "1") == "1":
     check(f"ชุดที่ Ops ต่อมาให้: รู้ว่าต่อแล้วทุกใบ (พลาด {len(miss)})", not miss)
 
 
+# --- the chip: which word is allowed to decide the vehicle -----------------------------------
+# 'Standard' is the tier, not the vehicle. It is printed on 'Standard Bike' as much as on
+# 'Standard (JustGrab)', so letting it vote for a car turned every bike whose 'Bike' the OCR
+# missed into a car — WK36-อาลิฟ, a bike rider, was filed under 4 W Standard on 2026-09-07.
+for txt, want in [("standard bike", "2W"), ("saver bike", "2W"), ("bike premium", "2W"),
+                  ("standard | car only", "4W"), ("standard (justgrab)", "4W"),
+                  ("saver car", "4W"), ("premium", "4W"),
+                  ("standard", None),            # the tier alone says nothing about the vehicle
+                  ("saver", None), ("", None), ("ค่าโดยสาร 86", None)]:
+    check(f"ชิป {txt!r} → ล้อ {want}", pairing.wheels_from_chip(txt) == want)
+
+for txt, want in [("standard bike", "Standard"), ("saver bike", "Saver"),
+                  ("standard (justgrab)", "Standard"), ("justgrab", "Standard"),
+                  ("saver car", "Saver"), ("bike", None), ("", None)]:
+    check(f"ชิป {txt!r} → ระดับ {want}", pairing.tier_from_chip(txt) == want)
+
+check("ชื่ออัลบั้มยังได้พูดเมื่อชิปอ่านไม่ออก",
+      pairing.category_folder(pairing.wheels_from_chip("standard") or "2W",
+                              pairing.tier_from_chip("standard")) == "2 W Standard")
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

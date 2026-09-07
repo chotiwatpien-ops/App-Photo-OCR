@@ -311,6 +311,28 @@ def inspect(source):
 
 
 # --- vehicle type ---------------------------------------------------------------------------
+def wheels_from_chip(txt):
+    """'2W' | '4W' | None from the words read off the service chip.
+
+    'Standard' used to count as a car. It is not a vehicle at all — it is the tier, and it is
+    printed on 'Standard Bike' every bit as much as on 'Standard (JustGrab)'. So a bike whose
+    'Bike' the OCR missed while catching 'Standard' came back a car, and the trip was filed under
+    4 W Standard: WK36-อาลิฟ, a bike rider, on 2026-09-07. Across 160 slips read for this, not
+    one was ever decided by that word — every bike came from 'bike' and every car from
+    'car'/'justgrab'/'premium' — so it never bought anything, and it cost that.
+    With nothing readable the answer is None, and the album name gets to say instead."""
+    t = txt or ""
+    if re.search(r"bike", t):
+        return "2W"
+    return "4W" if re.search(r"car|justgrab|premium", t) else None
+
+
+def tier_from_chip(txt):
+    """'Saver' | 'Standard' | None — the tier is what 'standard' does mean."""
+    t = txt or ""
+    return "Saver" if re.search(r"saver", t) else ("Standard" if re.search(r"standard|justgrab", t) else None)
+
+
 def vehicle_type(source):
     """('2W'|'4W'|None, 'Saver'|'Standard'|None) from the service chip printed under the map
     on a top half or a long screenshot ('Saver Bike', 'Standard Bike', 'Standard (JustGrab)',
@@ -319,10 +341,10 @@ def vehicle_type(source):
     im = Image.open(io.BytesIO(source) if isinstance(source, (bytes, bytearray)) else source).convert("RGB")
     for w in (720, 1200):
         txt = _read_text(im.resize((w, int(im.height * w / im.width)), Image.LANCZOS)).lower()
-        wheels = "2W" if re.search(r"bike", txt) else ("4W" if re.search(r"car|justgrab|standard|premium", txt) else None)
-        tier = "Saver" if re.search(r"saver", txt) else ("Standard" if re.search(r"standard|justgrab", txt) else None)
+        wheels, tier = wheels_from_chip(txt), tier_from_chip(txt)
         if wheels and tier:
             return wheels, tier
+    return wheels, tier
     return wheels, tier
 
 
