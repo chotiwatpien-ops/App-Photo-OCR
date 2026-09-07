@@ -75,5 +75,31 @@ print("คู่:")
 check("ย้ายสำเร็จขึ้น ✔", "✔ 2 W Saver/01-x/a_b.jpg" in txt)
 check("ย้ายไม่ได้ต้องบอกเหตุผล", "⚠ รายชื่อ Home ของ 2W หมดแล้ว" in txt)
 
+# The ratio line has to keep quiet when there is nothing to judge: run 17 warned that 4W was
+# 0% Taxi out of two riders, which is not a mix being missed, it is two riders.
+print("บรรทัดสัดส่วน:")
+
+
+class _Alloc:
+    def __init__(self, c):
+        self._c = c
+
+    def kind_counts(self, wheel):
+        return self._c.get(wheel, {})
+
+
+def _ratio(counts):
+    lines = []
+    pool.report_mix({"w": _Alloc(counts)}, log=lines.append)
+    return chr(10).join(lines)
+
+
+txt = _ratio({"2W": {"Win": 12, "Home": 51}, "4W": {"Taxi": 0, "Home": 2}})
+check("ห่างจากเป้าจริง ๆ ต้องเตือน", "Win 19% (เป้า 70% ±10%) ⚠" in txt)
+check("คนน้อยเกินไปต้องไม่เตือน", "Taxi 0%  (ยังน้อยเกินกว่าจะตัดสิน)" in txt)
+check("และต้องไม่ติ๊กถูกให้ด้วย", "Taxi 0% ✔" not in txt)
+check("เข้าเป้าแล้วติ๊กถูก", "Win 70% ✔" in _ratio({"2W": {"Win": 46, "Home": 20}}))
+check("ล้อที่ไม่มีใครเลยไม่ต้องพิมพ์", "4W" not in _ratio({"2W": {"Win": 5, "Home": 2}}))
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

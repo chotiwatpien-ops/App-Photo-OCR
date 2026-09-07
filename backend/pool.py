@@ -324,6 +324,25 @@ def write_previews(drive, albums, data, report, log=log):
 USED_DIR = "_ใช้แล้ว"
 
 
+def report_mix(allocators, log=log):
+    """Say whether the week came out as the mix the customer asked for."""
+    for a in allocators.values():
+        for wheel in ("2W", "4W"):
+            counts = a.kind_counts(wheel)
+            total = sum(counts.values())
+            if not total:
+                continue
+            major = distribute.MAJOR[wheel]
+            got = counts[major] / total
+            # Below four riders a 70/30 split does not exist, so a verdict on two of them is a
+            # warning about arithmetic, not about the work. Report the count and say no more.
+            verdict = ("  (ยังน้อยเกินกว่าจะตัดสิน)" if total < 4 else
+                       " ✔" if abs(got - distribute.TARGET_MAJOR) <= 0.10 else
+                       f" (เป้า {distribute.TARGET_MAJOR:.0%} ±10%) ⚠")
+            log(f"  สัดส่วน {wheel}: " + " · ".join(f"{k} {v}" for k, v in counts.items())
+                + f" → {major} {got:.0%}" + verdict)
+
+
 def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=None):
     """Paired trips → one stitched image in Week/<category>/<rider>/; their two originals →
     Pool/_ใช้แล้ว/<album>/ (moved, never deleted). Long screenshots → the same rider folder.
@@ -423,16 +442,7 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
         kept = sum(db.rider_styles_save(w, a.new_styles) for w, a in allocators.items())
         if kept:
             log(f"  จำไว้ว่าไรเดอร์ {kept} คนส่งรูปแบบไหน")
-        for a in allocators.values():
-            for wheel in ("2W", "4W"):
-                c = a.kind_counts(wheel)
-                total = sum(c.values())
-                if total:
-                    major = distribute.MAJOR[wheel]
-                    log(f"  สัดส่วน {wheel}: " + " · ".join(f"{k} {v}" for k, v in c.items())
-                        + f" → {major} {c[major] / total:.0%} "
-                        + ("✔" if abs(c[major] / total - distribute.TARGET_MAJOR) <= 0.10
-                           else f"(เป้า {distribute.TARGET_MAJOR:.0%} ±10%) ⚠"))
+        report_mix(allocators, log=log)
     report["totals"]["n_moved"] = moved
     return moved
 
