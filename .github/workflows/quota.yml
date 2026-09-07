@@ -33,6 +33,10 @@ on:
         description: "หาเจ้าของใหม่ให้เที่ยวส่วนเกิน — บอกว่าใครจะรับต่อ (ยังไม่ทำจริง)"
         type: boolean
         default: false
+      fix_exports:
+        description: "สร้างรูปส่งลูกค้าของสัปดาห์นี้ใหม่ทั้งหมด (ใช้หลังเจ้าของเที่ยวเปลี่ยนไปแล้ว)"
+        type: boolean
+        default: false
       apply:
         description: "ทำจริง: ย้ายรูปบน Drive · เปลี่ยนเจ้าของแถว · สร้างรูปและ Excel ใหม่"
         type: boolean
@@ -41,7 +45,7 @@ on:
 jobs:
   quota:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -66,5 +70,6 @@ jobs:
           ARGS="--from ${{ github.event.inputs.date_from }} --to ${{ github.event.inputs.date_to }}"
           if [ "${{ github.event.inputs.list }}" = "true" ]; then ARGS="$ARGS --list"; fi
           if [ "${{ github.event.inputs.reassign }}" = "true" ]; then ARGS="$ARGS --reassign"; fi
+          if [ "${{ github.event.inputs.fix_exports }}" = "true" ]; then ARGS="$ARGS --fix-exports"; fi
           if [ "${{ github.event.inputs.apply }}" = "true" ]; then ARGS="$ARGS --apply"; fi
           python rebalance_quota.py $ARGS

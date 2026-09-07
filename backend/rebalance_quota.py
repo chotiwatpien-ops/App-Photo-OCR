@@ -255,7 +255,11 @@ def reassign(over, d_from, d_to, per_rider, apply_it, log=print):
         done += 1
     log(f"\nย้ายแล้ว {done} เที่ยว · job ที่ต้องสร้างรูปใหม่ {len(touched)}")
     db.rider_styles_save(wk["id"], alloc.new_styles)
-    return finish(drive, touched, wk["name"].strip(), log)
+    import ingest
+    # Not wk['name']. The Inbox calls this week 'Week 31 Aug-6 Sep' and Exports calls it
+    # '2026-W36', and comparing one against the other found nothing at all — which is what
+    # '0 ไฟล์' meant on the run that moved 75 trips and left all 75 old pictures behind.
+    return finish(drive, touched, ingest.week_label(d_from), log)
 
 
 def stale_export_images(drive, exports_id, week_name, names):
@@ -306,6 +310,42 @@ def finish(drive, touched, week_name, log):
     return 1 if errs else 0
 
 
+def fix_exports(d_from, d_to, apply_it, log=print):
+    """Rebuild every customer picture of a week, because some of them are of the wrong trip.
+
+    A job's pictures are numbered in trip order, so a job that lost trips keeps pictures past its
+    new length and a job that gained them has pictures under numbers that now mean something
+    else. There is no way to tell which is which by looking at a file, so the whole week is taken
+    down — moved, never deleted — and written again from what the database says today."""
+    import config
+    import ingest
+    import roster
+    drive = roster._drive()
+    week = ingest.week_label(d_from)
+    jobs = [j for (f, t), js in db.jobs_by_week().items() if f == d_from and t == d_to for j in js]
+    names = {j["driver_name"] for j in jobs}
+    log(f"{week}: {len(jobs)} job · {len(names)} ไรเดอร์")
+    stale = stale_export_images(drive, config.DRIVE_EXPORTS_FOLDER_ID, week, names)
+    log(f"รูปส่งลูกค้าที่ต้องสร้างใหม่ {len(stale)} ไฟล์")
+    if not apply_it:
+        log("\n(รายงานอย่างเดียว — ใส่ --apply เพื่อทำจริง)")
+        return 0
+    moved = 0
+    for week_id, img in stale:
+        hold = drive.ensure_folder(week_id, HOLD_DIR)
+        try:
+            drive.move_file(img["id"], hold)
+            moved += 1
+        except Exception as e:                                  # noqa: BLE001
+            log(f"  ⚠ เก็บไม่สำเร็จ {img['name']}: {str(e)[:60]}")
+    log(f"เก็บไปพักไว้ {moved} ไฟล์ (ไม่ได้ลบ)")
+    errs, failed = ingest.export_only(drive, config.DRIVE_EXPORTS_FOLDER_ID,
+                                      only_job_ids={j["id"] for j in jobs},
+                                      with_xlsx=True, force=True)
+    log(f"สร้างใหม่แล้ว · error {errs}" + (f" · ยังไม่สำเร็จ {failed}" if failed else ""))
+    return 1 if errs else 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="ใครทำเกินโควตาสัปดาห์ และต้องทำอะไรถึงจะแก้ได้ (รายงานอย่างเดียว)")
     ap.add_argument("--from", dest="d_from", required=True, help="วันเริ่มสัปดาห์ YYYY-MM-DD")
@@ -314,6 +354,8 @@ def main(argv=None):
     ap.add_argument("--list", action="store_true", help="พิมพ์รายเที่ยวที่จะถูกเอาออก")
     ap.add_argument("--reassign", action="store_true",
                     help="หาเจ้าของใหม่ให้เที่ยวส่วนเกิน (ยังเป็นรายงาน จนกว่าจะใส่ --apply)")
+    ap.add_argument("--fix-exports", action="store_true",
+                    help="สร้างรูปส่งลูกค้าของสัปดาห์นี้ใหม่ทั้งหมด (ใช้เมื่อเจ้าของเที่ยวเปลี่ยนไปแล้ว)")
     ap.add_argument("--apply", action="store_true",
                     help="ทำจริง: ย้ายรูปบน Drive · เปลี่ยนเจ้าของแถว · สร้างรูปและ Excel ใหม่")
     a = ap.parse_args(argv)
@@ -366,6 +408,9 @@ def main(argv=None):
                 print(f"{who[:22]:<22}{str(t.get('trip_date')):<12}"
                       f"{str(t.get('service_type'))[:16]:<16}{t.get('file_name')}")
 
+    if a.fix_exports:
+        print()
+        return fix_exports(a.d_from, a.d_to, a.apply, log=print)
     if a.reassign:
         print()
         return reassign(over, a.d_from, a.d_to, a.per_rider, a.apply, log=print)

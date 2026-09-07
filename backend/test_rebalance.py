@@ -173,6 +173,13 @@ e.images[cat_d] = [{"id": "a", "name": "มานิตย์ Home7.jpg"},
                    {"id": "b", "name": "มานิตย์ Home21.jpg"},
                    {"id": "c", "name": "คนอื่น Win3.jpg"}]
 e.images[hold] = [{"id": "z", "name": "มานิตย์ Home1.jpg"}]
+# The Inbox calls this week 'Week 31 Aug-6 Sep' and Exports calls it '2026-W36'. Handing the
+# first to a sweep that walks the second matched nothing, and a run that moved 75 trips reported
+# '0 ไฟล์' and left all 75 old pictures in the customer's folder.
+check("ชื่อสัปดาห์คนละแบบต้องไม่เจออะไร (นี่คือบั๊กที่เกิดจริง)",
+      rq.stale_export_images(e, "exports", "Week 31 Aug-6 Sep", {"มานิตย์ Home"}) == [])
+import ingest                                                    # noqa: E402
+check("ชื่อที่ถูกคือแบบที่ Exports ใช้", ingest.week_label("2026-08-31") == "2026-W36")
 found = rq.stale_export_images(e, "exports", "2026-W36", {"มานิตย์ Home"})
 check("เจอเฉพาะรูปของคนที่ถูกแตะ", sorted(i["id"] for _, i in found) == ["a", "b"])
 check("ไม่ไปยุ่งโฟลเดอร์ที่พักไว้แล้ว", "z" not in [i["id"] for _, i in found])
