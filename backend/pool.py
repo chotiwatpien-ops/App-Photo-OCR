@@ -343,6 +343,21 @@ def report_mix(allocators, log=log):
                 + f" → {major} {got:.0%}" + verdict)
 
 
+def half_tag(file_name):
+    """What to call one half in the stitched picture's name.
+
+    The trailing number of 'LINE_ALBUM_x_260907_57.jpg' is what tells two halves apart at a
+    glance, and it is what every audit since run 7 reads to measure how far apart a pair was.
+    But not every picture has one: LINE also delivers files named as a bare UUID, and asking an
+    'ends in digits' pattern for its group() raised AttributeError and lost seven real pairs —
+    while others quietly took whatever digits happened to sit at the end of the UUID, so a pair
+    came out named '5567+4'. Fall back to the first characters of the name: stable, unique
+    enough inside one album, and obviously not a sequence number."""
+    stem = re.sub(r"\.\w+$", "", str(file_name or ""))
+    m = re.search(r"(\d+)$", stem)
+    return m.group(1) if m else (re.sub(r"[^0-9A-Za-z]+", "", stem)[:8] or "x")
+
+
 def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=None):
     """Paired trips → one stitched image in Week/<category>/<rider>/; their two originals →
     Pool/_ใช้แล้ว/<album>/ (moved, never deleted). Long screenshots → the same rider folder.
@@ -404,7 +419,7 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
                                      io.BytesIO(data[p["bottom_id"]]), cut_top=p.get("cut_top"))
                 buf = io.BytesIO()
                 img.save(buf, "JPEG", quality=88)
-                tn, bn = (re.search(r'(\d+)\.\w+$', x).group(1) for x in (p["top"], p["bottom"]))
+                tn, bn = (half_tag(x) for x in (p["top"], p["bottom"]))
                 name = f"{entry['album']}_{tn}+{bn}_฿{p['amount']:g}.jpg"
                 drive.upload_file(p["dest"], name, buf.getvalue(), "image/jpeg")
                 drive.move_file(p["top_id"], used_dir)

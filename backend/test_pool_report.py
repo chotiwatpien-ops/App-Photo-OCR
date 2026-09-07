@@ -101,5 +101,19 @@ check("และต้องไม่ติ๊กถูกให้ด้วย"
 check("เข้าเป้าแล้วติ๊กถูก", "Win 70% ✔" in _ratio({"2W": {"Win": 46, "Home": 20}}))
 check("ล้อที่ไม่มีใครเลยไม่ต้องพิมพ์", "4W" not in _ratio({"2W": {"Win": 5, "Home": 2}}))
 
+# Run 18 lost seven real pairs to AttributeError because LINE also sends files named as a bare
+# UUID, and the name of a stitched picture was built by demanding a trailing number.
+print("ชื่อครึ่งรูปในไฟล์ที่ต่อแล้ว:")
+check("ไฟล์ที่ลงท้ายด้วยเลข ใช้เลขนั้น",
+      pool.half_tag("LINE_ALBUM_2W-NUI=110 standard_260907_57.jpg") == "57")
+check("เลขหลายหลักก็ได้", pool.half_tag("S__96387096.jpg") == "96387096")
+uid = pool.half_tag("1e020647-6513-4cef-91a3-5287f133bf2f.jpg")
+check(f"UUID ไม่ทำให้พัง (ได้ {uid!r})", bool(uid))
+check("และต้องไม่ไปหยิบเลขท้าย UUID มามั่ว ๆ", uid != "" and not uid.isdigit())
+check("UUID คนละใบต้องได้ชื่อคนละอัน",
+      pool.half_tag("1e020647-6513-4cef.jpg") != pool.half_tag("4c7d0753-5957-4316.jpg"))
+check("ชื่อว่างก็ยังตอบอะไรสักอย่าง", pool.half_tag("") == "x" and pool.half_tag(None) == "x")
+check("ไม่มีนามสกุลก็อ่านได้", pool.half_tag("LINE_ALBUM_x_12") == "12")
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)
