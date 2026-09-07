@@ -366,6 +366,24 @@ def already_ingested(drive_ids):
                                         .where(ingested_files.c.drive_id.in_(ids))).all()}
 
 
+def move_trips_to_job(trip_ids, job_id) -> int:
+    """Hand these trips to another rider without touching what they say.
+
+    The fare, the distance, the two places and the picture were all read correctly; the only
+    thing wrong is whose week they were counted in. Re-reading them would cost a Gemini call
+    each and could come back with different numbers, so the row is left exactly as it is and
+    only its owner changes. The ingested_files note moves with it, or the next round would
+    report the picture against a job that no longer holds it."""
+    ids = [int(i) for i in trip_ids]
+    if not ids:
+        return 0
+    with engine.begin() as c:
+        n = c.execute(update(trips).where(trips.c.id.in_(ids)).values(job_id=job_id)).rowcount
+        c.execute(update(ingested_files).where(ingested_files.c.trip_id.in_(ids))
+                  .values(job_id=job_id))
+        return n or 0
+
+
 def record_ingested(drive_id, name, job_id, trip_id):
     with engine.begin() as c:
         c.execute(insert(ingested_files).values(

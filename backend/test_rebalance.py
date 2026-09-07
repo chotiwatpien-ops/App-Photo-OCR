@@ -6,6 +6,7 @@ allocator counted the quota against the folder. Choosing which trips to release 
 hand — the rule has to be written down and repeatable, or nobody can check afterwards whose work
 was taken away.
 """
+import io
 import os
 import sys
 import tempfile
@@ -97,6 +98,110 @@ check("เกินแค่ใบเดียวก็ต้องเห็น"
 check("รายงานแยกตามบริการได้", "Saver Bike" in rq.tiers(p3["ค Home"]["keep"]))
 
 check("ไม่มีใครเกินก็ตอบว่าไม่มี", rq.plan([trip(1, "ง Win", DAYS[0])], 21) == {})
+
+# --- handing the released trips to somebody else ----------------------------------------------
+import distribute                                                # noqa: E402
+import numpy as _np                                              # noqa: E402
+from PIL import Image as _Image                                  # noqa: E402
+
+
+def _png(level):
+    b = io.BytesIO()
+    _Image.fromarray(_np.full((40, 20, 3), level, dtype="uint8")).save(b, "PNG")
+    return b.getvalue()
+
+
+print("สไตล์รูปอ่านจากชื่อไฟล์กับความสว่าง:")
+check("รูปที่เราต่อเอง = ครึ่ง", rq.style_of("2W-Home_188+187_฿32.jpg", _png(240)) == "ครึ่ง/สว่าง")
+check("รูปที่ Ops รวมมา = ยาว", rq.style_of("47825_47826.jpg", _png(240)) == "ยาว/สว่าง")
+check("ธีมมืดอ่านออก", rq.style_of("47825_47826.jpg", _png(30)) == "ยาว/มืด")
+check("ชื่อที่มีเลขแต่ไม่ใช่รูปแบบของเรา ก็ยังเป็นยาว",
+      rq.style_of("LINE_ALBUM_x_260828_85.jpg", _png(240)) == "ยาว/สว่าง")
+
+
+class FakeDrive:
+    def __init__(self):
+        self.tree, self.images = {"week": {}}, {}
+
+    def ensure_folder(self, pid, name):
+        fid = f"{pid}/{name}"
+        self.tree.setdefault(pid, {})[name] = fid
+        self.tree.setdefault(fid, {})
+        self.images.setdefault(fid, 0)
+        return fid
+
+    def list_folders(self, pid):
+        return [{"id": v, "name": k} for k, v in self.tree.get(pid, {}).items()]
+
+    def list_images(self, pid):
+        n = self.images.get(pid, 0)
+        return n if isinstance(n, list) else [None] * n
+
+    def move_file(self, fid, new_parent):
+        for pid, n in list(self.images.items()):
+            if isinstance(n, list):
+                self.images[pid] = [f for f in n if f["id"] != fid]
+        self.images[new_parent] = self.images.get(new_parent, 0) + 1
+
+
+POOL = {("2W", "Win"): [f"วิน{i}" for i in range(1, 21)],
+        ("2W", "Home"): [f"บ้าน{i}" for i in range(1, 11)],
+        ("4W", "Taxi"): ["ท"], ("4W", "Home"): ["ห"]}
+
+print("เลือกเจ้าของใหม่:")
+d = FakeDrive()
+alloc = distribute.Allocator(d, "week", POOL, per_rider=21, seed=1)
+fid, cat, err = rq.find_new_home(alloc, {"service_type": "Saver Bike", "style": "ยาว/มืด"})
+check("Saver Bike ไปกลุ่ม 2 W Saver", cat == "2 W Saver" and not err)
+fid2, cat2, _ = rq.find_new_home(alloc, {"service_type": "Standard Bike", "style": "ยาว/มืด"})
+check("Standard Bike ไปกลุ่ม 2 W Standard", cat2 == "2 W Standard")
+check("คนเดิมรับข้ามกลุ่มได้ เพราะสไตล์เดียวกัน",
+      distribute.bare(fid2.rsplit("/", 1)[1]) == distribute.bare(fid.rsplit("/", 1)[1]))
+fid3, _, _ = rq.find_new_home(alloc, {"service_type": "Saver Bike", "style": "ครึ่ง/สว่าง"})
+check("สไตล์ต่างต้องคนละคน",
+      distribute.bare(fid3.rsplit("/", 1)[1]) != distribute.bare(fid.rsplit("/", 1)[1]))
+_, _, err4 = rq.find_new_home(alloc, {"service_type": "ค่าโดยสาร 86", "style": "ยาว/มืด"})
+check("อ่านประเภทบริการไม่ออกก็ไม่เดา", err4 and "อ่านประเภทบริการไม่ออก" in err4)
+
+print("รูปส่งลูกค้าชุดเก่า:")
+e = FakeDrive()
+e.tree["exports"] = {}
+wkd = e.ensure_folder("exports", "2026-W36")
+cat_d = e.ensure_folder(wkd, "2 W Saver")
+hold = e.ensure_folder(wkd, "_แทนที่แล้ว")
+e.images[cat_d] = [{"id": "a", "name": "มานิตย์ Home7.jpg"},
+                   {"id": "b", "name": "มานิตย์ Home21.jpg"},
+                   {"id": "c", "name": "คนอื่น Win3.jpg"}]
+e.images[hold] = [{"id": "z", "name": "มานิตย์ Home1.jpg"}]
+found = rq.stale_export_images(e, "exports", "2026-W36", {"มานิตย์ Home"})
+check("เจอเฉพาะรูปของคนที่ถูกแตะ", sorted(i["id"] for _, i in found) == ["a", "b"])
+check("ไม่ไปยุ่งโฟลเดอร์ที่พักไว้แล้ว", "z" not in [i["id"] for _, i in found])
+check("สัปดาห์อื่นไม่ถูกแตะ", rq.stale_export_images(e, "exports", "2026-W35", {"มานิตย์ Home"}) == [])
+
+print("โหมดรายงานต้องเขียนอะไรไม่ได้เลย:")
+real = FakeDrive()
+cat_real = real.ensure_folder("week", "2 W Saver")
+real.images[cat_real] = 3
+dry = rq.DryDrive(real)
+check("โฟลเดอร์ที่มีอยู่แล้ว คืนของจริง", dry.ensure_folder("week", "2 W Saver") == cat_real)
+before = dict(real.tree)
+newf = dry.ensure_folder(cat_real, "01-วิน1 Win")
+check("โฟลเดอร์ใหม่ไม่ถูกสร้างบน Drive", real.tree == before)
+check("แต่ยังได้ id ไว้ใช้ต่อ", newf and newf.endswith("01-วิน1 Win"))
+check("โฟลเดอร์ที่ยังไม่มีจริง อ่านแล้วว่าง", dry.list_images(newf) == [] and dry.list_folders(newf) == [])
+check("ของจริงยังอ่านได้ตามปกติ", len(dry.list_images(cat_real)) == 3)
+for op, args in (("move_file", ("a", "b")), ("upload_file", ("a", "b", b"", "image/jpeg"))):
+    try:
+        getattr(dry, op)(*args)
+        check(f"{op} ต้องถูกปฏิเสธ", False)
+    except AssertionError:
+        check(f"{op} ต้องถูกปฏิเสธ", True)
+
+# and the allocator really does try to open folders — which is why the guard has to exist
+d9 = FakeDrive()
+a9 = distribute.Allocator(rq.DryDrive(d9), "week", POOL, per_rider=21, seed=9)
+a9.folder_for("2 W Saver", "2W", "ยาว/มืด")
+check("จ่ายงานผ่านโหมดรายงานแล้ว Drive ยังสะอาด", d9.tree == {"week": {}})
 
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

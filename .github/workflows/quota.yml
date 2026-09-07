@@ -1,6 +1,8 @@
-name: Quota — ใครทำเกิน 21 เที่ยวในสัปดาห์ (รายงานอย่างเดียว)
+name: Quota — ใครทำเกิน 21 เที่ยวในสัปดาห์ และแจกส่วนเกินให้คนที่ยังว่าง
 
-# Read-only. Nothing here writes to the database, to Drive, or to Excel.
+# Read-only unless `apply` is ticked. Without it the run cannot write even by accident: the
+# allocator opens a rider folder the moment it draws a name, so the report drives it through a
+# wrapper that reads Drive and refuses every change.
 #
 # The allocator used to read one vehicle group at a time, so 'this name is already working' was
 # only true of the group it had just looked at: the same person could be drawn again in the other
@@ -27,6 +29,14 @@ on:
         description: "พิมพ์รายเที่ยวที่จะถูกเอาออก"
         type: boolean
         default: true
+      reassign:
+        description: "หาเจ้าของใหม่ให้เที่ยวส่วนเกิน — บอกว่าใครจะรับต่อ (ยังไม่ทำจริง)"
+        type: boolean
+        default: false
+      apply:
+        description: "ทำจริง: ย้ายรูปบน Drive · เปลี่ยนเจ้าของแถว · สร้างรูปและ Excel ใหม่"
+        type: boolean
+        default: false
 
 jobs:
   quota:
@@ -39,12 +49,22 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r backend/requirements.txt
+      # only the reassign path opens pictures — it reads the theme off them, which is a mean and
+      # not an OCR, but it still needs numpy and Pillow
+      - run: pip install -r backend/requirements-pairing.txt
+        if: github.event.inputs.reassign == 'true'
       - name: Who is over, and is there room for what comes off
         working-directory: backend
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.DRIVE_OAUTH_TOKEN_JSON }}
+          DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
+          DRIVE_EXPORTS_FOLDER_ID: ${{ secrets.DRIVE_EXPORTS_FOLDER_ID }}
           TZ: Asia/Bangkok
         run: |
           ARGS="--from ${{ github.event.inputs.date_from }} --to ${{ github.event.inputs.date_to }}"
           if [ "${{ github.event.inputs.list }}" = "true" ]; then ARGS="$ARGS --list"; fi
+          if [ "${{ github.event.inputs.reassign }}" = "true" ]; then ARGS="$ARGS --reassign"; fi
+          if [ "${{ github.event.inputs.apply }}" = "true" ]; then ARGS="$ARGS --apply"; fi
           python rebalance_quota.py $ARGS
