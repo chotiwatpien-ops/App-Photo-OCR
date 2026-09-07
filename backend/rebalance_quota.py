@@ -262,12 +262,22 @@ def reassign(over, d_from, d_to, per_rider, apply_it, log=print):
     return finish(drive, touched, ingest.week_label(d_from), log)
 
 
+def rider_of_export(file_name):
+    """'WK36-มานิตย์ Home7.jpg' -> 'มานิตย์ Home'. None when it is not one of ours.
+
+    Guessing this shape twice cost two runs. stitch.customer_name puts the week in front so a
+    file forwarded on its own still says which week it belongs to, and export_only puts the admin
+    behind when two riders in one group share a display name. Taking only the trailing number off
+    left 'WK36-มานิตย์ Home', which matched no rider, and the sweep reported nothing to do."""
+    m = re.match(r"^\s*(?:WK\d+\s*-\s*)?(.+?)\s*\d+\.jpe?g\s*$", file_name or "", re.IGNORECASE)
+    return m.group(1).strip() if m else None
+
+
 def stale_export_images(drive, exports_id, week_name, names):
     """The customer pictures belonging to riders whose trips have just changed hands.
 
-    A job's pictures are numbered in trip order ('มานิตย์ Home7.jpg'), so once trips have left or
-    arrived, every number means a different trip and the whole set is wrong. Matching is on the
-    name with its number taken off — the same name the export wrote in the first place."""
+    A job's pictures are numbered in trip order, so once trips have left or arrived, every number
+    means a different trip and the whole set is wrong."""
     out = []
     for week_dir in drive.list_folders(exports_id):
         if week_dir["name"].strip() != week_name:
@@ -276,8 +286,8 @@ def stale_export_images(drive, exports_id, week_name, names):
             if cat_dir["name"].lstrip().startswith("_"):
                 continue                       # our own holding folders
             for img in drive.list_images(cat_dir["id"]):
-                stem = re.sub(r"\s*\d+\.jpe?g$", "", img["name"], flags=re.IGNORECASE).strip()
-                if stem in names:
+                who = rider_of_export(img["name"])
+                if who and (who in names or who.rsplit("-", 1)[0].strip() in names):
                     out.append((week_dir["id"], img))
     return out
 

@@ -169,10 +169,21 @@ e.tree["exports"] = {}
 wkd = e.ensure_folder("exports", "2026-W36")
 cat_d = e.ensure_folder(wkd, "2 W Saver")
 hold = e.ensure_folder(wkd, "_แทนที่แล้ว")
-e.images[cat_d] = [{"id": "a", "name": "มานิตย์ Home7.jpg"},
-                   {"id": "b", "name": "มานิตย์ Home21.jpg"},
-                   {"id": "c", "name": "คนอื่น Win3.jpg"}]
-e.images[hold] = [{"id": "z", "name": "มานิตย์ Home1.jpg"}]
+# the real shape, from stitch.customer_name: the week goes in front, the number behind, and
+# export_only appends the admin when two riders in a group share a display name
+check("อ่านชื่อไรเดอร์จากชื่อไฟล์จริงได้",
+      rq.rider_of_export("WK36-มานิตย์ Home7.jpg") == "มานิตย์ Home")
+check("ไม่มีคำนำหน้าสัปดาห์ก็อ่านได้", rq.rider_of_export("มานิตย์ Home21.jpg") == "มานิตย์ Home")
+check("เลขสองหลักขึ้นไปก็ตัดถูก", rq.rider_of_export("WK36-ก้องนภา Win105.jpg") == "ก้องนภา Win")
+check("ไฟล์ที่ไม่ใช่รูปส่งลูกค้าตอบว่าไม่ใช่", rq.rider_of_export("168106_168107.jpg") is None
+      or rq.rider_of_export("รายงาน.txt") is None)
+check("ชื่อว่างไม่พัง", rq.rider_of_export("") is None and rq.rider_of_export(None) is None)
+
+e.images[cat_d] = [{"id": "a", "name": "WK36-มานิตย์ Home7.jpg"},
+                   {"id": "b", "name": "WK36-มานิตย์ Home21.jpg"},
+                   {"id": "c", "name": "WK36-คนอื่น Win3.jpg"},
+                   {"id": "d", "name": "WK36-มานิตย์ Home-แอดมิน2.jpg"}]
+e.images[hold] = [{"id": "z", "name": "WK36-มานิตย์ Home1.jpg"}]
 # The Inbox calls this week 'Week 31 Aug-6 Sep' and Exports calls it '2026-W36'. Handing the
 # first to a sweep that walks the second matched nothing, and a run that moved 75 trips reported
 # '0 ไฟล์' and left all 75 old pictures in the customer's folder.
@@ -181,7 +192,8 @@ check("ชื่อสัปดาห์คนละแบบต้องไม�
 import ingest                                                    # noqa: E402
 check("ชื่อที่ถูกคือแบบที่ Exports ใช้", ingest.week_label("2026-08-31") == "2026-W36")
 found = rq.stale_export_images(e, "exports", "2026-W36", {"มานิตย์ Home"})
-check("เจอเฉพาะรูปของคนที่ถูกแตะ", sorted(i["id"] for _, i in found) == ["a", "b"])
+check("เจอเฉพาะรูปของคนที่ถูกแตะ รวมที่มีชื่อแอดมินต่อท้าย",
+      sorted(i["id"] for _, i in found) == ["a", "b", "d"])
 check("ไม่ไปยุ่งโฟลเดอร์ที่พักไว้แล้ว", "z" not in [i["id"] for _, i in found])
 check("สัปดาห์อื่นไม่ถูกแตะ", rq.stale_export_images(e, "exports", "2026-W35", {"มานิตย์ Home"}) == [])
 
