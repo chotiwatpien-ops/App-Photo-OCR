@@ -17,6 +17,7 @@ import argparse
 import io
 import re
 import sys
+import zlib
 from collections import defaultdict
 
 import config
@@ -187,7 +188,11 @@ def reassign(over, d_from, d_to, per_rider, apply_it, log=print):
 
     names = {k: [n for n, kd in db.name_pool_for(k[0]) if kd == k[1]]
              for k in (("2W", "Win"), ("2W", "Home"), ("4W", "Taxi"), ("4W", "Home"))}
-    alloc = distribute.Allocator(drive, wk["id"], names, per_rider=per_rider, log=log,
+    # Tie the draw to the week, so the report is the thing that happens. Names come out at
+    # random, and with nothing holding them still the run that was approved and the run that
+    # acts pick different people — which makes a report shown for approval worth nothing.
+    seed = zlib.crc32(str(wk["id"]).encode("utf-8"))
+    alloc = distribute.Allocator(drive, wk["id"], names, per_rider=per_rider, seed=seed, log=log,
                                  styles=db.rider_styles(wk["id"]))
 
     released = [(who, t) for who, v in sorted(over.items()) for t in v["release"]]

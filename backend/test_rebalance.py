@@ -203,5 +203,23 @@ a9 = distribute.Allocator(rq.DryDrive(d9), "week", POOL, per_rider=21, seed=9)
 a9.folder_for("2 W Saver", "2W", "ยาว/มืด")
 check("จ่ายงานผ่านโหมดรายงานแล้ว Drive ยังสะอาด", d9.tree == {"week": {}})
 
+# The report is only worth showing if acting on it produces the same answer. Names are drawn at
+# random, so the draw is tied to the week — two runs over the same week must agree.
+print("รายงานกับตอนทำจริงต้องได้คนเดียวกัน:")
+
+
+def _draw(seed):
+    d = FakeDrive()
+    a = distribute.Allocator(d, "week", POOL, per_rider=21, seed=seed)
+    return [a.rider_at(a.folder_for("2 W Saver", "2W", "ยาว/มืด")[0]) for _ in range(60)]
+
+
+check("เมล็ดเดียวกัน ได้ชื่อชุดเดียวกัน", _draw(12345) == _draw(12345))
+check("คนละเมล็ด ได้คนละชุด (ยืนยันว่ามันสุ่มจริง)", _draw(12345) != _draw(999))
+import zlib                                                      # noqa: E402
+check("เมล็ดผูกกับสัปดาห์ ไม่ใช่กับเวลาที่รัน",
+      zlib.crc32(b"week-abc") == zlib.crc32(b"week-abc")
+      and zlib.crc32(b"week-abc") != zlib.crc32(b"week-xyz"))
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)
