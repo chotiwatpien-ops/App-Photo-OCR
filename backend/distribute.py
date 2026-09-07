@@ -107,8 +107,20 @@ class Allocator:
                 return r["id"], None
         free = [n for n in self.pool.get((wheel, kind), []) if n not in self.used]
         if not free:
+            # Say where the unused room is, not just that the list is empty. Run 15 stopped after
+            # 21 of 230, and 'the 51 names are all used' left open whether those 51 riders were
+            # full or whether the free seats were sitting in a group this trip could not reach —
+            # a rider is only topped up inside their own group, so the two look identical here.
+            spare = []
+            for cat, gg in sorted(self.groups.items()):
+                n = sum(self.per_rider - r["n"] for r in gg["riders"]
+                        if r["n"] < self.per_rider and r["name"].lower().endswith(want))
+                if n:
+                    spare.append(f"{cat} ว่าง {n} เที่ยว")
             return None, (f"รายชื่อ {kind} ของ {wheel} หมดแล้ว "
-                          f"({len(self.pool.get((wheel, kind), []))} ชื่อถูกใช้ครบในสัปดาห์นี้)")
+                          f"({len(self.pool.get((wheel, kind), []))} ชื่อถูกใช้ครบในสัปดาห์นี้) · "
+                          + ("ที่ยังว่างอยู่คนละกลุ่ม: " + ", ".join(spare) if spare
+                             else "และทุกคนเต็ม 21 แล้ว — ต้องขอชื่อเพิ่มจาก Ops"))
         name = self.rng.choice(free)
         self.used.add(name)
         fid = self.drive.ensure_folder(g["id"], folder_label(len(g["riders"]) + 1, name))

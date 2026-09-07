@@ -90,6 +90,28 @@ check("ชื่อไม่ซ้ำแม้ข้ามกลุ่มใน�
 check("พอชื่อหมดก็บอกว่าหมด ไม่วนใช้ซ้ำ",
       a2.folder_for("2 W Standard", "2W", "Win")[1] is not None)
 
+# --- when the list runs out, say whether the seats are gone or just out of reach --------------
+# Run 15 moved 21 of 230 and said only 'the 51 names are all used'. That reads as 'no room left',
+# but a rider is topped up inside their own group only, so it also happens while another group
+# still has empty seats. The message has to tell those two apart.
+d6 = FakeDrive()
+a6 = distribute.Allocator(d6, "week", POOL, per_rider=3, seed=6)
+a6.folder_for("2 W Saver", "2W", "Home")                 # ง or จ, 1 of 3 seats used
+for _ in range(3):
+    a6.folder_for("2 W Standard", "2W", "Home")          # the other name, filled to 3
+_, err = a6.folder_for("2 W Standard", "2W", "Home")     # no name left, and Standard is full
+check("บอกว่าชื่อหมด", err and "รายชื่อ Home ของ 2W หมดแล้ว" in err)
+check("บอกว่าที่ว่างไปอยู่กลุ่มไหน", err and "2 W Saver ว่าง 2 เที่ยว" in err)
+check("ไม่นับกลุ่มที่เต็มแล้วว่าว่าง", err and "2 W Standard ว่าง" not in err)
+
+d7 = FakeDrive()
+a7 = distribute.Allocator(d7, "week", POOL, per_rider=1, seed=7)
+for _ in range(2):
+    a7.folder_for("2 W Saver", "2W", "Home")
+_, err7 = a7.folder_for("2 W Saver", "2W", "Home")
+check("ทุกคนเต็มจริง ๆ ก็บอกให้ไปขอชื่อเพิ่ม", err7 and "ต้องขอชื่อเพิ่มจาก Ops" in err7)
+check("ตอนเต็มจริงต้องไม่ชี้ไปกลุ่มอื่น", err7 and "ที่ยังว่าง" not in err7)
+
 # --- Home work lands in both 2W groups, drawn from the Home sheet only -------------------------
 d3 = FakeDrive()
 a3 = distribute.Allocator(d3, "week", POOL, per_rider=1, seed=3)
