@@ -29,6 +29,34 @@ def report(long_items=(), pairs=()):
                         "leftovers": []}]}
 
 
+# A reading cached before themes existed has to gain one without its OCR being redone. Without
+# this, every picture already in the cache is filed as style 'ยาว/None' and the whole point of
+# keeping a rider to one look is lost on exactly the pictures that are waiting.
+import io as _io                                                # noqa: E402
+import numpy as _np                                             # noqa: E402
+from PIL import Image as _Image                                 # noqa: E402
+import pairing                                                  # noqa: E402
+
+
+def _png(level):
+    b = _io.BytesIO()
+    _Image.fromarray(_np.full((40, 20, 3), level, dtype="uint8")).save(b, "PNG")
+    return b.getvalue()
+
+
+print("ธีมของผลที่แคชไว้:")
+old_reading = {"role": "top", "amount": 56}                     # no 'theme' — read before the rule
+pairing.ensure_theme(old_reading, _png(30))
+check("ผลเก่าที่ไม่มีธีม ได้ธีมมืด", old_reading.get("theme") == "มืด")
+light = {"role": "top"}
+pairing.ensure_theme(light, _png(240))
+check("และรูปสว่างได้สว่าง", light.get("theme") == "สว่าง")
+kept = {"role": "top", "theme": "มืด"}
+pairing.ensure_theme(kept, _png(240))
+check("ผลที่มีธีมอยู่แล้วไม่ถูกเขียนทับ", kept["theme"] == "มืด")
+check("ค่า None ก็ถือว่ายังไม่มี ไม่ใช่คำตอบ",
+      pairing.ensure_theme({"theme": None}, _png(30))["theme"] == "มืด")
+
 txt = pool.render(report(long_items=[
     {"file": "ก.jpg", "target": "2 W Saver", "moved": "2 W Saver/01-x/ก.jpg"},
     {"file": "ข.jpg", "target": "2 W Saver", "moved": "รายชื่อ Home ของ 2W หมดแล้ว"},

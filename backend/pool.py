@@ -165,12 +165,21 @@ def analyse(albums, data, workers, cache=None):
 
     cache = cache if cache is not None else {}
     fresh = {}
+    patched = {}          # cache hits that only needed the theme added — not a fresh read
 
     def inspect(item):
         ai, img = item
         h = hashes[img["id"]]
         if h in cache:
-            return img["id"], cache[h]
+            # a reading made before themes existed gets the missing field, and is written back
+            # so the next round does not have to work it out again
+            hit = cache[h]
+            if hit is not None and not hit.get("theme"):
+                try:
+                    patched[h] = pairing.ensure_theme(hit, data[img["id"]])
+                except Exception as e:  # noqa: BLE001
+                    report["errors"].append(f"อ่านธีมรูปไม่ได้ {img['name']}: {str(e)[:120]}")
+            return img["id"], hit
         try:
             fresh[h] = pairing.inspect(data[img["id"]])
             return img["id"], fresh[h]
@@ -179,7 +188,10 @@ def analyse(albums, data, workers, cache=None):
             return img["id"], None
     with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
         info = dict(ex.map(inspect, todo))
-    report["ocr_cached"] = len(todo) - len(fresh)
+    report["ocr_cached"] = len(todo) - len(fresh)      # counted before the patches join them
+    if patched:
+        log(f"  เติมธีมให้ผลที่อ่านไว้ก่อนหน้า {len(patched)} รูป (ไม่ได้อ่าน OCR ใหม่)")
+        fresh.update(patched)                         # stored like the rest, so this is once only
     report["ocr_fresh"] = fresh
 
     def target_for(img_id, album_name):

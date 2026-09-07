@@ -178,6 +178,19 @@ def theme_of(a):
     return "มืด" if a.mean() < DARK_MAX else "สว่าง"
 
 
+def ensure_theme(info, source):
+    """Give a reading from before themes existed one now, without redoing its OCR.
+
+    READER is the usual way to throw away stale cache, but every entry in it was read by the
+    same OCR that would read it again — only this one extra field is missing, and it is the mean
+    brightness of the picture, which costs nothing. Bumping the reader instead would re-OCR a
+    week to add a number that no OCR was involved in."""
+    if info is not None and not info.get("theme"):
+        im = Image.open(io.BytesIO(source) if isinstance(source, (bytes, bytearray)) else source)
+        info["theme"] = theme_of(np.asarray(im.convert("RGB")).astype(int))
+    return info
+
+
 READER = "r6"
 
 
