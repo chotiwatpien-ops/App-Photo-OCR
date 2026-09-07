@@ -24,9 +24,13 @@ import db
 def plan(rows, per_rider):
     """{rider: {"keep": [...], "release": [...]}} for whoever is over.
 
-    The first trips of the week stay. Any rule would do as long as it is written down and the
-    same one is used every time — what must not happen is a hand-picked set, which nobody can
-    check later and which quietly decides whose work disappears."""
+    Keep the same days, thinned. Taking simply the first 21 of the week is a rule anyone can
+    check, which is why it was tried first — but on this data it left every one of the four
+    working Monday to Thursday and then nothing at all, and a rider who stops dead three days
+    before the week ends is a stranger sight than one who did 42. So the seats are handed out a
+    day at a time, always to the day with the most trips still waiting: a rider who worked seven
+    days still works seven days. Deterministic, and it does not depend on the order rows arrive
+    in — which is what made the first rule checkable, and this one keeps."""
     by_rider = defaultdict(list)
     for t in rows:
         by_rider[t["driver_name"]].append(t)
@@ -34,8 +38,22 @@ def plan(rows, per_rider):
     for who, ts in by_rider.items():
         if len(ts) <= per_rider:
             continue
-        ts = sorted(ts, key=lambda t: (t.get("trip_date") or "", t["id"]))
-        out[who] = {"keep": ts[:per_rider], "release": ts[per_rider:]}
+        by_day = defaultdict(list)
+        for t in sorted(ts, key=lambda t: t["id"]):
+            by_day[str(t.get("trip_date") or "")].append(t)
+        days = sorted(by_day)
+        # Largest remainder. Each day keeps its share of the 21 in proportion to what it holds,
+        # rounded down, and the seats left over go to the days that lost the most in the
+        # rounding. A day that did more still keeps more, none of them empties, and the answer
+        # is a named method rather than whatever a tie-break happened to do.
+        total = len(ts)
+        exact = {d: per_rider * len(by_day[d]) / total for d in days}
+        seats = {d: int(exact[d]) for d in days}
+        for d in sorted(days, key=lambda d: (-(exact[d] - seats[d]), d))[:per_rider - sum(seats.values())]:
+            seats[d] += 1
+        keep = [t for d in days for t in by_day[d][:seats[d]]]
+        release = [t for d in days for t in by_day[d][seats[d]:]]
+        out[who] = {"keep": keep, "release": release}
     return out
 
 
@@ -45,6 +63,14 @@ def room(rows, per_rider, over):
     for t in rows:
         n[t["driver_name"]] += 1
     return {w: per_rider - c for w, c in n.items() if c < per_rider and w not in over}
+
+
+def days_line(ts):
+    """'08-31:3 09-01:3 …' — a rider who worked every day has to go on working every day."""
+    c = defaultdict(int)
+    for t in ts:
+        c[str(t.get("trip_date") or "?")] += 1
+    return " ".join(f"{d[5:]}:{n}" for d, n in sorted(c.items()))
 
 
 def tiers(ts):
@@ -82,6 +108,7 @@ def main(argv=None):
         n = len(v["keep"]) + len(v["release"])
         print(f"{who[:22]:<22}{n:>5}{len(v['keep']):>6}{len(v['release']):>8}  "
               f"เก็บ [{tiers(v['keep'])}] · ออก [{tiers(v['release'])}]")
+        print(f"{'':<22}      วันละ: " + days_line(v["keep"]))
 
     free = room(rows, a.per_rider, over)
     seats = sum(free.values())
