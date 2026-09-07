@@ -208,8 +208,12 @@ def reassign(over, d_from, d_to, per_rider, apply_it, log=print):
         if err or not dest:
             stuck.append((who, t, err or "ไม่มีที่ว่าง"))
             continue
+        to = alloc.rider_at(dest)
+        if not to:
+            stuck.append((who, t, f"ไม่รู้ว่าโฟลเดอร์ {dest} เป็นของใคร"))
+            continue
         moves.append({"from": who, "trip": t, "src": fid_src, "dest": dest, "category": cat,
-                      "to": distribute.bare(dest.rsplit("/", 1)[-1])})
+                      "to": to})
 
     by_pair = defaultdict(list)
     for m in moves:

@@ -118,6 +118,19 @@ class Allocator:
         self.groups[category] = {"id": cat_id, "riders": riders}
         return self.groups[category]
 
+    def rider_at(self, folder_id):
+        """Whose folder this is. A Drive id is not a name and cannot be turned into one.
+
+        The name was only ever recoverable from the id for folders this run had just made, whose
+        ids happen to look like paths in the dry-run wrapper. Topping up somebody who was already
+        working returns a real Drive id, and reading a name out of that produced
+        'yW9Sxa_HhW7ED1QvyfZP' — which would have gone into the workbook as a driver."""
+        for g in self.groups.values():
+            for r in g["riders"]:
+                if r["id"] == folder_id:
+                    return r["name"]
+        return None
+
     def prime(self, categories):
         """Read every group first, so a name already working in one is never drawn for another."""
         for c in categories:

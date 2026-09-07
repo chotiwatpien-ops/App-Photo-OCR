@@ -228,6 +228,25 @@ a12.folder_for("2 W Saver", "2W")
 check("อ่านสัปดาห์ทั้งหมดแล้วต้องไม่นับกลุ่มเดิมซ้ำ", a12.total["ก Win"] == 4)
 check("และไม่มีไรเดอร์โผล่มาสองครั้ง", len(a12.groups["2 W Saver"]["riders"]) == 1)
 
+# A Drive id is not a name. Reading one out of the folder id worked only for folders this run
+# had just made; topping up someone already working gave 'yW9Sxa_HhW7ED1QvyfZP', which came
+# within one button of being written into the workbook as a driver.
+d13 = FakeDrive()
+cat13 = d13.ensure_folder("week", "2 W Saver")
+existing = d13.ensure_folder(cat13, "07-สมชาย Win")
+d13.tree[cat13]["07-สมชาย Win"] = "1yW9Sxa_HhW7ED1QvyfZP"      # a real Drive id, not a path
+d13.tree["1yW9Sxa_HhW7ED1QvyfZP"] = {}
+d13.images["1yW9Sxa_HhW7ED1QvyfZP"] = 2
+a13 = distribute.Allocator(d13, "week", POOL, per_rider=21, seed=13)
+got13, _ = a13.folder_for("2 W Saver", "2W")
+check("เติมคนเดิมที่ id เป็นรหัส Drive จริง", got13 == "1yW9Sxa_HhW7ED1QvyfZP")
+check("ถามชื่อจาก allocator ได้ชื่อคน ไม่ใช่รหัส", a13.rider_at(got13) == "สมชาย Win")
+check("ตัดท้าย id เอาเองจะได้ขยะ (นี่คือบั๊กที่เจอ)",
+      distribute.bare(got13.rsplit("/", 1)[-1]) == "yW9Sxa_HhW7ED1QvyfZP")
+new13, _ = a13.folder_for("2 W Standard", "2W")
+check("โฟลเดอร์ที่เพิ่งสร้างก็ถามชื่อได้เหมือนกัน", a13.rider_at(new13) == "สมชาย Win")
+check("โฟลเดอร์ที่ไม่รู้จักตอบว่าไม่รู้ ไม่เดา", a13.rider_at("ไม่มีอยู่จริง") is None)
+
 # --- someone already on the books gets topped up before a new name is drawn --------------------
 d10 = FakeDrive()
 cat10 = d10.ensure_folder("week", "4 W Standard")
