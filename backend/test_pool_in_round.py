@@ -72,11 +72,15 @@ used_n = len(os.listdir(used)) if os.path.isdir(used) else 0
 print(f"2) รอบเดียวกันจัดกองแล้ว: รูปต่อแล้วใน 4 W Standard {len(stitched)} · ต้นฉบับใน _ใช้แล้ว {used_n} · เหลือในกอง {len(left)}")
 ok = ok and len(stitched) >= 3 and used_n == 2 * len(stitched) and len(left) == 8 - used_n
 
-# and they land in a rider's folder — loose in the category folder is invisible to discover()
+# and they land in a rider's folder — loose in the category folder is invisible to discover().
+# It has to be the folder that was already there: a rider's 21 trips are theirs whatever tier the
+# fares were, so somebody with room is filled before any new name is drawn. This used to draw a
+# fresh 'สมชาย Taxi' and leave '01 ทดสอบ' empty, because a folder whose name did not end in the
+# right driver kind was passed over — and there is no wrong kind any more.
 riders = {os.path.basename(os.path.dirname(f)) for f in stitched}
-print("2b) รูปอยู่ในโฟลเดอร์ไรเดอร์ ไม่ลอยในโฟลเดอร์ประเภทรถ:", riders and all(
-    r != "4 W Standard" and r.endswith(" Taxi") for r in riders), sorted(riders))
-ok = ok and bool(riders) and all(r != "4 W Standard" and r.endswith(" Taxi") for r in riders)
+print("2b) รูปเข้าโฟลเดอร์ไรเดอร์ที่มีอยู่แล้ว ไม่ลอยและไม่เปิดคนใหม่:",
+      riders == {"01 ทดสอบ"}, sorted(riders))
+ok = ok and riders == {"01 ทดสอบ"}
 
 print(f"2c) รอบเดียวกันอ่านรูปที่เพิ่งจัดเข้าโฟลเดอร์: อ่านไป {len(read)} รูป")
 ok = ok and len(read) == len(stitched)

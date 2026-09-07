@@ -201,10 +201,15 @@ def analyse(albums, data, workers, cache=None):
             "week": alb["week"], "group": alb["group"], "album": alb["album"],
             "n_images": len(alb["images"]),
             "n_duplicates": len(alb["images"]) - len(alb["_keep"]),
-            "long": [{"file": n, "id": by_name[n]["id"], "target": target_for(by_name[n]["id"], alb["album"])}
+            # 'ยาว/มืด' — what a picture looks like from across the room. A rider's folder
+            # holds one of these, so the album it came from and the phone that took it stay
+            # together instead of being sprinkled over everybody.
+            "long": [{"file": n, "id": by_name[n]["id"], "style": f"ยาว/{i.get('theme')}",
+                      "target": target_for(by_name[n]["id"], alb["album"])}
                      for n, i in items if i["role"] == "long"],
             "pairs": [{"top": t, "bottom": b, "cut_top": d[t].get("cut_top"),
                        "amount": pairing.agreed_amount(d[t], d[b]), "distance": dist,
+                       "style": f"ครึ่ง/{d[t].get('theme')}",
                        "top_id": by_name[t]["id"], "bottom_id": by_name[b]["id"],
                        "target": target_for(by_name[t]["id"], alb["album"])} for t, b, dist in pairs],
             "leftovers": [{"file": n, "role": d[n]["role"], "amount": d[n]["amount"],
@@ -325,28 +330,29 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
         # Which rider each trip belongs to is decided here, before anything is uploaded: the
         # allocator carries 'this name is taken' across every album and group of the week, and
         # sharing that between threads would hand one name to two riders.
-        kind = distribute.driver_kind(entry["album"])
-        if kind is None and (entry["pairs"] or entry["long"]):
-            why = (f"อัลบั้ม '{entry['album']}' ไม่ได้บอกประเภทคนขับ — ตั้งชื่อขึ้นต้นด้วย "
-                   f"2W-Win / 2W-Home / 4W-Taxi / 4W-Home แล้วสั่งรอบใหม่")
+        wheel = distribute.wheel_of(entry["album"])
+        if wheel is None and (entry["pairs"] or entry["long"]):
+            why = (f"อัลบั้ม '{entry['album']}' ไม่ได้บอกว่ารถกี่ล้อ — ตั้งชื่อขึ้นต้นด้วย "
+                   f"2W หรือ 4W แล้วสั่งรอบใหม่")
             log(f"  ⚠ {why}")
             issues.append((f"album:{entry['album']}", "folder", why))
             for x in entry["pairs"] + entry["long"]:
-                x["moved"] = "ไม่รู้ประเภทคนขับจากชื่ออัลบั้ม — ยังอยู่ในกอง"
+                x["moved"] = "ไม่รู้ว่ารถกี่ล้อจากชื่ออัลบั้ม — ยังอยู่ในกอง"
             continue
         alloc = allocators.get(week_id)
         if alloc is None:
             import db                       # imported where used, as everywhere else in this file
+            pool_names = {k: [n for n, kd in db.name_pool_for(k[0]) if kd == k[1]]
+                          for k in (("2W", "Win"), ("2W", "Home"), ("4W", "Taxi"), ("4W", "Home"))}
+            log("  รายชื่อที่มี: " + " · ".join(f"{k[0]} {k[1]} {len(v)}"
+                                                for k, v in sorted(pool_names.items())))
             alloc = allocators[week_id] = distribute.Allocator(
-                drive, week_id,
-                {k: [n for n, kd in db.name_pool_for(k[0]) if kd == k[1]]
-                 for k in (("2W", "Win"), ("2W", "Home"), ("4W", "Taxi"), ("4W", "Home"))},
-                log=log)
+                drive, week_id, pool_names, log=log, styles=db.rider_styles(week_id))
         for x in entry["pairs"] + entry["long"]:
             x["dest"] = None
             if not x["target"]:
                 continue
-            fid, err = alloc.folder_for(x["target"], *kind)
+            fid, err = alloc.folder_for(x["target"], wheel, x.get("style"))
             if err:
                 x["moved"] = err
                 if (f"pool:{err}", "folder", err) not in issues:
@@ -398,6 +404,23 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
             n = sum(ex.map(do_pair, entry["pairs"])) + sum(ex.map(do_long, entry["long"]))
         moved += n
         log(f"  ↳ {entry['album']}: ย้ายแล้ว {n} รายการ")
+    # What each folder settled on has to outlive this round, and so does the answer to the
+    # question the customer is actually asking — is the week the mix they asked for?
+    if allocators:
+        import db
+        kept = sum(db.rider_styles_save(w, a.new_styles) for w, a in allocators.items())
+        if kept:
+            log(f"  จำไว้ว่าไรเดอร์ {kept} คนส่งรูปแบบไหน")
+        for a in allocators.values():
+            for wheel in ("2W", "4W"):
+                c = a.kind_counts(wheel)
+                total = sum(c.values())
+                if total:
+                    major = distribute.MAJOR[wheel]
+                    log(f"  สัดส่วน {wheel}: " + " · ".join(f"{k} {v}" for k, v in c.items())
+                        + f" → {major} {c[major] / total:.0%} "
+                        + ("✔" if abs(c[major] / total - distribute.TARGET_MAJOR) <= 0.10
+                           else f"(เป้า {distribute.TARGET_MAJOR:.0%} ±10%) ⚠"))
     report["totals"]["n_moved"] = moved
     return moved
 

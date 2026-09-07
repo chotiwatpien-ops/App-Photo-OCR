@@ -28,22 +28,25 @@ KINDS = {"win": ("2W", "Win"), "home2": ("2W", "Home"),
 WHEEL_RE = re.compile(r"^\s*([24])\s*w\b", re.IGNORECASE)
 KIND_RE = re.compile(r"\b(win|home|taxi)\b", re.IGNORECASE)
 
+# The customer wants a Win-heavy mix and can count it: every driver name in the workbook carries
+# its kind. Ops set the target at 70/30 with ten points of slack per week. So the kind is decided
+# here, one name at a time, instead of being dictated by whatever the album happened to be called
+# — an album of 609 trips named '2W-Home …' used to drain the Home sheet and stop, while the
+# larger Win sheet it was allowed to use sat untouched.
+MAJOR = {"2W": "Win", "4W": "Taxi"}
+MINOR = {"2W": "Home", "4W": "Home"}
+TARGET_MAJOR = 0.70
 
-def driver_kind(album_name):
-    """('2W', 'Home') from '2W-Home bike 150', or None when the album does not say.
 
-    Names like '2W-saver 109' describe the service, not the driver, and there is no way to tell
-    a Win rider from a Home one by looking at the slips — so those get an error, not a guess.
-    Picking the wrong sheet would spread the wrong names across a whole week."""
-    n = (album_name or "").replace("-", " ").replace("_", " ")
-    w = WHEEL_RE.match(n)
-    k = KIND_RE.search(n)
-    if not w or not k:
-        return None
-    wheel, kind = f"{w.group(1)}W", k.group(1).capitalize()
-    if (wheel, kind) in {("2W", "Win"), ("2W", "Home"), ("4W", "Taxi"), ("4W", "Home")}:
-        return wheel, kind
-    return None                      # '4W-Win' and '2W-Taxi' are not things
+def wheel_of(album_name):
+    """'2W' from '2W-Home bike 150' or '2w-saver wk5kanjana', or None.
+
+    Which sheet a name comes from no longer depends on the album, so an album only has to say
+    which vehicle it is — and '2W-saver 109', which used to be turned away for not naming a
+    driver kind, now says everything that is needed."""
+    w = WHEEL_RE.match((album_name or "").replace("-", " ").replace("_", " "))
+    return f"{w.group(1)}W" if w else None
+
 
 
 def folder_label(i, name):
@@ -58,12 +61,17 @@ def bare(folder_name):
 
 
 class Allocator:
-    """Which rider folder the next trip of a given group and driver kind belongs in.
+    """Which rider folder the next trip of a given group belongs in.
 
-    Built once per run over a week, because 'this name is already used' has to hold across every
-    group in that week, not just the one being filled."""
+    A rider works one week, drives one vehicle and takes 21 trips, and those 21 may be any mix of
+    Saver and Standard — the tier is the fare's, not the rider's. So the quota is counted against
+    the person, not the folder, and someone who works both tiers has a folder in each group with
+    one 21 shared between them.
 
-    def __init__(self, drive, week_id, pool, per_rider=None, seed=None, log=print):
+    Built once per run over a week, because none of that — the quota, 'this name is already
+    working', or 'this week is 70% Win' — can be answered from inside a single group."""
+
+    def __init__(self, drive, week_id, pool, per_rider=None, seed=None, log=print, styles=None):
         self.drive, self.week_id, self.log = drive, week_id, log
         self.per_rider = per_rider or config.EXPECTED_TRIPS_PER_WEEK
         self.rng = random.Random(seed)
@@ -71,19 +79,42 @@ class Allocator:
         self.pool = {k: [f"{n} {k[1]}".strip() for n in v] for k, v in pool.items()}
         self.groups = {}             # category -> {"id":…, "riders":[{name,id,n}]}
         self.used = set()            # every name spoken for this week, any group
+        self.total = {}              # name -> trips this week, across every group they work in
         self.made = 0
+        self._read_week = False
+        # A rider sends one phone's screenshots, so one rider holds one kind of picture: all
+        # pre-joined or all stitched by us, all dark theme or all light. Mixing them is the first
+        # thing anyone checking the work would see. This is keyed on the person, not the folder,
+        # so the two folders of someone working both tiers cannot drift apart — and it is passed
+        # in from the database and read back out, because a round only sees the pictures it is
+        # moving while a rider is filled up across several rounds.
+        self.styles = dict(styles or {})     # rider name -> style
+        self.new_styles = {}                 # the ones this run decided, for the caller to store
 
     def _load(self, category):
         if category in self.groups:
             return self.groups[category]
+        # Read the whole week before answering anything. A rider's 21 trips and the week's Win
+        # share are both counted across every group, so a decision made while only one group has
+        # been read is a decision made on a fraction of the facts.
+        if not self._read_week:
+            self._read_week = True
+            for f in self.drive.list_folders(self.week_id):
+                n = f["name"].strip()
+                if n.lower() not in ("pool", "กอง") and not n.startswith("_"):
+                    self._load(n)
+            if category in self.groups:      # the sweep above already read this one
+                return self.groups[category]
         cat_id = self.drive.ensure_folder(self.week_id, category)
         riders = []
         for f in self.drive.list_folders(cat_id):
             if re.match(r"^\s*admin\b", f["name"], re.IGNORECASE):
                 continue             # the old layout; leave those alone
             name = bare(f["name"])
-            riders.append({"name": name, "id": f["id"], "n": len(self.drive.list_images(f["id"]))})
+            n = len(self.drive.list_images(f["id"]))
+            riders.append({"name": name, "id": f["id"], "n": n})
             self.used.add(name)
+            self.total[name] = self.total.get(name, 0) + n
         self.groups[category] = {"id": cat_id, "riders": riders}
         return self.groups[category]
 
@@ -92,39 +123,88 @@ class Allocator:
         for c in categories:
             self._load(c)
 
-    def folder_for(self, category, wheel, kind):
-        """Folder id for the next trip, or (None, reason) when Ops' list has nobody left."""
+    def kind_counts(self, wheel):
+        """{kind: riders working this week} for one wheel count, however they were drawn."""
+        out = {}
+        for kind in (MAJOR[wheel], MINOR[wheel]):
+            out[kind] = len(self.used & set(self.pool.get((wheel, kind), [])))
+        return out
+
+    def _draw_order(self, wheel):
+        """Which sheet to try first, so the week lands on the mix the customer asked for."""
+        c = self.kind_counts(wheel)
+        major, minor = MAJOR[wheel], MINOR[wheel]
+        total = c[major] + c[minor]
+        share = c[major] / total if total else 0.0
+        return [major, minor] if share < TARGET_MAJOR else [minor, major]
+
+    def _room(self, name):
+        return self.per_rider - self.total.get(name, 0)
+
+    def _fits(self, name, style):
+        """Room left in this person's week, and the pictures are the kind they already send."""
+        if self._room(name) <= 0:
+            return False
+        have = self.styles.get(name)
+        return not (style and have and have != style)
+
+    def _take(self, name, style):
+        self.total[name] = self.total.get(name, 0) + 1
+        if style and not self.styles.get(name):    # riders from before this rule adopt the first
+            self.styles[name] = style
+            self.new_styles[name] = style
+
+    def folder_for(self, category, wheel, style=None):
+        """Folder id for the next trip, or (None, reason) when Ops' list has nobody left.
+
+        style, when given, is whatever tells two pictures apart to the eye — the caller decides
+        what goes in it. A rider is only offered work of the style they already send."""
         g = self._load(category)
-        # Case-folded on purpose. Everything else that reads a folder name off Drive ignores
-        # case, and this did not: a folder someone typed as '01-สมชาย WIN' would not be topped
-        # up, so the same person would be handed a second folder — two folders, two jobs, one
-        # rider, in a week where a name is supposed to appear once.
-        want = f" {kind}".lower()
-        # someone already on this week's books who is not full yet — always before a new name
+        # Someone already working in this group who is not at their weekly 21 — always before a
+        # second folder, and long before a new name. Fullest first, so a week uses the fewest
+        # people it can. Case-folded on purpose: everything else that reads a folder name off
+        # Drive ignores case, and this did not, so a folder someone typed as '01-สมชาย WIN' was
+        # never topped up and that person was handed a second folder in the same group.
+        here = {r["name"].lower() for r in g["riders"]}
         for r in sorted(g["riders"], key=lambda r: (-r["n"], r["name"])):
-            if r["n"] < self.per_rider and r["name"].lower().endswith(want):
+            if r["n"] < self.per_rider and self._fits(r["name"], style):
                 r["n"] += 1
+                self._take(r["name"], style)
                 return r["id"], None
-        free = [n for n in self.pool.get((wheel, kind), []) if n not in self.used]
-        if not free:
+        # Someone working elsewhere this week who still has room: a Saver rider taking a Standard
+        # fare is the same person, so they get a second folder here and one 21 across both.
+        for cat, gg in sorted(self.groups.items()):
+            if cat == category:
+                continue
+            for r in sorted(gg["riders"], key=lambda r: (-self._room(r["name"]), r["name"])):
+                if r["name"].lower() in here or not self._fits(r["name"], style):
+                    continue
+                fid = self.drive.ensure_folder(
+                    g["id"], folder_label(len(g["riders"]) + 1, r["name"]))
+                g["riders"].append({"name": r["name"], "id": fid, "n": 1})
+                self._take(r["name"], style)
+                self.made += 1
+                self.log(f"    + {category}/{folder_label(len(g['riders']), r['name'])}"
+                         f"  (คนเดิมจาก {cat})")
+                return fid, None
+        for kind in self._draw_order(wheel):
+            free = [n for n in self.pool.get((wheel, kind), []) if n not in self.used]
+            if free:
+                break
+        else:
             # Say where the unused room is, not just that the list is empty. Run 15 stopped after
-            # 21 of 230, and 'the 51 names are all used' left open whether those 51 riders were
-            # full or whether the free seats were sitting in a group this trip could not reach —
-            # a rider is only topped up inside their own group, so the two look identical here.
-            spare = []
-            for cat, gg in sorted(self.groups.items()):
-                n = sum(self.per_rider - r["n"] for r in gg["riders"]
-                        if r["n"] < self.per_rider and r["name"].lower().endswith(want))
-                if n:
-                    spare.append(f"{cat} ว่าง {n} เที่ยว")
-            return None, (f"รายชื่อ {kind} ของ {wheel} หมดแล้ว "
-                          f"({len(self.pool.get((wheel, kind), []))} ชื่อถูกใช้ครบในสัปดาห์นี้) · "
-                          + ("ที่ยังว่างอยู่คนละกลุ่ม: " + ", ".join(spare) if spare
-                             else "และทุกคนเต็ม 21 แล้ว — ต้องขอชื่อเพิ่มจาก Ops"))
+            # 21 of 230, and 'the names are all used' left open whether those riders were full or
+            # whether the free seats belonged to people whose pictures do not look like these.
+            spare = sum(self._room(n) for n in self.used if self._room(n) > 0)
+            have = sum(len(self.pool.get((wheel, k), [])) for k in (MAJOR[wheel], MINOR[wheel]))
+            return None, (f"รายชื่อของ {wheel} หมดแล้ว ({have} ชื่อถูกใช้ครบในสัปดาห์นี้) · "
+                          + (f"ยังมีที่ว่างอีก {spare} เที่ยว แต่เป็นของคนที่ส่งรูปคนละแบบ"
+                             if spare else "และทุกคนเต็มแล้ว — ต้องขอชื่อเพิ่มจาก Ops"))
         name = self.rng.choice(free)
         self.used.add(name)
         fid = self.drive.ensure_folder(g["id"], folder_label(len(g["riders"]) + 1, name))
         g["riders"].append({"name": name, "id": fid, "n": 1})
+        self._take(name, style)
         self.made += 1
         self.log(f"    + {category}/{folder_label(len(g['riders']), name)}")
         return fid, None
@@ -132,13 +212,8 @@ class Allocator:
 
 # --- one-off: work already sitting loose in a vehicle-group folder -----------------------------
 # Rounds before 2026-09-05 dropped stitched pairs straight into Week/<group>/, where discover()
-# never looks — a rider folder is what it reads. Those files carry the album they came from in
-# their own name ('2W-Home bike 150_1+2_฿86.jpg'), so the driver kind is recoverable and nothing
-# has to be guessed at. Anything whose name does not say is reported and left alone.
-
-def kind_of_file(file_name):
-    return driver_kind((file_name or "").rsplit("_", 2)[0])
-
+# never looks — a rider folder is what it reads. The group folder they are sitting in says which
+# vehicle they are, which is all the allocator needs, so none of them has to be left behind.
 
 def backfill(drive, week_id, categories, pool, per_rider=None, seed=None, dry_run=True, log=print):
     """Move loose images in each category folder into rider folders. Returns (moved, stuck)."""
@@ -150,17 +225,11 @@ def backfill(drive, week_id, categories, pool, per_rider=None, seed=None, dry_ru
         g = alloc._load(cat)
         loose = drive.list_images(g["id"])
         log(f"\n{cat}: ไฟล์ลอย {len(loose)} รูป")
+        # the group folder is where the slip decided this belongs, and that already says
+        # which wheel — the album name inside the file no longer has to say anything
+        wheel = f'{cat.replace(" ", "")[0]}W'
         for f in sorted(loose, key=lambda x: x["name"]):
-            kind = kind_of_file(f["name"])
-            if kind is None:
-                stuck.append((cat, f["name"]))
-                continue
-            wheel = f'{cat.replace(" ", "")[0]}W'
-            if wheel != kind[0]:
-                # the album says one thing and the folder it landed in says another; the folder
-                # is what the slip decided, so trust it and only take the driver kind from the name
-                kind = (wheel, kind[1])
-            fid, err = alloc.folder_for(cat, *kind)
+            fid, err = alloc.folder_for(cat, wheel)
             if err:
                 stuck.append((cat, f"{f['name']} — {err}"))
                 continue

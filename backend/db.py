@@ -131,6 +131,17 @@ name_pool = Table(
     Column("added_at", String(19), nullable=False),
 )
 
+# What kind of picture a rider sends. A round only sees the pictures it is moving, but a rider
+# fills up over several rounds and may hold a folder in each vehicle group, so the answer has to
+# outlive the round that decided it and belong to the person rather than to one of their folders.
+rider_style = Table(
+    "rider_style", meta,
+    Column("week_id", String(64), primary_key=True),     # the week folder on Drive
+    Column("rider", String(120), primary_key=True),      # '05-สมชาย Win' without its number
+    Column("style", String(32), nullable=False),         # 'ยาว/มืด', 'ครึ่ง/สว่าง', …
+    Column("decided_at", String(19), nullable=False),
+)
+
 app_state = Table(
     "app_state", meta,
     Column("key", String(48), primary_key=True),
@@ -1255,6 +1266,30 @@ def search_trips(date_from=None, date_to=None, driver=None, status="all", q=None
         rows = c.execute(base.order_by(trips.c.trip_date.desc(), trips.c.trip_time.desc(), trips.c.id.desc())
                          .limit(limit).offset(offset)).mappings().all()
         return [dict(r) for r in rows], total
+
+
+def rider_styles(week_id) -> dict:
+    """{rider name: style} for everyone in this week who has settled on one."""
+    with engine.begin() as c:
+        return {r[0]: r[1] for r in c.execute(
+            select(rider_style.c.rider, rider_style.c.style)
+            .where(rider_style.c.week_id == week_id)).all()}
+
+
+def rider_styles_save(week_id, mapping) -> int:
+    """Record the style of riders who did not have one. Never changes a rider's mind."""
+    rows = [{"week_id": week_id, "rider": k, "style": v, "decided_at": _now()}
+            for k, v in (mapping or {}).items()]
+    if not rows:
+        return 0
+    with engine.begin() as c:
+        known = {r[0] for r in c.execute(select(rider_style.c.rider).where(
+            rider_style.c.week_id == week_id,
+            rider_style.c.rider.in_([r["rider"] for r in rows]))).all()}
+        rows = [r for r in rows if r["rider"] not in known]
+        if rows:
+            c.execute(rider_style.insert(), rows)
+    return len(rows)
 
 
 def name_pool_load(rows) -> int:
