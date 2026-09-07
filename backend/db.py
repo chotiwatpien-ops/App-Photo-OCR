@@ -1108,6 +1108,21 @@ def delete_trip(trip_id):
         c.execute(delete(trips).where(trips.c.id == trip_id))
 
 
+def trips_from_album(prefix):
+    """Every row built from a stitched picture of this album, whatever state it is in.
+
+    query_trips() answers with finished work only, and the rows that matter here are the ones
+    still out at the model — which is exactly why they cannot be left behind: a result arriving
+    for a picture that no longer exists writes a trip nobody can check."""
+    with engine.begin() as c:
+        rows = c.execute(
+            select(trips.c.id, trips.c.job_id, trips.c.file_name, trips.c.status,
+                   trips.c.committed, jobs.c.driver_name, jobs.c.category)
+            .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+            .where(trips.c.file_name.like(f"{prefix}%"))).mappings().all()
+    return [dict(r) for r in rows]
+
+
 def delete_trips(trip_ids):
     """Remove specific approved rows the team has judged to be repeats, with their merged halves.
     Used for the shapes no rule can settle safely — e.g. a lower half counted as its own trip,
