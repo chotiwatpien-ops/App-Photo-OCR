@@ -368,6 +368,13 @@ def main(argv=None):
     riders = {t["driver_name"] for t in rows}
     print(f"{a.d_from}..{a.d_to} · {len(rows)} เที่ยว · {len(riders)} ไรเดอร์ · โควตา {a.per_rider}/คน")
 
+    # Before the quota check, not after. Rebuilding a week's pictures is what you do once the
+    # trips have already moved — which is precisely when nobody is over the quota and the check
+    # below returns. Asked for it then, the run printed 'ไม่มีใครเกินโควตา ✔' and did nothing.
+    if a.fix_exports:
+        print()
+        return fix_exports(a.d_from, a.d_to, a.apply, log=print)
+
     over = plan(rows, a.per_rider)
     if not over:
         print("ไม่มีใครเกินโควตา ✔")
@@ -408,9 +415,6 @@ def main(argv=None):
                 print(f"{who[:22]:<22}{str(t.get('trip_date')):<12}"
                       f"{str(t.get('service_type'))[:16]:<16}{t.get('file_name')}")
 
-    if a.fix_exports:
-        print()
-        return fix_exports(a.d_from, a.d_to, a.apply, log=print)
     if a.reassign:
         print()
         return reassign(over, a.d_from, a.d_to, a.per_rider, a.apply, log=print)

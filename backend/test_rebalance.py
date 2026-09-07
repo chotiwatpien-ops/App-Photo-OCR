@@ -228,5 +228,16 @@ check("เมล็ดผูกกับสัปดาห์ ไม่ใช่
       zlib.crc32(b"week-abc") == zlib.crc32(b"week-abc")
       and zlib.crc32(b"week-abc") != zlib.crc32(b"week-xyz"))
 
+# --reassign only makes sense while somebody is over; --fix-exports only makes sense once
+# nobody is, because that is what moving the trips leaves behind. Putting it after the 'nobody
+# is over' return meant it could never run at the only moment it was for.
+print("ลำดับของสวิตช์ใน main:")
+src = io.open("backend/rebalance_quota.py", encoding="utf-8").read()
+at_fix = src.index("if a.fix_exports:")
+at_quota = src.index('print("ไม่มีใครเกินโควตา')
+at_reassign = src.index("if a.reassign:")
+check("--fix-exports ต้องมาก่อนจุดที่ออกเพราะไม่มีใครเกิน", at_fix < at_quota)
+check("--reassign ยังอยู่หลังจุดนั้นตามเดิม", at_reassign > at_quota)
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)
