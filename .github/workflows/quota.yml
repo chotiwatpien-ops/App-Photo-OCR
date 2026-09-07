@@ -1,0 +1,50 @@
+name: Quota — ใครทำเกิน 21 เที่ยวในสัปดาห์ (รายงานอย่างเดียว)
+
+# Read-only. Nothing here writes to the database, to Drive, or to Excel.
+#
+# The allocator used to read one vehicle group at a time, so 'this name is already working' was
+# only true of the group it had just looked at: the same person could be drawn again in the other
+# group and handed a second, separate 21. Four riders in 31 Aug-6 Sep came out at 37 to 42.
+#
+# That is fixed going forward — the allocator now reads the whole week and counts the quota
+# against the person. This says what the damage already in the delivered file is, and what it
+# would take to put right, before anyone decides whether to.
+
+on:
+  workflow_dispatch:
+    inputs:
+      date_from:
+        description: "วันเริ่มสัปดาห์ (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-08-31"
+      date_to:
+        description: "วันจบสัปดาห์ (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-09-06"
+      list:
+        description: "พิมพ์รายเที่ยวที่จะถูกเอาออก"
+        type: boolean
+        default: true
+
+jobs:
+  quota:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: Who is over, and is there room for what comes off
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TZ: Asia/Bangkok
+        run: |
+          ARGS="--from ${{ github.event.inputs.date_from }} --to ${{ github.event.inputs.date_to }}"
+          if [ "${{ github.event.inputs.list }}" = "true" ]; then ARGS="$ARGS --list"; fi
+          python rebalance_quota.py $ARGS
