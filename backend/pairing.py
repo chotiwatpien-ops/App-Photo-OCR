@@ -198,38 +198,53 @@ def cache_key(md5_hex: str) -> str:
     return f"{READER}:{md5_hex}"
 
 
-# The history screen puts a date above the trip ('05 ก.ย. 2026, 02:51 PM'). Ops assigns the date
-# in the workbook themselves, so a real one printed on the picture contradicts the one beside it —
-# it has to come off before the halves are joined. Anchored on the year and the clock, not on the
-# month: the free OCR renders 'ก.ย.' as 'n.8.' but reads Latin digits cleanly.
-DATE_BAR = re.compile(r"(20\d\d)\s*[,.]?\s*(\d{1,2})[:.](\d{2})\s*(AM|PM)", re.IGNORECASE)
+# The history screen puts a date above the trip, and Ops assign the date in the workbook
+# themselves, so a real one printed on the picture contradicts the one beside it. Anchored on the
+# year and the distance under it, because everything else about that line moves: the month is
+# Thai ('24 ก.ค. 2026'), the clock may be 24-hour with no AM/PM, and the app elides the minutes
+# to fit ('05:3...'). Demanding two digits and an AM/PM matched the thirty light-theme pictures
+# it was written against and nothing at all in the 616 that Ops actually sends.
+DATE_BAR = re.compile(r"20\d\d")
+UNDER_BAR = re.compile(r"\d[\d.,]*\s*km", re.IGNORECASE)
+
+
+def text_rows(band):
+    """Rows of the band that carry writing, whichever way round the screen is.
+
+    'Dark pixels' finds the text on a light screen and the whole band on a dark one, where the
+    ink is the light part — so a dark-theme picture produced one enormous run, no boundary, and
+    no cut. Compare against the band's own background instead: the writing is whatever stands
+    away from it."""
+    g = np.asarray(band.convert("L")).astype(int)
+    bg = int(np.median(g))
+    return (np.abs(g - bg) > 60).sum(axis=1) > 3
 
 
 def date_bar_cut(im):
     """Where to cut a top half so the date bar goes with it, or None when there is no bar.
 
-    The bar is the first band of dark text on the screen and the line under it ('7.17 km') is the
-    next; cutting between the two takes the bar and nothing else. Measured over 30 pictures the
-    line landed at 8.7-9.7% of the height, and none of the 15 bottom halves — which carry text
-    near the top too — was mistaken for one."""
+    The bar is the first band of writing on the screen and the line under it ('7.17 km') is the
+    next; cutting between the two takes the bar and nothing else."""
     band = im.crop((0, 0, im.width, int(im.height * 0.20)))
     try:
         txt = " ".join(_read_text(
             band.resize((band.width * 2, band.height * 2), Image.LANCZOS)).split())
     except Exception:  # noqa: BLE001 — a band we cannot read is not a bar we can prove
         return None
-    if not DATE_BAR.search(txt):
+    # The year alone is not enough: '2026' appears in file names and elsewhere. The distance
+    # under it is what says this is the history header and not some other line of writing.
+    if not (DATE_BAR.search(txt) and UNDER_BAR.search(txt)):
         return None
-    dark = (np.asarray(band.convert("L")) < 140).sum(axis=1) > 3
+    on = text_rows(band)
     runs, start = [], None
-    for y, on in enumerate(dark):
-        if on and start is None:
+    for y, v in enumerate(on):
+        if v and start is None:
             start = y
-        elif not on and start is not None:
+        elif not v and start is not None:
             runs.append((start, y - 1))
             start = None
     if start is not None:
-        runs.append((start, len(dark) - 1))
+        runs.append((start, len(on) - 1))
     runs = [r for r in runs if r[1] - r[0] >= 8]          # ignore hairlines and specks
     if len(runs) < 2:
         return None                                        # nothing under it to cut above

@@ -195,12 +195,6 @@ check("แต่ยังต่ำกว่าแถบทึบ", pairing.MAX_F
 
 
 # --- แถบวันที่บนหัวสลิป (Ops 2026-09-06: ทีมกำหนดวันที่เอง วันที่บนรูปจึงขัดกับในไฟล์) --------
-check("จับแถบวันที่ได้แม้ OCR อ่านเดือนไทยเพี้ยน",
-      bool(pairing.DATE_BAR.search("05 n.8.2026, 02:51 PM 7.17 km")))
-check("ไม่ไปจับข้อความปกติในสลิป",
-      not pairing.DATE_BAR.search("nnnesuLCyIBLs 150 B150"))
-check("ตัวเลขเงินอย่างเดียวไม่ใช่แถบวันที่",
-      not pairing.DATE_BAR.search("2026 150 190"))
 
 from PIL import Image as _Img                                   # noqa: E402
 plain = _Img.new("RGB", (600, 1200), "white")
@@ -310,6 +304,51 @@ for txt, want in [("standard bike", "Standard"), ("saver bike", "Saver"),
 check("ชื่ออัลบั้มยังได้พูดเมื่อชิปอ่านไม่ออก",
       pairing.category_folder(pairing.wheels_from_chip("standard") or "2W",
                               pairing.tier_from_chip("standard")) == "2 W Standard")
+
+# --- the date bar above a trip ----------------------------------------------------------------
+# Written against thirty light-theme pictures that all said '02:51 PM', it matched none of the
+# 616 Ops actually sends: the month is Thai, the clock is 24-hour, and the app elides the minutes
+# to fit the width ('24 ก.ค. 2026, 05:3...').
+for txt, want in [("24 n.A. 2026, 05:3... 5.41km", True),          # Ploy145, as the OCR reads it
+                  ("05 n.8.2026,02:51 PM 7.17 km", True),          # the light sample, still fine
+                  ("17 n.A. 2026, 06:3... 2.42 km", True),
+                  ("13:40 2.64km Total 5 unn", False),             # Ploy182: a time, but no date
+                  ("2026", False),                                 # a year with nothing under it
+                  ("2026 150 190", False),                         # figures that look like one
+                  ("nnnesuLCyIBLs 150 B150", False),               # ordinary text off a slip
+                  ("5.41km", False), ("", False)]:
+    hit = bool(pairing.DATE_BAR.search(txt) and pairing.UNDER_BAR.search(txt))
+    check(f"แถบวันที่ {txt[:28]!r} → {want}", hit == want)
+
+# and finding the two lines has to work whichever way round the screen is
+import numpy as _np                                               # noqa: E402
+from PIL import Image as _Im                                      # noqa: E402
+
+
+def _band(ink, paper):
+    a = _np.full((60, 200, 3), paper, dtype="uint8")
+    a[6:20, 10:190] = ink                                          # the date line
+    a[34:48, 10:120] = ink                                         # the distance under it
+    return _Im.fromarray(a)
+
+
+def _runs(band):
+    on = pairing.text_rows(band)
+    out, start = [], None
+    for y, v in enumerate(on):
+        if v and start is None:
+            start = y
+        elif not v and start is not None:
+            out.append((start, y - 1)); start = None
+    if start is not None:
+        out.append((start, len(on) - 1))
+    return [r for r in out if r[1] - r[0] >= 8]
+
+
+check("จอสว่าง: เจอสองบรรทัด", len(_runs(_band(20, 245))) == 2)
+check("จอมืด: เจอสองบรรทัดเหมือนกัน", len(_runs(_band(240, 15))) == 2)
+check("ตำแหน่งบรรทัดตรงกันทั้งสองธีม", _runs(_band(20, 245)) == _runs(_band(240, 15)))
+check("จอเปล่าไม่มีบรรทัดไหนเลย", _runs(_Im.fromarray(_np.full((60, 200, 3), 15, "uint8"))) == [])
 
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)
