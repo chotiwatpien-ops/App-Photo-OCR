@@ -63,6 +63,21 @@ POOL_FOLDER_NAMES = ("pool", "กอง")
 CATEGORY_FALLBACK = {"4 W Saver": "4 W Standard"}
 
 
+def target_category(wheels, tier, album_name):
+    """The vehicle group a trip goes to, or None when it really cannot be told.
+
+    The chip on the picture first, the album's name for whatever the chip did not say. And a
+    car needs no tier at all: the team runs one car group, and a Saver Car goes there too —
+    so 'Standard | Car only' read as just '4W' (Best = 57's LINE-shrunk pictures, 317px wide)
+    is not 'ไม่รู้ประเภทรถ', it is 4 W Standard. A bike still needs its tier."""
+    aw, at = pairing.type_from_album(album_name)
+    wheels, tier = wheels or aw, tier or at
+    if wheels == "4W" and not tier:
+        tier = "Standard"
+    cat = pairing.category_folder(wheels, tier)
+    return CATEGORY_FALLBACK.get(cat, cat)
+
+
 # --- 1. what is in the pool ---------------------------------------------------------------
 def _albums_in(drive, pool_folder, week_name):
     """Albums under one week's pool folder: <group>/<album>/images (images lying directly in
@@ -200,9 +215,7 @@ def analyse(albums, data, workers, cache=None):
             wheels, tier = pairing.vehicle_type(data[img_id])
         except Exception:  # noqa: BLE001
             wheels, tier = None, None
-        aw, at = pairing.type_from_album(album_name)
-        cat = pairing.category_folder(wheels or aw, tier or at)
-        return CATEGORY_FALLBACK.get(cat, cat)
+        return target_category(wheels, tier, album_name)
 
     for alb in albums:
         items = [(img["name"], info[img["id"]]) for img in alb["_keep"] if info.get(img["id"])]

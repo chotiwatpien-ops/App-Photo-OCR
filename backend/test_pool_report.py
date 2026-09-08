@@ -137,3 +137,15 @@ check("การต่อรูปใช้ create_file ไม่ใช่ uploa
 
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)
+
+# --- a car needs no tier: the team runs one car group (Best = 57, 2026-09-09) ------------------
+# LINE shrank Best's long pictures to 317px wide; the chip read as just '4W' and the album name
+# says no tier either, so 57 trips were 'ไม่รู้ประเภทรถ' — for a group that does not exist.
+tc = pool.target_category
+check("รถยนต์ อ่านได้แค่ 4W → 4 W Standard", tc("4W", None, "4W-Taxi Best=57") == "4 W Standard")
+check("รถยนต์ ชิปอ่านไม่ออกเลย แต่ชื่ออัลบั้มบอก 4W → 4 W Standard", tc(None, None, "4W-Taxi Best=57") == "4 W Standard")
+check("Saver Car ยังไป 4 W Standard เหมือนเดิม", tc("4W", "Saver", "x") == "4 W Standard")
+check("จักรยานยนต์ยังต้องรู้ระดับ: 2W เฉย ๆ → ไม่รู้", tc("2W", None, "2W-Win Tae=15") is None)
+check("จักรยานยนต์ที่ชื่ออัลบั้มบอก std → 2 W Standard", tc("2W", None, "2W-STD WK5=45") == "2 W Standard")
+check("ชิปชนะชื่ออัลบั้ม", tc("2W", "Saver", "2W-STD WK5=45") == "2 W Saver")
+check("ไม่รู้อะไรเลย → ไม่เดา", tc(None, None, "LINE_ALBUM_x") is None)
