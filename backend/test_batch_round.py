@@ -14,8 +14,13 @@ os.environ.pop("DATABASE_URL", None)          # local sqlite, never production
 sys.path.insert(0, "backend")
 sys.stdout.reconfigure(encoding="utf-8")
 
-PROD = ("postgresql+psycopg://neondb_owner:npg_XvkWCE5z9SYA@ep-calm-bread-b3zclnuw.c-4."
-        "ap-southeast-1.aws.neon.tech/neondb?sslmode=require&connect_timeout=15")
+# Where to borrow a few real half-screenshots from, read only. It used to be written out here,
+# which was survivable while the repository was private and is not once it is public. Set it in
+# the shell before running this test; without it the borrow is skipped, exactly as it already is
+# on a network that cannot reach Neon.
+#
+#     PHOTO_OCR_PROD_URL='postgresql+psycopg://…' python backend/test_batch_round.py
+PROD = os.environ.get("PHOTO_OCR_PROD_URL", "")
 
 import config                                                   # noqa: E402
 import db                                                       # noqa: E402
@@ -31,6 +36,9 @@ db.init_db()
 # something is not the same as something being broken. On a network that blocks Neon or Drive it
 # used to fail like a real defect, which is exactly the report that must not be given: the other
 # tests that need something they may not have say so and step aside, and so does this one.
+if not PROD:
+    print("ไม่ได้ตั้ง PHOTO_OCR_PROD_URL — ข้ามการยืมรูปจริง (ไม่ใช่ข้อผิดพลาดของโค้ด)")
+    sys.exit(0)
 try:
     prod = create_engine(PROD)
     with prod.begin() as c:

@@ -6,6 +6,7 @@ Reads all .jpg in the rider folder, sends each to gemini-2.5-flash with a
 JSON schema matching the Admin sheet columns, saves results to poc_results.json.
 """
 import json
+import os
 import re
 import sys
 import time
@@ -20,7 +21,9 @@ sys.stdout.reconfigure(encoding="utf-8")
 BASE = Path(__file__).resolve().parent.parent
 IMG_DIR = BASE / "01 กิตติพงศ์ 3-9 Aug"
 OUT_FILE = Path(__file__).resolve().parent / "poc_results.json"
-CONFIG = Path(r"D:\Users\pichotiwat\OneDrive - Central Group\Desktop\Voice_QA Application\csqa_config.json")
+# a sibling app supplied the Gemini key on the developer's own machine
+CONFIG = Path(os.environ.get("PHOTO_OCR_SIBLING_CONFIG",
+                            BASE.parent.parent / "Voice_QA Application" / "csqa_config.json"))
 
 MODEL = "gemini-2.5-flash"
 

@@ -15,8 +15,11 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = BASE_DIR / "photo_ocr_config.json"
-# fallback: reuse the Voice QA app's Gemini key (local dev only)
-VOICE_QA_CONFIG = Path(r"D:\Users\pichotiwat\OneDrive - Central Group\Desktop\Voice_QA Application\csqa_config.json")
+# fallback: reuse a sibling app's Gemini key on the developer's own machine (local dev only).
+# Written out in full here until the repository went public, which put one person's username,
+# employer and folder layout in it; point PHOTO_OCR_SIBLING_CONFIG at the file instead.
+VOICE_QA_CONFIG = Path(os.environ.get("PHOTO_OCR_SIBLING_CONFIG")
+                       or BASE_DIR.parent / "Voice_QA Application" / "csqa_config.json")
 FRONTEND_DIST = BASE_DIR / "frontend" / "dist"
 
 

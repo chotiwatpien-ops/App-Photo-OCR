@@ -2,6 +2,7 @@
 """Compare PoC Gemini extractions against admin-keyed rows in Admin A sheet."""
 import datetime
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -12,7 +13,8 @@ sys.stdout.reconfigure(encoding="utf-8")
 
 HERE = Path(__file__).resolve().parent
 RESULTS = json.loads((HERE / "poc_results.json").read_text(encoding="utf-8"))
-XLSX = Path(r"d:\Users\pichotiwat\AppData\Local\Temp\claude\D--Users-pichotiwat-OneDrive---Central-Group-Desktop-App-Photo-OCR\593607dc-ad95-46cf-9669-93e782829ba5\scratchpad\rider_copy.xlsx")
+# the admin sheet this proof of concept was checked against, on whoever runs it
+XLSX = Path(os.environ.get("POC_XLSX", "rider_copy.xlsx"))
 
 
 def norm_distance(v):
