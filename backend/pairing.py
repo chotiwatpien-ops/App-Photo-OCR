@@ -440,6 +440,25 @@ def _printed_twice(seq, v):
     return sum(1 for x in seq if abs(x - v) < 0.01) >= 2
 
 
+def _card_plus_green(nets, cards, greens):
+    """Tier 1 when the top's figure is the card's income PLUS the extras the bottom prints.
+
+    Only that sum, never the income on its own. A bottom cut above the income card still shows
+    its extra-income total in green, and that total is money the driver received: what the top
+    says they got is income plus it. Parichat W5(1-13) carries both trips in one album — ฿33
+    received on one, ฿53 on another (33 and a ฿20 tip) — and the ฿53 trip's bottom prints 33
+    inside its own fee card. Accepting the income alone paired the ฿33 top with the ฿53 trip's
+    bottom at the strongest tier there is, and the true partner, needing the tip, lost to it."""
+    for net in nets:
+        for _a, inc, _c in cards:
+            for green in greens:
+                if abs(green - inc) < 0.01:
+                    continue                   # the green IS the income; nothing extra to add
+                if abs(net - (inc + green)) < 0.01:
+                    return 1
+    return None
+
+
 def _by_fee_card(nets, cards, nums, card_figs):
     """Tier 0/1 measured against the income the fee card prints, or None.
 
@@ -537,7 +556,7 @@ def match_tier(top, bottom):
         # The card was never consulted, because the strongest kind of evidence decided alone
         # even when it had decided nothing.
         if best is None and cards:
-            best = _by_fee_card(nets, cards, nums, card_figs)
+            best = _card_plus_green(nets, cards, greens)
         return best
     if cards:                                                    # B
         return _by_fee_card(nets, cards, nums, card_figs)

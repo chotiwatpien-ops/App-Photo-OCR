@@ -63,6 +63,19 @@ check("เลขเขียวเป็นยอดรายได้เพิ�
 check("และได้ tier 1 เพราะการ์ดยืนยันตัวเอง ไม่ใช่หลักฐานอ่อน",
       pairing.match_tier({"amount": 308.0}, siri308) == 1)
 
+# Parichat W5(1-13) carries both trips in one album: ฿33 received on one, ฿53 on another (33 and
+# a ฿20 tip). The ฿53 trip's bottom prints 33 inside its own fee card, so a fall-through that
+# accepted the income alone paired the ฿33 top with the ฿53 trip's bottom at tier 0 — and the
+# true partner, which needs the tip counted, lost to it. Only income PLUS the printed extras.
+pari35 = {"amount": 20.0, "numbers": [1, 7, 20, 33, 40, 61],
+          "seq": [20, 20, 61, 1, 20, 40, 40, 33, 7]}
+check("รายได้รอบขับเฉยๆ ไม่ใช่คู่ — ต้องรวมทิปที่ครึ่งล่างพิมพ์ไว้ด้วย",
+      not pairing.matches({"amount": 33.0}, pari35))
+check("รอบขับ 33 + ทิป 20 = ฿53 คือคู่ที่ถูก", pairing.matches({"amount": 53.0}, pari35))
+check("และคู่ที่ถูกได้ tier 1", pairing.match_tier({"amount": 53.0}, pari35) == 1)
+check("ของ Sirinapa ก็ต้องไม่รับรายได้รอบขับเปล่าๆ เช่นกัน",
+      not pairing.matches({"amount": 293.0}, siri308))
+
 # the loosening must not open the door the old rules were holding shut
 check("เลขเขียวที่ใช้ไม่ได้ ไม่ได้แปลว่าจับกับอะไรก็ได้",
       not pairing.matches({"amount": 999.0}, siri308))
