@@ -191,7 +191,12 @@ def ensure_theme(info, source):
     return info
 
 
-READER = "r6"
+# Bumped whenever inspect() would answer differently for a picture it has already seen — the
+# pool keeps its verdicts by this key, so a fix reaches nothing in the cache otherwise. r7:
+# a small 'คุณได้รับ' low on the screen is a top half (Keang = 67); run #139 carried the fix
+# and still paired none of Keang's 134, because every verdict came back from the cache as
+# 'bottom' — the code had changed and the key had not.
+READER = "r7"
 
 
 def cache_key(md5_hex: str) -> str:
