@@ -161,6 +161,21 @@ class Allocator:
         have = self.styles.get(name)
         return not (style and have and have != style)
 
+    def _drives(self, name, wheel):
+        """Whether this person drives what the group holds.
+
+        Run 131 opened '4 W Standard/13-ดวงพร Win' for the car album Rabbit=246: a Win rider with
+        room left in 2 W Saver was borrowed into the car group because the borrowing loop looked
+        at every group of the week and never at the wheel. The customer would have seen a
+        motorbike rider with car fares. Ops' list says which wheel a name belongs to; a name on
+        no list is judged by its kind, and a kind that both wheels use (Home) is not borrowed
+        across at all — that person is still topped up in their own group."""
+        low = name.lower()
+        for (w, _k), names in self.pool.items():
+            if any(n.lower() == low for n in names):
+                return w == wheel
+        return name.rsplit(" ", 1)[-1] == MAJOR[wheel]
+
     def _take(self, name, style):
         self.total[name] = self.total.get(name, 0) + 1
         if style and not self.styles.get(name):    # riders from before this rule adopt the first
@@ -190,7 +205,8 @@ class Allocator:
             if cat == category:
                 continue
             for r in sorted(gg["riders"], key=lambda r: (-self._room(r["name"]), r["name"])):
-                if r["name"].lower() in here or not self._fits(r["name"], style):
+                if (r["name"].lower() in here or not self._fits(r["name"], style)
+                        or not self._drives(r["name"], wheel)):
                     continue
                 fid = self.drive.ensure_folder(
                     g["id"], folder_label(len(g["riders"]) + 1, r["name"]))

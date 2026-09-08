@@ -271,5 +271,34 @@ check("ย้ายได้ทุกใบ ไม่ต้องพึ่งช
 check("ไม่มีอะไรลอยเหลือ", len(d11.images[cat11]) == 0)
 check("สี่ใบลงคนเดียว (โควตา 5)", len(d11.tree["week/2 W Saver"]) == 1)
 
+# --- a person drives one kind of vehicle; a spare seat is not a licence for the other wheel ---
+# Run 131 opened '4 W Standard/13-ดวงพร Win' for the car album Rabbit=246: the Win rider had
+# room left over from 2 W Saver, and the borrowing loop looked at every group of the week and
+# never at the wheel.
+d14 = FakeDrive()
+a14 = distribute.Allocator(d14, "week", SMALL, per_rider=4, seed=14)
+sv14, _ = a14.folder_for("2 W Saver", "2W")
+car14, err14 = a14.folder_for("4 W Standard", "4W")
+check("งานรถยนต์ไม่ไปยืมคนขี่วินที่ยังว่าง",
+      car14 and distribute.bare(car14.rsplit("/", 1)[1]) != distribute.bare(sv14.rsplit("/", 1)[1]))
+check("แต่ได้ชื่อจากรายชื่อ 4W ตามปกติ",
+      car14 and distribute.bare(car14.rsplit("/", 1)[1]).split()[-1] in ("Taxi", "Home"))
+bike14, _ = a14.folder_for("2 W Standard", "2W")
+check("ส่วนงานวินยังยืมคนเดิมข้ามกลุ่ม Saver/Standard ได้เหมือนเดิม",
+      distribute.bare(bike14.rsplit("/", 1)[1]) == distribute.bare(sv14.rsplit("/", 1)[1]))
+# a rider folder typed by hand that is on no list: the kind on the folder decides
+d15 = FakeDrive()
+d15.ensure_folder("week", "2 W Saver")
+d15.images[d15.ensure_folder("week/2 W Saver", "01-มือ Win")] = 1
+d15.ensure_folder("week", "4 W Standard")
+d15.images[d15.ensure_folder("week/4 W Standard", "01-มือ Taxi")] = 1
+d15.images[d15.ensure_folder("week/4 W Standard", "02-ตึก Home")] = 1
+a15 = distribute.Allocator(d15, "week", {}, per_rider=4, seed=15)
+check("ชื่อนอกรายชื่อ ยืมได้เฉพาะล้อที่ท้ายชื่อบอก",
+      a15._drives("มือ Win", "2W") and not a15._drives("มือ Win", "4W")
+      and a15._drives("มือ Taxi", "4W") and not a15._drives("มือ Taxi", "2W"))
+check("Home ใช้ทั้งสองล้อ ตัดสินไม่ได้ก็ไม่ยืมข้าม",
+      not a15._drives("ตึก Home", "2W") and not a15._drives("ตึก Home", "4W"))
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)
