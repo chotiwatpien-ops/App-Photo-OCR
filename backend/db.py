@@ -1616,6 +1616,19 @@ def trips_with_images(job_id):
     return out
 
 
+def trips_of_job(job_id):
+    """Every row of one job, whatever state — id, file_name, service_type, status, note."""
+    with engine.begin() as c:
+        return [dict(r) for r in c.execute(
+            select(trips.c.id, trips.c.file_name, trips.c.service_type, trips.c.status,
+                   trips.c.committed, trips.c.note).where(trips.c.job_id == job_id)).mappings().all()]
+
+
+def set_job_category(job_id, category) -> None:
+    with engine.begin() as c:
+        c.execute(update(jobs).where(jobs.c.id == job_id).values(category=category))
+
+
 def get_job_meta(job_id):
     with engine.begin() as c:
         r = c.execute(select(jobs).where(jobs.c.id == job_id)).mappings().first()

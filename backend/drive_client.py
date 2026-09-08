@@ -162,6 +162,14 @@ class DriveClient:
 
         return self._retry(_mk)
 
+    def file_meta(self, file_id) -> dict:
+        """{id, name, parents} of one file or folder — where a rider folder sits today."""
+        def _get():
+            return self.svc.files().get(fileId=file_id, fields="id, name, parents",
+                                        supportsAllDrives=True).execute()
+        r = self._retry(_get)
+        return {"id": r["id"], "name": r.get("name"), "parents": r.get("parents", [])}
+
     def move_file(self, file_id, new_parent_id) -> None:
         """Re-parent a file (no copy, no delete — the same file id ends up in the new folder)."""
         def _mv():
@@ -246,6 +254,10 @@ class LocalDrive:
             p = out / (f"{stem} ({i}).{ext}" if ext else f"{stem} ({i})")
         p.write_bytes(data)
         return str(p)
+
+    def file_meta(self, file_id) -> dict:
+        p = Path(file_id)
+        return {"id": str(p), "name": p.name, "parents": [str(p.parent)]}
 
     def move_file(self, file_id, new_parent_id) -> None:
         src = Path(file_id)

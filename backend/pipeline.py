@@ -298,9 +298,15 @@ CATEGORY_SERVICE = {
 }
 
 
-def normalize_service(ai_value, category):
+def normalize_service(ai_value, category, trust_tier=True):
     """Map whatever Grab printed ('Standard (JustGrab)', 'Saver Bike', ...) onto the template's four
-    values, using the rider's vehicle group to settle car-vs-bike. Returns (value, conflict_note)."""
+    values, using the rider's vehicle group to settle car-vs-bike. Returns (value, conflict_note).
+
+    The group used to settle Saver-vs-Standard as well, which it cannot: a job is one group
+    for the whole week, and 37 riders' Saver slips came out 'Standard Bike' in the workbook
+    (2026-09-09, ~870 rows) because their job was filed under 2 W Standard. The chip on the
+    slip says the tier; the group only says the wheel. trust_tier=False is for a lower half,
+    which shows no chip — there the model only guessed, and the group is all there is."""
     raw = (ai_value or "").lower()
     tier = "Saver" if "saver" in raw else ("Standard" if ("standard" in raw or "justgrab" in raw) else None)
     wheel = "Bike" if "bike" in raw else ("Car" if ("car" in raw or "justgrab" in raw) else None)
@@ -312,6 +318,9 @@ def normalize_service(ai_value, category):
             # PHOTO tells the truth, so log per reality with a trace note (no more holding)
             svc = f"{tier or cat_tier} {wheel}"
             return svc, f"บันทึกตามรูป: {svc} (โฟลเดอร์อยู่กลุ่ม {category})"
+        if trust_tier and tier and tier != cat_tier:
+            svc = f"{tier} {cat_wheel}"
+            return svc, f"ประเภทตามชิปบนสลิป: {svc} (job อยู่กลุ่ม {category})"
         return cat, None
     if tier and wheel:
         return f"{tier} {wheel}", None
@@ -479,7 +488,8 @@ def apply_extraction(trip_id: int, job_id: int, data: dict) -> str:
             note = f"{dup_msg} | {note}" if note else dup_msg
         usage = data.get("_usage", {})
         job = db.get_job_meta(job_id)
-        service, svc_note = normalize_service(data.get("service_type"), job.get("category") if job else None)
+        service, svc_note = normalize_service(data.get("service_type"), job.get("category") if job else None,
+                                              trust_tier=data.get("kind") != "bottom")
         if data.get("kind") == "bottom":
             svc_note = None  # no service chip on the bottom half — the model guessed
         if data.get("kind") in ("full", "bottom") and data.get("passenger_paid") is None and data.get("passenger_total") is None:
