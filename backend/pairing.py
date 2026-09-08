@@ -317,6 +317,17 @@ def inspect(source):
         if small:
             y0, y1 = small[0]                                # topmost small green line = 'รวมรายได้จากรอบขับ'
             info["amount"], info["alts"] = _try_amount(im, mask, y0, y1)
+            # Position decides here too. A screen zoomed out far enough to fit the route, the
+            # map AND the first fare card renders everything smaller: Keang = 67 sent 134 such
+            # pictures whose 'คุณได้รับ' measured 37px on an 800px screen, under the 44px that
+            # marks the big figure, so every one of them fell to this branch and was called a
+            # bottom without anyone looking at where the figure sat. It sat at 70% of the
+            # height, which is where a top half's amount sits and nowhere a bottom's does — a
+            # bottom opens on its income card. The album paired nothing at all: 134 bottoms and
+            # not one top between them, on an album whose own name says 67 trips.
+            if info["amount"] and (y0 + y1) / 2 > im.height * 0.4:
+                info["role"] = "top"
+                info["cut_top"] = date_bar_cut(im)
         info["numbers"], info["seq"] = _all_numbers(im)
     if info["amount"] is not None and info["amount"] < MIN_AMOUNT:
         # ฿4, ฿8 … are never a fare: the OCR dropped digits (or read the bonus line). Treated
