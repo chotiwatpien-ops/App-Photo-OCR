@@ -75,7 +75,9 @@ export default function Dashboard({ onOpenJob }) {
   const totalMissing = groups.reduce((s, g) => s + g.missing, 0)
   const totalDone = groups.reduce((s, g) => s + g.done, 0)
   const totalTarget = groups.reduce((s, g) => s + g.target, 0)
-  const heads = groups.reduce((s, g) => s + g.riders + g.absent.length, 0)
+  // Summing the group cards counts anyone who works both tiers twice: each card is right about
+  // its own group, and 'how many riders this week' is a different question with its own answer.
+  const heads = cat ? groups.reduce((s, g) => s + g.riders + g.absent.length, 0) : w.riders
   const totalUnread = groups.reduce((s, g) => s + (g.unread || 0), 0)
 
   return (

@@ -85,5 +85,26 @@ check("โฟลเดอร์ที่ถูกย้ายงานออก�
       sum(len(g["short"]) for g in w2["groups"]) == 0)
 check("และนับเป็นคนเดียว", w2["riders"] == 1)
 
+# --- who counts as having sent nothing ----------------------------------------------------------
+# Ops rotates about a fifth of the pool out every week on purpose. 'Anyone ever seen who is not
+# here now' therefore grows for good and never shrinks — it read 212 riders as having sent
+# nothing in 31 Aug-6 Sep, when almost all of them were simply not rostered that week.
+W33 = {"week": "2026-W33", "date_from": "2026-08-10", "date_to": "2026-08-16",
+       "groups": [{"category": "2 W Saver", "jobs": [job(1, "เก่ามาก Win", done=21)]}]}
+W35 = {"week": "2026-W35", "date_from": "2026-08-24", "date_to": "2026-08-30",
+       "groups": [{"category": "2 W Saver", "jobs": [job(2, "ทำสัปดาห์ก่อน Win", done=21),
+                                                     job(3, "ทำต่อเนื่อง Win", done=21)]}]}
+W36 = {"week": "2026-W36", "date_from": "2026-08-31", "date_to": "2026-09-06",
+       "groups": [{"category": "2 W Saver", "jobs": [job(4, "ทำต่อเนื่อง Win", done=21),
+                                                     job(5, "คนใหม่ Win", done=21)]}]}
+main.db.weeks_overview = lambda: [W33, W35, W36]
+weeks = {x["week"]: x for x in main.completeness()["weeks"]}
+absent36 = [n for g in weeks["2026-W36"]["groups"] for n in g["absent"]]
+check("คนที่ทำสัปดาห์ที่แล้วแล้วหายไป ถูกนับว่ายังไม่ส่ง", absent36 == ["ทำสัปดาห์ก่อน Win"])
+check("คนที่หมุนเวียนออกไปตั้งแต่หลายสัปดาห์ก่อน ไม่ถูกนับ", "เก่ามาก Win" not in absent36)
+check("คนที่ยังทำอยู่ ไม่ถูกนับ", "ทำต่อเนื่อง Win" not in absent36)
+absent33 = [n for g in weeks["2026-W33"]["groups"] for n in g["absent"]]
+check("สัปดาห์แรกสุดไม่มีใครถูกนับว่าหาย เพราะไม่มีสัปดาห์ก่อนหน้า", absent33 == [])
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

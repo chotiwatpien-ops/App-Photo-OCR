@@ -395,12 +395,22 @@ def completeness():
     with_quota = set(pipeline.CATEGORY_SERVICE)
     weeks_ = db.weeks_overview()
     # where each rider was last seen, so an absent rider still lands in a vehicle group
-    last_group, first_seen = {}, {}
+    last_group = {}
+    # Who was working the week before, which is what makes 'sent nothing' mean anything. Ops
+    # rotates about a fifth of the pool out every week on purpose, so 'anyone ever seen who is
+    # not here now' grows for good and never shrinks: it read 212 riders as having sent nothing
+    # in 31 Aug-6 Sep, when almost all of them were simply not rostered. Somebody who worked
+    # last week and sent nothing this week is a person to go and ask about.
+    prev_people = {}
+    seen_before = set()
     for W in sorted(weeks_, key=lambda w: w["date_from"]):
+        here = set()
         for g in W["groups"]:
             for j in g["jobs"]:
                 last_group[j["driver_name"]] = g["category"]
-                first_seen.setdefault(j["driver_name"], W["date_from"])
+                here.add(j["driver_name"])
+        prev_people[W["date_from"]] = set(seen_before)
+        seen_before = here
 
     # a group with a target that sent nothing this week is the biggest hole there is, and it
     # has no jobs to be found through — so every group the team actually runs is seeded empty
@@ -461,8 +471,8 @@ def completeness():
                 "folders": len(p["cats"]),
                 "unread": p["pending"] + p["errors"],
             })
-        for rider, since in first_seen.items():
-            if rider in present or since >= W["date_from"]:
+        for rider in prev_people.get(W["date_from"], ()):
+            if rider in present:
                 continue
             cat = last_group.get(rider) or "ไม่ระบุกลุ่มรถ"
             groups.setdefault(cat, blank(cat))["absent"].append(rider)
