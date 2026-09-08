@@ -45,6 +45,10 @@ export const api = {
   collectBatches: () => fetch('/api/batches/collect', { method: 'POST' }).then(handle),
   renameJobRider: (jobId, name) => fetch(`/api/jobs/${jobId}/rider`, json('PATCH', { name })).then(handle),
   triggerIngest: () => fetch('/api/ingest/trigger', { method: 'POST' }).then(handle),
+  // the two customer workbooks, rebuilt from the database right now and pushed to Drive —
+  // without waiting for an ingest round (Ops, 2026-09-09)
+  exportSync: () => fetch('/api/export/sync', { method: 'POST' }).then(handle),
+  exportSyncStatus: () => fetch('/api/export/sync').then(handle),
   summary: (params = {}) => fetch(`/api/summary?${new URLSearchParams(params)}`).then(handle),
   trips: (params = {}) => fetch(`/api/trips?${new URLSearchParams(params)}`).then(handle),
   reviewQueue: () => fetch('/api/review-queue').then(handle),

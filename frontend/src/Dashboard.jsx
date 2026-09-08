@@ -77,6 +77,52 @@ function GroupCard({ g, active, onPick }) {
   )
 }
 
+// Rebuild the two customer workbooks from the database now and push them to Drive, without
+// waiting for an ingest round (Ops, 2026-09-09). The server answers at once and works in the
+// background; this polls until it is done and says what was written. Downloading is always
+// available, even when the server has no Drive access of its own.
+function ExcelSync() {
+  const [st, setSt] = useState(null)
+  const [msg, setMsg] = useState('')
+  useEffect(() => { api.exportSyncStatus().then(setSt).catch(() => {}) }, [])
+  useEffect(() => {
+    if (st?.state !== 'running') return undefined
+    const t = setInterval(() => api.exportSyncStatus().then(setSt).catch(() => {}), 3000)
+    return () => clearInterval(t)
+  }, [st?.state])
+  const start = async () => {
+    setMsg('')
+    try {
+      setSt(await api.exportSync())
+    } catch (e) {
+      setMsg(e.message)
+    }
+  }
+  const running = st?.state === 'running'
+  return (
+    <div className="ml-auto flex flex-wrap items-center gap-2">
+      <a href="/api/export" className="rounded-full px-3 py-1.5 border bg-white border-slate-300 text-slate-600 hover:border-slate-400"
+        title="Rider Trips.xlsx จากฐานข้อมูลตอนนี้">⬇ Excel</a>
+      <a href="/api/export/phase2" className="rounded-full px-3 py-1.5 border bg-white border-slate-300 text-slate-600 hover:border-slate-400"
+        title="Rider Trips Phase 2.xlsx จากฐานข้อมูลตอนนี้">⬇ Phase 2</a>
+      <button onClick={start} disabled={running}
+        className={`rounded-full px-3 py-1.5 border ${running
+          ? 'bg-slate-100 border-slate-200 text-slate-400'
+          : 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700'}`}
+        title="เขียน Excel ทั้งสองไฟล์ขึ้น Drive ตอนนี้ ไม่ต้องรอรอบ ingest">
+        {running ? 'กำลัง sync ขึ้น Drive…' : '⟳ Sync Excel ขึ้น Drive'}
+      </button>
+      {st?.state === 'done' && (
+        <span className="text-xs text-emerald-700">
+          ✓ ขึ้น Drive แล้ว {st.finished_at?.slice(11, 16)} · {fmt(st.rows)} แถว
+        </span>
+      )}
+      {st?.state === 'error' && <span className="text-xs text-red-600">✗ {st.error}</span>}
+      {msg && <span className="text-xs text-red-600">{msg}</span>}
+    </div>
+  )
+}
+
 export default function Dashboard({ onOpenJob }) {
   const [comp, setComp] = useState(null)
   const [week, setWeek] = useState('')
@@ -124,6 +170,7 @@ export default function Dashboard({ onOpenJob }) {
             )}
           </button>
         ))}
+        <ExcelSync />
       </div>
 
       {/* the headline: how much work this week still owes */}

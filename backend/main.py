@@ -594,6 +594,68 @@ def export(date_from: str = None, date_to: str = None, driver: str = None,
     )
 
 
+@app.get("/api/export/phase2")
+def export_phase2():
+    """The Phase 2 workbook (real pick-up / drop-off from W36 on), built from the database now."""
+    rows = db.query_trips(committed_only=True)
+    data = excel_writer.build_location_workbook(rows) or excel_writer.build_workbook([])
+    stamp = datetime.now().strftime("%Y%m%d-%H%M")
+    fname = f"Rider Trips Phase 2 {stamp}.xlsx"
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"},
+    )
+
+
+# Ops (2026-09-09): "a button that syncs the Excel without waiting for an ingest round". An
+# ingest round rewrites both customer workbooks on Drive, but only every few hours and only
+# after the whole round; an approval made in the review queue at 10:00 reached the customer's
+# file at 13:00. This does the same rewrite, from the same rows, on demand — in the background,
+# because 13,000 rows take a little while, and the page asks how it went.
+_sync = {"state": "idle"}
+_sync_lock = __import__("threading").Lock()
+
+
+def _sync_workbooks():
+    import ingest
+    import roster
+    try:
+        drive = roster._drive()
+        rows = db.query_trips(committed_only=True)
+        fid = drive.upload_xlsx(config.DRIVE_EXPORTS_FOLDER_ID, "Rider Trips.xlsx",
+                                excel_writer.build_workbook(rows))
+        loc = excel_writer.build_location_workbook(rows)
+        if loc:
+            drive.upload_xlsx(config.DRIVE_EXPORTS_FOLDER_ID, excel_writer.LOCATION_FILE, loc)
+        for (d_from, _), _js in db.jobs_by_week().items():
+            db.record_drive_file(ingest.week_label(d_from), "xlsx", fid, "Rider Trips.xlsx")
+        db.state_set(ingest.XLSX_KEY, f"{excel_writer.LAYOUT}:{db.committed_fingerprint()}")
+        _sync.update(state="done", rows=len(rows), finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                     error=None)
+    except Exception as e:  # noqa: BLE001 — the page shows the reason; nothing else is affected
+        _sync.update(state="error", error=str(e)[:200], finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+
+
+@app.get("/api/export/sync")
+def export_sync_status():
+    return dict(_sync)
+
+
+@app.post("/api/export/sync")
+def export_sync():
+    if not (config.DRIVE_OAUTH_TOKEN or config.GOOGLE_SERVICE_ACCOUNT) or not config.DRIVE_EXPORTS_FOLDER_ID:
+        raise HTTPException(501, "เซิร์ฟเวอร์นี้ยังเขียน Drive ไม่ได้ — ตั้ง DRIVE_OAUTH_TOKEN_JSON และ "
+                                 "DRIVE_EXPORTS_FOLDER_ID ใน Render ก่อน (ค่าเดียวกับ GitHub secret) · "
+                                 "ระหว่างนี้ใช้ปุ่มดาวน์โหลดได้")
+    with _sync_lock:
+        if _sync.get("state") == "running":
+            return dict(_sync)
+        _sync.update(state="running", started_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"), error=None)
+    __import__("threading").Thread(target=_sync_workbooks, daemon=True).start()
+    return dict(_sync)
+
+
 # ---------- Phase C: dashboard / data view / review queue ----------
 
 @app.get("/api/summary")
