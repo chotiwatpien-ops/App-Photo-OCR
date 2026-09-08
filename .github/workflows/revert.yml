@@ -37,6 +37,10 @@ on:
         description: "ลบแถวที่สร้างจากรูปที่ต่อแล้วด้วย (ต้องติ๊ก apply ด้วย)"
         type: boolean
         default: false
+      only_collided:
+        description: "เฉพาะคู่ที่ยอดชนกันจนรูปต่อทับกันหาย (กู้ของที่หายก่อน 2026-09-08) — ไม่ใช่ทั้งอัลบั้ม"
+        type: boolean
+        default: false
 
 # One group for everything that writes to Drive. Each of these used to hold a group of
 # its own name, which stops a second copy of itself and nothing else — so a quota apply
@@ -72,4 +76,5 @@ jobs:
           for alb in "${ALBUMS[@]}"; do ARGS="$ARGS --album '$alb'"; done
           if [ "${{ github.event.inputs.apply }}" = "true" ]; then ARGS="$ARGS --apply"; fi
           if [ "${{ github.event.inputs.delete_rows }}" = "true" ]; then ARGS="$ARGS --delete-rows"; fi
+          if [ "${{ github.event.inputs.only_collided }}" = "true" ]; then ARGS="$ARGS --only-collided"; fi
           eval python revert_album.py $ARGS

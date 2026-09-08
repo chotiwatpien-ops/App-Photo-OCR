@@ -19,6 +19,8 @@ is a separate switch for that reason, and it says out loud what it is about to r
     python revert_album.py --week "Week 31 Aug-6 Sep" --album "2W-Win Ploy145"
 """
 import argparse
+import json
+import re
 import sys
 from collections import Counter
 
@@ -38,6 +40,93 @@ def week_folder(drive, inbox_id, week_name):
 def pool_folder(drive, week_id):
     return next((f for f in drive.list_folders(week_id)
                  if f["name"].strip().lower() in POOL_NAMES), None)
+
+
+AMOUNT_RE = re.compile(r"_฿([\d.]+)\.jpe?g$", re.IGNORECASE)
+
+
+def amount_of(stitched_name):
+    """'2W-Win LukArm=117_0+0_฿46.jpg' -> 46.0, or None."""
+    m = AMOUNT_RE.search(stitched_name or "")
+    return float(m.group(1)) if m else None
+
+
+def stitched_in_holds(drive, week_id, album):
+    """The album's joined pictures parked under the week's _ folders (duplicates, earlier reverts,
+    discarded pairs). Not lost — a tool put them there on purpose — so they count as present."""
+    want = f"{album}_"
+    out = []
+
+    def walk(fid, depth):
+        for img in drive.list_images(fid):
+            if img["name"].startswith(want):
+                out.append(img)
+        if depth < 3:
+            for sub in drive.list_folders(fid):
+                walk(sub["id"], depth + 1)
+
+    for cat in drive.list_folders(week_id):
+        n = cat["name"].strip()
+        if n.startswith("_"):
+            walk(cat["id"], 0)
+    return out
+
+
+def pairs_reported(runs, week_name, album):
+    """Every pair the pool step said it moved for this album, from the reports it kept:
+    [(top, bottom, amount)], each once. Carried-over and failed moves are not moves."""
+    seen, out = set(), []
+    for run in runs:
+        rep = run.get("report")
+        if not rep:
+            continue
+        rep = json.loads(rep) if isinstance(rep, str) else rep
+        for a in rep.get("albums", []):
+            if a.get("week") != week_name or a.get("album") != album:
+                continue
+            for p in a.get("pairs", []):
+                moved = p.get("moved") or ""
+                if "/" not in moved or p.get("carried"):
+                    continue
+                key = (p["top"], p["bottom"])
+                if key not in seen:
+                    seen.add(key)
+                    out.append((p["top"], p["bottom"], float(p["amount"])))
+    return out
+
+
+def collided(reported, present):
+    """{amount: how many pairs of that fare are missing}.
+
+    Until 2026-09-08 a joined picture of an album named '74232_0.jpg' was called
+    '<album>_0+0_฿46.jpg' whatever its halves were, and the upload wrote over a same-named
+    file — so of three ฿46 trips in one rider's folder, one picture survived. The reports say
+    how many pairs of each fare were moved; Drive says how many pictures of each fare exist."""
+    want = Counter(round(a, 2) for _t, _b, a in reported)
+    have = Counter(round(amount_of(i["name"]), 2) for i in present if amount_of(i["name"]) is not None)
+    return {amt: n - have.get(amt, 0) for amt, n in want.items() if n > have.get(amt, 0)}
+
+
+def collided_plan(drive, wk, album, originals, stitched, runs):
+    """The subset of a revert that puts the overwritten trips back: every pair whose fare lost a
+    picture — the survivors too, since nobody can tell which of three ฿46 pictures is which —
+    so the next round joins them all again under names that cannot collide.
+    Returns (originals to return, stitched to hold, {amount: lost}, pairs without originals)."""
+    reported = pairs_reported(runs, wk["name"], album)
+    present = [img for _f, img in stitched] + stitched_in_holds(drive, wk["id"], album)
+    lost = collided(reported, present)
+    by_name = {i["name"]: i for i in originals}
+    back, missing = [], []
+    for t, b, a in reported:
+        if round(a, 2) not in lost:
+            continue
+        if t in by_name and b in by_name:
+            back += [by_name[t], by_name[b]]
+        else:
+            missing.append((t, b, a))
+    hold = [(f, img) for f, img in stitched
+            if amount_of(img["name"]) is not None and round(amount_of(img["name"]), 2) in lost]
+    return back, hold, lost, missing
 
 
 def stitched_in_week(drive, week_id, album):
@@ -65,6 +154,8 @@ def main(argv=None):
     ap.add_argument("--apply", action="store_true", help="ย้ายไฟล์จริงบน Drive")
     ap.add_argument("--delete-rows", action="store_true",
                     help="ลบแถวที่สร้างจากรูปที่ต่อแล้วด้วย (ต้องใส่คู่กับ --apply)")
+    ap.add_argument("--only-collided", action="store_true",
+                    help="เฉพาะคู่ที่ยอดชนกันจนรูปต่อทับกันหาย (เทียบรายงานจัดกองกับรูปที่มีจริง)")
     a = ap.parse_args(argv)
     db.init_db()
 
@@ -88,6 +179,16 @@ def main(argv=None):
         originals = drive.list_images(used["id"]) if used else []
         stitched = stitched_in_week(drive, wk["id"], album)
         rows = db.trips_from_album(f"{album}_")
+        if a.only_collided:
+            originals, stitched, lost, missing = collided_plan(
+                drive, wk, album, originals, stitched, db.recent_pool_runs(500, with_report=True))
+            names = {img["name"] for _f, img in stitched}
+            rows = [r for r in rows if r["file_name"] in names]
+            print(f"\n[{album}] เฉพาะยอดที่รูปต่อหายไป: "
+                  + (" · ".join(f"฿{amt:g} หาย {n}" for amt, n in sorted(lost.items())) or "ไม่มี"))
+            if missing:
+                print(f"  ⚠ {len(missing)} คู่ไม่พบต้นฉบับใน {USED_DIR}/ จึงคืนไม่ได้: "
+                      + ", ".join(f"{t}+{b}" for t, b, _a in missing[:5]))
         plan.append({"album": album, "used": used, "originals": originals,
                      "stitched": stitched, "rows": rows})
 
@@ -112,7 +213,9 @@ def main(argv=None):
     tot_c = sum(1 for p in plan for r in p["rows"] if r["committed"])
     print(f"\nรวม: คืนต้นฉบับ {tot_o} ใบ · เก็บรูปที่ต่อแล้ว {tot_s} ใบ · แถวที่เกี่ยวข้อง {tot_r}"
           f" (ลงไฟล์แล้ว {tot_c})")
-    if tot_o != tot_s * 2:
+    if a.only_collided:
+        print(f"  คู่ที่จะได้กลับมาจริง: {tot_o // 2 - tot_s} (ต้นฉบับ {tot_o // 2} คู่ − รูปที่ยังอยู่ {tot_s})")
+    elif tot_o != tot_s * 2:
         print(f"  ⚠ ต้นฉบับควรเป็นสองเท่าของรูปที่ต่อแล้ว ({tot_s * 2}) แต่ได้ {tot_o}"
               " — อาจมีบางคู่ถูกย้ายหรือลบไปแล้ว")
 
