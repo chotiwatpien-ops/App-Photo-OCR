@@ -322,17 +322,22 @@ def wrong_wheel(d_from, d_to, per_rider, apply_it, log=print):
     # The folders opened on the wrong side are empty now. Left where they are, they are riders in
     # the wrong group that the next round will read and count; parked beside the week they are a
     # record of what happened, and nothing is deleted.
+    # Tidying up, and every trip has already moved and every customer picture has already been
+    # rebuilt by the time we get here. The first run of this died on the very first read of this
+    # loop with a dropped SSL socket and exited 1, which reads as 'the apply failed' when what
+    # actually failed was putting an empty folder away. Say so and finish.
     parked = 0
     for j, _cw, _rw in misfiled_jobs(jobs, pools):
         fid = j.get("drive_folder_id")
-        if not fid or drive.list_images(fid):
-            continue
         try:
+            if not fid or drive.list_images(fid):
+                continue
             drive.move_file(fid, drive.ensure_folder(wk["id"], WRONG_WHEEL_DIR))
             parked += 1
         except Exception as e:                                  # noqa: BLE001
             log(f"  ⚠ พักโฟลเดอร์ {j.get('folder_name')} ไม่สำเร็จ: {str(e)[:60]}")
-    log(f"พักโฟลเดอร์ที่ว่างแล้วไว้ที่ {WRONG_WHEEL_DIR}/ {parked} โฟลเดอร์ (ไม่ได้ลบ)")
+    log(f"พักโฟลเดอร์ที่ว่างแล้วไว้ที่ {WRONG_WHEEL_DIR}/ {parked} โฟลเดอร์ (ไม่ได้ลบ)"
+        "\n  (งานย้ายเที่ยวและสร้างรูปเสร็จไปก่อนหน้านี้แล้ว — ขั้นนี้เป็นแค่การเก็บกวาด)")
     return 0
 
 

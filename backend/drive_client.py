@@ -54,11 +54,22 @@ class DriveClient:
         return s
 
     def _list(self, q, fields):
+        """Every listing, one page at a time, through the same retry as the writes.
+
+        This was the one path that reached Drive without it, and it is the most-called one of
+        the lot — list_folders and list_images both come through here. A run that holds a
+        connection open for an hour outlives it: run #129 died in the pool step and the
+        wrong-wheel apply died on its very last read, after every file had already been moved
+        and every customer picture rebuilt, both with 'EOF occurred in violation of protocol'.
+        A dropped socket is not a missing folder, and it should not read as one."""
         out, token = [], None
         while True:
-            resp = self.svc.files().list(
-                q=q, fields=f"nextPageToken, files({fields})", pageSize=1000, pageToken=token,
-                supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
+            def _page(tok=token):
+                return self.svc.files().list(
+                    q=q, fields=f"nextPageToken, files({fields})", pageSize=1000, pageToken=tok,
+                    supportsAllDrives=True, includeItemsFromAllDrives=True).execute()
+
+            resp = self._retry(_page)
             out.extend(resp.get("files", []))
             token = resp.get("nextPageToken")
             if not token:
