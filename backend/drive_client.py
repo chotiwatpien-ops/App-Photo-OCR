@@ -146,6 +146,22 @@ class DriveClient:
     def upload_xlsx(self, parent_id, name, data: bytes) -> str:
         return self.upload_file(parent_id, name, data, XLSX_MIME)
 
+    def create_file(self, parent_id, name, data: bytes, mime: str) -> str:
+        """Always a new file, even when one of that name is already there.
+
+        upload_file's overwrite is right for the workbook and wrong for a stitched trip: two
+        trips are two files whatever they are called, and a name is not a reason to lose one.
+        Drive keeps same-named files side by side; ingest tells them apart by content."""
+        from googleapiclient.http import MediaIoBaseUpload
+
+        def _mk():
+            media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime, resumable=False)
+            meta = {"name": name, "parents": [parent_id], "mimeType": mime}
+            return self.svc.files().create(body=meta, media_body=media, fields="id",
+                                           supportsAllDrives=True).execute()["id"]
+
+        return self._retry(_mk)
+
     def move_file(self, file_id, new_parent_id) -> None:
         """Re-parent a file (no copy, no delete — the same file id ends up in the new folder)."""
         def _mv():
@@ -217,6 +233,19 @@ class LocalDrive:
 
     def upload_xlsx(self, parent_id, name, data: bytes) -> str:
         return self.upload_file(parent_id, name, data, XLSX_MIME)
+
+    def create_file(self, parent_id, name, data: bytes, mime: str) -> str:
+        """A filesystem cannot hold two files of one name, so the second gets ' (2)' — the
+        point is the same: nothing already there is written over."""
+        out = Path(parent_id)
+        out.mkdir(parents=True, exist_ok=True)
+        stem, ext = (name.rsplit(".", 1) + [""])[:2]
+        p, i = out / name, 1
+        while p.exists():
+            i += 1
+            p = out / (f"{stem} ({i}).{ext}" if ext else f"{stem} ({i})")
+        p.write_bytes(data)
+        return str(p)
 
     def move_file(self, file_id, new_parent_id) -> None:
         src = Path(file_id)

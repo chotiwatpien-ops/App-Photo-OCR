@@ -403,6 +403,15 @@ def half_tag(file_name):
     came out named '5567+4'. Fall back to the first characters of the name: stable, unique
     enough inside one album, and obviously not a sequence number."""
     stem = re.sub(r"\.\w+$", "", str(file_name or ""))
+    # Another exporter names its files '74232_0.jpg', 'S__76906624_0.jpg' — a long number and a
+    # one-digit copy index. The trailing number there is the index, '0' for every file in the
+    # album, so every pair with the same fare in one rider folder got the same name — and
+    # upload_file overwrites a same-named file. Run #138 handed อิทธพล 21 trips and left 19
+    # pictures: two pairs were written over by later ones with the same ฿. The number before
+    # the index is the identity.
+    m = re.match(r"^(?:S__)?(\d{4,})_\d$", stem)
+    if m:
+        return m.group(1)
     m = re.search(r"(\d+)$", stem)
     return m.group(1) if m else (re.sub(r"[^0-9A-Za-z]+", "", stem)[:8] or "x")
 
@@ -486,7 +495,7 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
                 img.save(buf, "JPEG", quality=88)
                 tn, bn = (half_tag(x) for x in (p["top"], p["bottom"]))
                 name = f"{entry['album']}_{tn}+{bn}_฿{p['amount']:g}.jpg"
-                drive.upload_file(p["dest"], name, buf.getvalue(), "image/jpeg")
+                drive.create_file(p["dest"], name, buf.getvalue(), "image/jpeg")
                 drive.move_file(p["top_id"], used_dir)
                 drive.move_file(p["bottom_id"], used_dir)
                 p["moved"] = f"{p['target']}/{name}"

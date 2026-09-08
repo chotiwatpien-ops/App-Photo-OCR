@@ -114,6 +114,26 @@ check("UUID คนละใบต้องได้ชื่อคนละอ�
       pool.half_tag("1e020647-6513-4cef.jpg") != pool.half_tag("4c7d0753-5957-4316.jpg"))
 check("ชื่อว่างก็ยังตอบอะไรสักอย่าง", pool.half_tag("") == "x" and pool.half_tag(None) == "x")
 check("ไม่มีนามสกุลก็อ่านได้", pool.half_tag("LINE_ALBUM_x_12") == "12")
+# '74232_0.jpg': the trailing number is a copy index, '0' on every file in the album. Run #138
+# named every LukArm pair '..._0+0_฿X' and pairs of one fare in one folder wrote over each other.
+check("เลขท้าย _0 เป็นดัชนีสำเนา ตัวตนคือเลขข้างหน้า", pool.half_tag("74232_0.jpg") == "74232")
+check("แบบ S__ ก็เหมือนกัน", pool.half_tag("S__76906624_0.jpg") == "76906624")
+check("สำเนา _1 ของไฟล์เดิมได้ป้ายเดียวกัน (มันคือรูปเดียวกัน)", pool.half_tag("120848_1.jpg") == "120848")
+check("สองไฟล์ติดกันได้ป้ายต่างกัน", pool.half_tag("74232_0.jpg") != pool.half_tag("74233_0.jpg"))
+check("LINE_ALBUM เลขเดี่ยวท้ายชื่อยังเป็นลำดับในอัลบั้ม ไม่ใช่ดัชนี",
+      pool.half_tag("LINE_ALBUM_x_260907_5.jpg") == "5" and pool.half_tag("LINE_ALBUM_x_260907_6.jpg") == "6")
+check("เลขสั้น ๆ หน้า _0 ไม่ถูกมองเป็นแบบนั้น", pool.half_tag("12_0.jpg") == "0")
+
+# a stitched picture is created, never written over
+import tempfile, os
+from drive_client import LocalDrive
+ld = LocalDrive(tempfile.mkdtemp(prefix="pocr-create-"))
+a = ld.create_file(ld.root, "x_฿46.jpg", b"1", "image/jpeg")
+b = ld.create_file(ld.root, "x_฿46.jpg", b"2", "image/jpeg")
+check("ชื่อซ้ำในโฟลเดอร์เดียว → สองไฟล์ ไม่ทับ", a != b and open(a, "rb").read() == b"1" and open(b, "rb").read() == b"2")
+check("การต่อรูปใช้ create_file ไม่ใช่ upload_file",
+      "drive.create_file(p[\"dest\"]" in open("backend/pool.py", encoding="utf-8").read()
+      and "drive.upload_file(p[\"dest\"]" not in open("backend/pool.py", encoding="utf-8").read())
 
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)
