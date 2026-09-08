@@ -26,6 +26,10 @@ on:
         description: "Max images this run (blank = all)"
         type: string
         default: ""
+      per_rider:
+        description: "โควตาต่อคนสำหรับรอบนี้เท่านั้น (ว่าง = 21) — Ops สั่ง 2026-09-08 ให้วีคนี้ครบก่อนแม้เกิน 21"
+        type: string
+        default: ""
       exports_only:
         description: "Regenerate Excel + customer images only (no Gemini cost)"
         type: boolean
@@ -111,6 +115,7 @@ jobs:
         if: steps.gate.outputs.skip != 'true' 
         working-directory: backend
         env:
+          EXPECTED_TRIPS_PER_WEEK: ${{ github.event.inputs.per_rider || '21' }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
