@@ -150,26 +150,78 @@ check("จดสไตล์ไว้ที่ชื่อคน ไม่ใช
       a3c.new_styles == {distribute.bare(sv.rsplit("/", 1)[1]): "ยาว/มืด",
                          distribute.bare(other.rsplit("/", 1)[1]): "ครึ่ง/สว่าง"})
 
-# --- when the list runs out, say whether the seats are gone or held by the wrong people --------
-# Run 15 moved 21 of 230 and said only 'the names are all used'. That reads as 'nobody has room',
-# and it is also printed when there is plenty of room belonging to people whose pictures look
-# nothing like these. Those are two different problems and need two different answers.
+# --- the style rule is applied last, not dropped (Ops, 2026-09-08) -----------------------------
+# Run 20:32 had 194 free seats on the 2W side and 117 trips it refused to place, because every
+# free seat belonged to somebody whose pictures look different and the list had no name left.
+# Ops relaxed the rule: such a person is still the LAST one offered a trip — after everyone who
+# matches, after every unused name — but no longer nobody.
 d4 = FakeDrive()
 a4 = distribute.Allocator(d4, "week", SMALL, per_rider=2, seed=4)
 for _ in range(9):                                     # 5 names × 2 seats, one seat left over
     a4.folder_for("2 W Saver", "2W", "ยาว/มืด")
-_, err = a4.folder_for("2 W Saver", "2W", "ครึ่ง/สว่าง")
-check("บอกว่าชื่อหมด", err and "รายชื่อของ 2W หมดแล้ว" in err)
-check("บอกว่าที่ว่างเป็นของคนที่ส่งรูปคนละแบบ",
-      err and "ยังมีที่ว่างอีก 1 เที่ยว แต่เป็นของคนที่ส่งรูปคนละแบบ" in err)
+last, err = a4.folder_for("2 W Saver", "2W", "ครึ่ง/สว่าง")
+check("ชื่อหมดและไม่มีคนแบบเดียวกัน → ลงที่นั่งที่เหลือ ไม่ใช่ค้าง", last and not err)
+check("ที่นั่งนั้นเป็นของคนที่ส่งรูปคนละแบบ และถูกจดไว้ว่าใคร",
+      a4.mixed == {nm4: {"ครึ่ง/สว่าง"} for nm4 in [distribute.bare(last.rsplit("/", 1)[1])]})
+check("สไตล์ที่จำไว้ของคนนั้นไม่เปลี่ยน",
+      a4.styles[distribute.bare(last.rsplit("/", 1)[1])] == "ยาว/มืด")
 
 d5 = FakeDrive()
 a5 = distribute.Allocator(d5, "week", SMALL, per_rider=2, seed=5)
 for _ in range(10):
     a5.folder_for("2 W Saver", "2W", "ยาว/มืด")
 _, err5 = a5.folder_for("2 W Saver", "2W", "ยาว/มืด")
-check("ทุกคนเต็มจริง ๆ ก็บอกให้ไปขอชื่อเพิ่ม", err5 and "ต้องขอชื่อเพิ่มจาก Ops" in err5)
-check("ตอนเต็มจริงต้องไม่พูดถึงที่ว่าง", err5 and "ที่ว่าง" not in err5)
+check("ทุกที่นั่งเต็มจริง ๆ ถึงจะบอกว่าเต็ม", err5 and "เต็มแล้ว" in err5 and "5 ชื่อ × 2 เที่ยว" in err5)
+check("ตอนเต็มบอกทางออกทั้งสอง: สัปดาห์หน้า หรือขอชื่อ",
+      err5 and "สัปดาห์หน้า" in err5 and "ขอชื่อเพิ่ม" in err5)
+_, err5b = a5.folder_for("2 W Saver", "2W", "ครึ่ง/สว่าง")
+check("เต็มก็คือเต็ม ไม่ว่ารูปแบบไหน", err5b and "เต็มแล้ว" in err5b)
+
+# the order: someone who matches, then a fresh name, and only then someone who does not match
+d4b = FakeDrive()
+a4b = distribute.Allocator(d4b, "week", SMALL, per_rider=3, seed=41)
+f1, _ = a4b.folder_for("2 W Saver", "2W", "ยาว/มืด")
+f2, _ = a4b.folder_for("2 W Saver", "2W", "ครึ่ง/สว่าง")
+check("ยังมีชื่อว่าง → รูปคนละแบบได้ชื่อใหม่ ไม่ปนกับคนแรก", f2 != f1 and not a4b.mixed)
+f3, _ = a4b.folder_for("2 W Saver", "2W", "ยาว/มืด")
+check("แบบเดียวกันกลับไปหาคนเดิมก่อนเปิดชื่อใหม่", f3 == f1 and a4b.made == 2)
+while len(a4b.used) < 5:                               # draw every remaining name with ยาว/มืด
+    a4b.folder_for("2 W Standard", "2W", "ยาว/มืด")
+f4, e4 = a4b.folder_for("2 W Saver", "2W", "ครึ่ง/สว่าง")
+check("ชื่อหมดแล้ว แบบเดิมของตัวเองมีที่ → ไปหาคนเดิม ไม่ปนใคร", f4 == f2 and not a4b.mixed)
+f5, _ = a4b.folder_for("2 W Saver", "2W", "ครึ่ง/สว่าง")
+f6, _ = a4b.folder_for("2 W Saver", "2W", "ครึ่ง/สว่าง")
+check("คนเดิมเต็มแล้ว ชื่อหมดแล้ว → ตอนนี้จึงยอมปน และจดไว้",
+      f5 == f2 and f6 != f2 and f6 is not None and len(a4b.mixed) == 1)
+
+# and when it comes to that, the fullest person with room, so the mix touches the fewest folders
+d4e = FakeDrive()
+a4e = distribute.Allocator(d4e, "week", {("2W", "Win"): ["ก", "ข"], ("2W", "Home"): [],
+                                          ("4W", "Taxi"): [], ("4W", "Home"): []},
+                           per_rider=4, seed=44)
+one, _ = a4e.folder_for("2 W Saver", "2W", "ยาว/มืด")
+three = [a4e.folder_for("2 W Saver", "2W", "ยาว/สว่าง")[0] for _ in range(3)][0]
+m1, _ = a4e.folder_for("2 W Saver", "2W", "ครึ่ง/สว่าง")
+check("ปนกับคนที่แน่นที่สุดก่อน (3/4 ก่อน 1/4)", m1 == three)
+m2, _ = a4e.folder_for("2 W Saver", "2W", "ครึ่ง/สว่าง")
+check("คนนั้นเต็มแล้วค่อยไปคนถัดไป", m2 == one and len(a4e.mixed) == 2)
+
+# the mix is also allowed across groups — the same person's second folder — and still last
+d4c = FakeDrive()
+a4c = distribute.Allocator(d4c, "week", {("2W", "Win"): ["ก"], ("2W", "Home"): [],
+                                          ("4W", "Taxi"): [], ("4W", "Home"): []},
+                           per_rider=3, seed=42)
+a4c.folder_for("2 W Saver", "2W", "ยาว/มืด")
+g, e = a4c.folder_for("2 W Standard", "2W", "ครึ่ง/สว่าง")
+check("คนเดียวในรายชื่อ กลุ่มอื่น รูปคนละแบบ → ยังได้โฟลเดอร์ที่สอง ไม่ค้าง",
+      g and not e and g.endswith("2 W Standard/01-ก Win") and a4c.mixed == {"ก Win": {"ครึ่ง/สว่าง"}})
+
+# a caller with no style never trips the mixing record
+d4d = FakeDrive()
+a4d = distribute.Allocator(d4d, "week", SMALL, per_rider=2, seed=43)
+for _ in range(10):
+    a4d.folder_for("2 W Saver", "2W")
+check("ไม่บอกสไตล์ = ไม่มีอะไรให้ปน", not a4d.mixed and not a4d.new_styles)
 
 
 def nm(fid):

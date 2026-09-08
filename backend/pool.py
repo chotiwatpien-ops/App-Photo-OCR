@@ -110,7 +110,7 @@ def scan_inbox(drive, inbox_id, only_week=None):
         for child in drive.list_folders(wk["id"]):
             if child["name"].strip().lower() in POOL_FOLDER_NAMES:
                 for a in _albums_in(drive, child, wk["name"]):
-                    a["week_id"] = wk["id"]
+                    a["week_id"], a["inbox_id"] = wk["id"], inbox_id
                     albums.append(a)
     return albums
 
@@ -121,7 +121,7 @@ def scan(drive, pool_id, only_week=None):
     for wk in sorted(drive.list_folders(pool_id), key=lambda f: f["name"]):
         if _wanted(wk["name"], only_week):
             for a in _albums_in(drive, wk, wk["name"]):
-                a["week_id"] = wk["id"]
+                a["week_id"], a["inbox_id"] = wk["id"], pool_id
                 albums.append(a)
     return albums
 
@@ -260,7 +260,8 @@ def render(report):
     lines = [f"จัดกอง ({mode}) · {report.get('started_at', '')}",
              f"รูปทั้งหมด {t['n_images']} · ซ้ำเป๊ะ {t['n_duplicates']} · รูปยาว {t['n_long']} · "
              f"จับคู่ได้ {t['n_pairs']} คู่" + (f" ({t['pair_rate']}% ของครึ่งรูป)" if t["pair_rate"] is not None else "")
-             + f" · ค้าง {t['n_leftover']}" + (f" · ย้ายแล้ว {t['n_moved']}" if "n_moved" in t else ""), ""]
+             + f" · ค้าง {t['n_leftover']}" + (f" · ย้ายแล้ว {t['n_moved']}" if "n_moved" in t else "")
+             + (f" · ยกไปสัปดาห์หน้า {t['n_carried']}" if t.get("n_carried") else ""), ""]
     for a in report["albums"]:
         lines.append(f"[{a['week']} / {a['group']}] {a['album']}: {a['n_images']} รูป · ซ้ำ {a['n_duplicates']} · "
                      f"ยาว {len(a['long'])} · คู่ {len(a['pairs'])} · ค้าง {len(a['leftovers'])}")
@@ -268,7 +269,7 @@ def render(report):
             lines.append(f"    คู่  {p['top']}  +  {p['bottom']}   ฿{p['amount']:g}"
                          + ("" if p["distance"] == 1 else f"  (ห่าง {p['distance']})")
                          + f"  → {p.get('target') or 'ไม่รู้ประเภทรถ'}"
-                         + (f"  ✔ {p['moved']}" if "/" in p.get("moved", "")
+                         + (f"  ✔ {p['moved']}" if "/" in p.get("moved", "") or p.get("carried")
                             else (f"  ⚠ {p['moved']}" if p.get("moved") else "")))
         for l in a["long"]:
             # A move that failed leaves its reason in 'moved', and only the success case was
@@ -276,7 +277,8 @@ def render(report):
             # why, and the answer (the name list had run out) reached only the web.
             why = l.get("moved") or ""
             lines.append(f"    ยาว {l['file']}  → {l.get('target') or 'ไม่รู้ประเภทรถ'}"
-                         + ("  ✔ ย้ายแล้ว" if "/" in why else (f"  ⚠ {why}" if why else "")))
+                         + ("  ✔ ย้ายแล้ว" if "/" in why else
+                            (f"  ✔ {why}" if l.get("carried") else (f"  ⚠ {why}" if why else ""))))
         for l in a["leftovers"]:
             amt = "" if l["amount"] is None else f" ฿{l['amount']:g}"
             lines.append(f"    ค้าง {l['file']}  ({'ครึ่งบน' if l['role'] == 'top' else 'ครึ่งล่าง'}{amt}) — {l['why']}")
@@ -322,6 +324,53 @@ def write_previews(drive, albums, data, report, log=log):
 
 # --- 5. move mode ---------------------------------------------------------------------------
 USED_DIR = "_ใช้แล้ว"
+MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+
+def next_week_name(week_name):
+    """'Week 31 Aug-6 Sep' -> ('Week 7-13 Sep', '2026-09-07', '2026-09-13'), or None.
+
+    Spelled the way Ops spells it — the month once when both days share it, twice when they
+    do not — and with whatever came before the dates kept as it was. A name the parser cannot
+    read (a sandbox week) gets None, and the work stays where it is."""
+    import ingest
+    from datetime import timedelta
+    rng = ingest.parse_range(week_name)
+    if not rng:
+        return None
+    d1, d2 = (d + timedelta(days=7) for d in rng)
+    m = ingest.RANGE_RE.search(week_name)
+    head = week_name[:m.start()].rstrip()
+    span = (f"{d1.day}-{d2.day} {MONTH_ABBR[d2.month - 1]}" if d1.month == d2.month
+            else f"{d1.day} {MONTH_ABBR[d1.month - 1]}-{d2.day} {MONTH_ABBR[d2.month - 1]}")
+    return f"{head} {span}".strip(), d1.isoformat(), d2.isoformat()
+
+
+def next_week_pool(drive, inbox_id, week_name, group, album):
+    """Folder id of next week's copy of this album — Week+7/Pool/<group>/<album> — made if
+    absent, matched by what its name means if Ops already made it (however they spelled it).
+    None when the week's name cannot be read."""
+    import ingest
+    nxt = next_week_name(week_name)
+    if not nxt:
+        return None
+    name, d_from, d_to = nxt
+    week = None
+    for f in drive.list_folders(inbox_id):
+        rng = ingest.parse_range(ingest.clean_name(f["name"]))
+        if rng and rng[0].isoformat() == d_from and rng[1].isoformat() == d_to:
+            week = f["id"]
+            break
+    if week is None:
+        week = drive.ensure_folder(inbox_id, name)
+    pool = next((f["id"] for f in drive.list_folders(week)
+                 if f["name"].strip().lower() in POOL_FOLDER_NAMES), None)
+    if pool is None:
+        pool = drive.ensure_folder(week, "Pool")
+    dest = drive.ensure_folder(pool, group) if group else pool
+    if album and album != group and album != "(กองรวม)":
+        dest = drive.ensure_folder(dest, album)
+    return dest
 
 
 def report_mix(allocators, log=log):
@@ -366,7 +415,7 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
     by_key = {(a["week"], a["album"]): a for a in albums}
     allocators = {} if allocators is None else allocators
     issues = [] if issues is None else issues
-    moved = 0
+    moved = carried = 0
     for entry in report["albums"]:
         alb = by_key[(entry["week"], entry["album"])]
         week_id, pool_id = alb["week_id"], alb["pool_id"]
@@ -394,6 +443,7 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
                                                 for k, v in sorted(pool_names.items())))
             alloc = allocators[week_id] = distribute.Allocator(
                 drive, week_id, pool_names, log=log, styles=db.rider_styles(week_id))
+        carry = []
         for x in entry["pairs"] + entry["long"]:
             x["dest"] = None
             if not x["target"]:
@@ -401,10 +451,25 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
             fid, err = alloc.folder_for(x["target"], wheel, x.get("style"))
             if err:
                 x["moved"] = err
+                carry.append(x)
                 if (f"pool:{err}", "folder", err) not in issues:
                     issues.append((f"pool:{err}", "folder", err))
                     log(f"  ⚠ {err}")
             x["dest"] = fid
+        # A week with no seat left does not hold the work back: the originals go to the same
+        # album under next week's pool, untouched, where the next round pairs them again and
+        # hands them to next week's riders. (Ops, 2026-09-08.) The date a trip is given comes
+        # from the week folder it is read from, so a trip carried over is dated next week.
+        carry_dir = None
+        if carry and alb.get("inbox_id"):
+            try:
+                carry_dir = next_week_pool(drive, alb["inbox_id"], entry["week"],
+                                           alb.get("group", ""), entry["album"])
+            except Exception as e:  # noqa: BLE001 — the work stays in the pool, as before
+                report["errors"].append(f"เปิดโฟลเดอร์สัปดาห์หน้าไม่ได้: {str(e)[:120]}")
+        if carry_dir:
+            log(f"  ↪ {entry['album']}: เต็มสัปดาห์นี้ {len(carry)} รายการ → ยกไป "
+                f"{next_week_name(entry['week'])[0]}")
         used_dir = (drive.ensure_folder(drive.ensure_folder(pool_id, USED_DIR), entry["album"])
                     if any(p.get("dest") for p in entry["pairs"]) else None)
 
@@ -446,10 +511,25 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
                 report["errors"].append(f"ย้ายไม่สำเร็จ {l['file']}: {str(e)[:120]}")
                 return 0
 
+        def do_carry(x):
+            ids = [x["id"]] if "id" in x else [x["top_id"], x["bottom_id"]]
+            try:
+                for fid in ids:
+                    drive.move_file(fid, carry_dir)
+                x["moved"] = f"เต็มสัปดาห์นี้ → ยกไป {next_week_name(entry['week'])[0]}"
+                x["carried"] = True
+                return 1
+            except Exception as e:  # noqa: BLE001 — whatever did not move is still in the pool
+                x["moved"] = f"ยกไปสัปดาห์หน้าไม่สำเร็จ: {str(e)[:80]}"
+                report["errors"].append(f"ยกไปสัปดาห์หน้าไม่สำเร็จ {ids[0]}: {str(e)[:120]}")
+                return 0
+
         with ThreadPoolExecutor(max_workers=max(1, config.DRIVE_PARALLEL)) as ex:
             n = sum(ex.map(do_pair, entry["pairs"])) + sum(ex.map(do_long, entry["long"]))
+            c = sum(ex.map(do_carry, carry)) if carry_dir else 0
         moved += n
-        log(f"  ↳ {entry['album']}: ย้ายแล้ว {n} รายการ")
+        carried += c
+        log(f"  ↳ {entry['album']}: ย้ายแล้ว {n} รายการ" + (f" · ยกไปสัปดาห์หน้า {c}" if c else ""))
     # What each folder settled on has to outlive this round, and so does the answer to the
     # question the customer is actually asking — is the week the mix they asked for?
     if allocators:
@@ -457,8 +537,14 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
         kept = sum(db.rider_styles_save(w, a.new_styles) for w, a in allocators.items())
         if kept:
             log(f"  จำไว้ว่าไรเดอร์ {kept} คนส่งรูปแบบไหน")
+        mixed = sum(len(getattr(a, "mixed", {})) for a in allocators.values())
+        if mixed:
+            log(f"  ⚠ ปนสไตล์ {mixed} คน — ไม่มีคนแบบเดียวกันเหลือและชื่อหมด "
+                f"(กฎสไตล์ใช้ท้ายสุด ตามที่ Ops ตัดสิน 2026-09-08)")
         report_mix(allocators, log=log)
     report["totals"]["n_moved"] = moved
+    if carried:
+        report["totals"]["n_carried"] = carried
     return moved
 
 

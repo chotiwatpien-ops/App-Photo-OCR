@@ -90,6 +90,10 @@ class Allocator:
         # moving while a rider is filled up across several rounds.
         self.styles = dict(styles or {})     # rider name -> style
         self.new_styles = {}                 # the ones this run decided, for the caller to store
+        # Ops relaxed the rule on 2026-09-08: a rider whose pictures look different is still the
+        # LAST person offered a trip — after everyone who matches and after every unused name —
+        # but no longer nobody. Run 20:32 had 194 free seats and 117 trips it would not place.
+        self.mixed = {}                      # rider name -> the other styles they were handed
 
     def _load(self, category):
         if category in self.groups:
@@ -161,6 +165,10 @@ class Allocator:
         have = self.styles.get(name)
         return not (style and have and have != style)
 
+    def _has_room(self, name, _style=None):
+        """Room left, whatever their pictures look like — the last resort, never the first."""
+        return self._room(name) > 0
+
     def _drives(self, name, wheel):
         """Whether this person drives what the group holds.
 
@@ -192,35 +200,43 @@ class Allocator:
 
     def _take(self, name, style):
         self.total[name] = self.total.get(name, 0) + 1
-        if style and not self.styles.get(name):    # riders from before this rule adopt the first
+        have = self.styles.get(name)
+        if style and not have:                     # riders from before this rule adopt the first
             self.styles[name] = style
             self.new_styles[name] = style
+        elif style and have != style:
+            # Their own style stays what it was — this is the exception, and the next trip of
+            # their own kind should still find them first. Said once per person per run.
+            if style not in self.mixed.setdefault(name, set()):
+                self.mixed[name].add(style)
+                self.log(f"    ⚠ ปนสไตล์: {name} ส่ง {have} แต่ได้รับ {style} "
+                         f"(ไม่มีคนแบบเดียวกันเหลือ และชื่อหมดแล้ว)")
 
-    def folder_for(self, category, wheel, style=None):
-        """Folder id for the next trip, or (None, reason) when Ops' list has nobody left.
+    def _seat(self, category, wheel, style, strict):
+        """A folder of somebody already working this week, or None.
 
-        style, when given, is whatever tells two pictures apart to the eye — the caller decides
-        what goes in it. A rider is only offered work of the style they already send."""
+        strict: only people whose pictures already look like this one. Someone in this group
+        who is not at their weekly 21 comes first — fullest first, so a week uses the fewest
+        people it can — then someone working elsewhere this week who still has room: a Saver
+        rider taking a Standard fare is the same person, so they get a second folder here and
+        one 21 across both."""
         g = self._load(category)
-        # Someone already working in this group who is not at their weekly 21 — always before a
-        # second folder, and long before a new name. Fullest first, so a week uses the fewest
-        # people it can. Case-folded on purpose: everything else that reads a folder name off
-        # Drive ignores case, and this did not, so a folder someone typed as '01-สมชาย WIN' was
-        # never topped up and that person was handed a second folder in the same group.
+        fits = self._fits if strict else self._has_room
+        # Case-folded on purpose: everything else that reads a folder name off Drive ignores
+        # case, and this did not, so a folder someone typed as '01-สมชาย WIN' was never topped
+        # up and that person was handed a second folder in the same group.
         here = {r["name"].lower() for r in g["riders"]}
         for r in sorted(g["riders"], key=lambda r: (-r["n"], r["name"])):
-            if (r["n"] < self.per_rider and self._fits(r["name"], style)
+            if (r["n"] < self.per_rider and fits(r["name"], style)
                     and not self._misplaced(r["name"], wheel)):
                 r["n"] += 1
                 self._take(r["name"], style)
-                return r["id"], None
-        # Someone working elsewhere this week who still has room: a Saver rider taking a Standard
-        # fare is the same person, so they get a second folder here and one 21 across both.
+                return r["id"]
         for cat, gg in sorted(self.groups.items()):
             if cat == category:
                 continue
             for r in sorted(gg["riders"], key=lambda r: (-self._room(r["name"]), r["name"])):
-                if (r["name"].lower() in here or not self._fits(r["name"], style)
+                if (r["name"].lower() in here or not fits(r["name"], style)
                         or not self._drives(r["name"], wheel)):
                     continue
                 fid = self.drive.ensure_folder(
@@ -230,28 +246,40 @@ class Allocator:
                 self.made += 1
                 self.log(f"    + {category}/{folder_label(len(g['riders']), r['name'])}"
                          f"  (คนเดิมจาก {cat})")
-                return fid, None
+                return fid
+        return None
+
+    def folder_for(self, category, wheel, style=None):
+        """Folder id for the next trip, or (None, reason) when the week has no seat left at all.
+
+        style, when given, is whatever tells two pictures apart to the eye — the caller decides
+        what goes in it. In order: a rider who already sends this kind of picture, then a name
+        nobody has used this week, and only when both are gone a rider who sends the other kind.
+        The style rule is applied last, never dropped: mixing is what anyone checking the work
+        would see first, so it is the last thing done, and the log says who it happened to."""
+        g = self._load(category)
+        fid = self._seat(category, wheel, style, strict=True)
+        if fid:
+            return fid, None
         for kind in self._draw_order(wheel):
             free = [n for n in self.pool.get((wheel, kind), []) if n not in self.used]
             if free:
-                break
-        else:
-            # Say where the unused room is, not just that the list is empty. Run 15 stopped after
-            # 21 of 230, and 'the names are all used' left open whether those riders were full or
-            # whether the free seats belonged to people whose pictures do not look like these.
-            spare = sum(self._room(n) for n in self.used if self._room(n) > 0)
-            have = sum(len(self.pool.get((wheel, k), [])) for k in (MAJOR[wheel], MINOR[wheel]))
-            return None, (f"รายชื่อของ {wheel} หมดแล้ว ({have} ชื่อถูกใช้ครบในสัปดาห์นี้) · "
-                          + (f"ยังมีที่ว่างอีก {spare} เที่ยว แต่เป็นของคนที่ส่งรูปคนละแบบ"
-                             if spare else "และทุกคนเต็มแล้ว — ต้องขอชื่อเพิ่มจาก Ops"))
-        name = self.rng.choice(free)
-        self.used.add(name)
-        fid = self.drive.ensure_folder(g["id"], folder_label(len(g["riders"]) + 1, name))
-        g["riders"].append({"name": name, "id": fid, "n": 1})
-        self._take(name, style)
-        self.made += 1
-        self.log(f"    + {category}/{folder_label(len(g['riders']), name)}")
-        return fid, None
+                name = self.rng.choice(free)
+                self.used.add(name)
+                fid = self.drive.ensure_folder(g["id"], folder_label(len(g["riders"]) + 1, name))
+                g["riders"].append({"name": name, "id": fid, "n": 1})
+                self._take(name, style)
+                self.made += 1
+                self.log(f"    + {category}/{folder_label(len(g['riders']), name)}")
+                return fid, None
+        fid = self._seat(category, wheel, style, strict=False)
+        if fid:
+            return fid, None
+        # Every name is drawn and every seat is taken. Say so in numbers — 'the names are all
+        # used' once meant 'drawn', and read as 'full' when 194 seats were still free.
+        have = sum(len(self.pool.get((wheel, k), [])) for k in (MAJOR[wheel], MINOR[wheel]))
+        return None, (f"สัปดาห์นี้เต็มแล้วสำหรับ {wheel} ({have} ชื่อ × {self.per_rider} เที่ยว "
+                      f"ไม่เหลือที่นั่ง) — งานที่เหลือต้องไปสัปดาห์หน้า หรือขอชื่อเพิ่มจาก Ops")
 
 
 # --- one-off: work already sitting loose in a vehicle-group folder -----------------------------
