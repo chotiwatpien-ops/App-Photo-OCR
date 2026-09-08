@@ -56,6 +56,29 @@ def live_count(job_id):
     return sum(1 for t in full["trips"] if str(t.get("status")) not in DEAD)
 
 
+def wheel_of(category):
+    """'2 W Saver' -> '2W'. Which list the freed seats come back to — the trips with nowhere to
+    go are all on the 2W side, so a total that mixes the two answers the wrong question."""
+    import rebalance_quota as rq
+    return rq.wheel_of_category(category)
+
+
+def seats_freed(plan):
+    """How much room the move actually gives back, counted the way the allocator counts.
+
+    Room is quota minus pictures in the folder, floored at zero. The first shape of this summed
+    'quota minus live trips', which is unused capacity and not the same thing: it went negative
+    for the riders whose pictures had already been moved elsewhere by the quota rebalance, and
+    those negatives quietly ate the real gains of everybody else."""
+    q = config.EXPECTED_TRIPS_PER_WEEK
+    total = 0
+    for p in plan:
+        before = max(0, q - p["on_drive"])
+        after = max(0, q - (p["on_drive"] - len(p["files"])))
+        total += after - before
+    return total
+
+
 def plan_for(drive, jobs, dead_by_job):
     """[{job, folder, on_drive, live, files}] — what would leave each rider folder.
 
@@ -114,10 +137,13 @@ def main(argv=None):
               f"{p['on_drive']:>14}{p['live']:>11}{len(p['files']):>10}"
               f"{p['on_drive'] - len(p['files']):>7}")
     files = sum(len(p["files"]) for p in plan)
-    # A seat is a place in somebody's twenty-one, so what comes back is capped by the quota:
-    # a folder holding twenty-five dead pictures still only ever held twenty-one seats.
-    seats = sum(min(config.EXPECTED_TRIPS_PER_WEEK, p["on_drive"]) - p["live"] for p in plan)
-    print(f"\nรูปที่จะเอาออก {files} ใบ จาก {len(plan)} โฟลเดอร์ · ที่นั่งที่ได้คืนประมาณ {max(0, seats)} เที่ยว")
+    print(f"\nรูปที่จะเอาออก {files} ใบ จาก {len(plan)} โฟลเดอร์"
+          f" · ที่นั่งที่ได้คืน {seats_freed(plan)} เที่ยว")
+    by_wheel = defaultdict(list)
+    for p in plan:
+        by_wheel[wheel_of(p["job"].get("category")) or "?"].append(p)
+    for wheel, ps in sorted(by_wheel.items()):
+        print(f"    {wheel}: คืน {seats_freed(ps)} เที่ยว จาก {len(ps)} โฟลเดอร์")
     for p in broken:
         print(f"  ⚠ อ่านโฟลเดอร์ {p['job'].get('folder_name')} ไม่ได้: {p['error']}")
 

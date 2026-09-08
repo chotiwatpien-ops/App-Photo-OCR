@@ -105,6 +105,20 @@ d3.move_file("d11", dest)
 check("ย้ายแล้วออกจากโฟลเดอร์ไรเดอร์", [i["id"] for i in d3.images["f1"]] == ["d13"])
 check("แล้วไปโผล่ในที่พัก ไม่ได้หายไป", [i["id"] for i in d3.images[dest]] == ["d11"])
 
+# --- how much room actually comes back ---------------------------------------------------------
+# The first version summed 'quota minus live trips', which is unused capacity, not room. It went
+# negative for a rider whose pictures the quota rebalance had already moved away, and those
+# negatives quietly ate everybody else's real gains.
+fs.config.EXPECTED_TRIPS_PER_WEEK = 21
+full = [{"on_drive": 21, "live": 0, "files": [0] * 18, "job": {"category": "2 W Saver"}}]
+check("โฟลเดอร์เต็ม 21 เอาออก 18 คืน 18", fs.seats_freed(full) == 18)
+partial = [{"on_drive": 3, "live": 19, "files": [0], "job": {"category": "2 W Saver"}}]
+check("โฟลเดอร์ที่รูปถูกย้ายไปแล้ว คืน 1 ไม่ใช่ติดลบ", fs.seats_freed(partial) == 1)
+check("รวมกันแล้วต้องไม่หักล้างกันเอง", fs.seats_freed(full + partial) == 19)
+over = [{"on_drive": 25, "live": 0, "files": [0] * 25, "job": {"category": "2 W Saver"}}]
+check("โฟลเดอร์ที่ล้นโควตา คืนได้ไม่เกิน 21", fs.seats_freed(over) == 21)
+check("แยกตามล้อได้", (fs.wheel_of("2 W Saver"), fs.wheel_of("4 W Standard")) == ("2W", "4W"))
+
 check("ชื่อที่พักคือ _ซ้ำ", fs.HOLD_DIR == "_ซ้ำ")
 check("นับสถานะตายไว้สองแบบเท่านั้น", set(fs.DEAD) == {"duplicate", "voided"})
 
