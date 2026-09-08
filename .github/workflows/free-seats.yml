@@ -1,0 +1,68 @@
+name: Free seats — เอารูปซ้ำออกจากโฟลเดอร์ไรเดอร์ เพื่อคืนที่นั่ง
+
+# Report-only unless `apply` is ticked. Nothing is deleted and no database row is touched: the
+# pictures move to Week/_ซ้ำ/<ไรเดอร์>/ and the rows keep their status, their note and their
+# restore button.
+#
+# The allocator decides who is full by counting pictures in a rider folder on Drive, not rows in
+# the database. Run #131 sent the Parichat album twice — once split in three, once whole — and
+# only the 80 byte-for-byte identical files were caught. The rest were saved again by the phone,
+# so they paired, moved into rider folders, cost a Gemini call each, and were only then found to
+# be trips already counted and parked as status='duplicate'. สัมมา Win ended the week holding 21
+# pictures and 0 trips; สาธิต the same; ไตรรัตน์, ปัณญ์ and อิทธพล one trip each.
+#
+# So ~175 seats on the 2W list are held by pictures of work already delivered under another name.
+# That is why run #132 said 'รายชื่อของ 2W หมดแล้ว' while the dashboard showed those same riders
+# at 1/21, and why 217 trips have nowhere to go: 45 waiting on the wrong-wheel cleanup and 172
+# still sitting in the pool.
+
+on:
+  workflow_dispatch:
+    inputs:
+      date_from:
+        description: "วันเริ่มสัปดาห์ (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-08-31"
+      date_to:
+        description: "วันจบสัปดาห์ (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-09-06"
+      apply:
+        description: "ย้ายไฟล์จริงบน Drive (ไม่ลบ ไม่แตะแถว)"
+        type: boolean
+        default: false
+
+# One group for everything that writes to Drive. Each of these used to hold a group of
+# its own name, which stops a second copy of itself and nothing else — so a quota apply
+# and an ingest round could move the same files and rewrite the same customer images at
+# the same time, and nothing anywhere would have noticed. Sharing the group makes them
+# queue instead. Runs are free on a public repository, so waiting costs nothing.
+concurrency:
+  group: drive-write
+  cancel-in-progress: false
+
+jobs:
+  free-seats:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: Which seats are held by repeats
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.DRIVE_OAUTH_TOKEN_JSON }}
+          DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
+          TZ: Asia/Bangkok
+        run: |
+          ARGS="--from ${{ github.event.inputs.date_from }} --to ${{ github.event.inputs.date_to }}"
+          if [ "${{ github.event.inputs.apply }}" = "true" ]; then ARGS="$ARGS --apply"; fi
+          python free_dup_seats.py $ARGS

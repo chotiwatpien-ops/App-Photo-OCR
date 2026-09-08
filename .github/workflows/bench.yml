@@ -18,8 +18,13 @@ on:
         type: string
         default: "100"
 
+# One group for everything that writes to Drive. Each of these used to hold a group of
+# its own name, which stops a second copy of itself and nothing else — so a quota apply
+# and an ingest round could move the same files and rewrite the same customer images at
+# the same time, and nothing anywhere would have noticed. Sharing the group makes them
+# queue instead. Runs are free on a public repository, so waiting costs nothing.
 concurrency:
-  group: bench
+  group: drive-write
   cancel-in-progress: false
 
 jobs:
