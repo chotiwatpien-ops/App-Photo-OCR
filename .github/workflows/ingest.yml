@@ -26,8 +26,8 @@ on:
         description: "Max images this run (blank = all)"
         type: string
         default: ""
-      per_rider:
-        description: "โควตาต่อคนสำหรับรอบนี้เท่านั้น (ว่าง = 21) — Ops สั่ง 2026-09-08 ให้วีคนี้ครบก่อนแม้เกิน 21"
+      per_rider_saver:
+        description: "โควตาต่อคนเฉพาะงาน 2 W Saver สำหรับรอบนี้เท่านั้น (ว่าง = 21; Standard และ 4W ยัง 21 เสมอ) — Ops สั่ง 2026-09-08 ให้ 2 W Saver วีคนี้ครบก่อน"
         type: string
         default: ""
       exports_only:
@@ -115,7 +115,7 @@ jobs:
         if: steps.gate.outputs.skip != 'true' 
         working-directory: backend
         env:
-          EXPECTED_TRIPS_PER_WEEK: ${{ github.event.inputs.per_rider || '21' }}
+          QUOTA_2_W_SAVER: ${{ github.event.inputs.per_rider_saver || '' }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}

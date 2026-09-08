@@ -79,6 +79,16 @@ GITHUB_WORKFLOW = _setting("GITHUB_WORKFLOW", "github_workflow", "ingest.yml")
 
 # trips each rider owes the customer per week (3/day × 7) — used for the per-rider shortfall list
 EXPECTED_TRIPS_PER_WEEK = int(os.environ.get("EXPECTED_TRIPS_PER_WEEK", "21"))
+# One round can carry a different figure for one vehicle group (or one wheel count): Ops
+# (2026-09-08) wanted this week's 2 W Saver complete before anything else and let the 21 go
+# for that group only — a rider may hold more than 21 when the extra are Saver trips, and
+# still no more than 21 Standard ones. QUOTA_2_W_SAVER=23 in the environment does that;
+# QUOTA_2W would do it for both bike groups. Unset, everything is the figure above.
+WEEK_QUOTA = {}
+for _k in ("2 W Saver", "2 W Standard", "4 W Saver", "4 W Standard", "2W", "4W"):
+    _v = os.environ.get("QUOTA_" + _k.replace(" ", "_").upper())
+    if _v:
+        WEEK_QUOTA[_k] = int(_v)
 
 # what the customer buys: every vehicle group must reach this many trips a week on its own.
 # A group that beats it does not cover one that misses it, so the Dashboard totals the

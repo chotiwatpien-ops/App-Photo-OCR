@@ -71,9 +71,15 @@ class Allocator:
     Built once per run over a week, because none of that — the quota, 'this name is already
     working', or 'this week is 70% Win' — can be answered from inside a single group."""
 
-    def __init__(self, drive, week_id, pool, per_rider=None, seed=None, log=print, styles=None):
+    def __init__(self, drive, week_id, pool, per_rider=None, seed=None, log=print, styles=None,
+                 quota=None):
         self.drive, self.week_id, self.log = drive, week_id, log
         self.per_rider = per_rider or config.EXPECTED_TRIPS_PER_WEEK
+        # {group or wheel: trips a rider may hold this week when the trip being placed is of
+        # that group / wheel}; anything not listed gets per_rider. So '2 W Saver': 23 lets a
+        # rider take Saver trips up to 23 and still no Standard one past 21. An explicit
+        # per_rider is the whole answer (the tests, the one-off tools); otherwise the setting.
+        self.quota = dict(quota) if quota is not None else ({} if per_rider else dict(config.WEEK_QUOTA))
         self.rng = random.Random(seed)
         # {(wheel, kind): [names]} straight from Ops' list, already labelled
         self.pool = {k: [f"{n} {k[1]}".strip() for n in v] for k, v in pool.items()}
@@ -155,19 +161,24 @@ class Allocator:
         share = c[major] / total if total else 0.0
         return [major, minor] if share < TARGET_MAJOR else [minor, major]
 
-    def _room(self, name):
-        return self.per_rider - self.total.get(name, 0)
+    def _quota(self, category=None, wheel=None):
+        """How many trips a rider may hold when THIS trip is placed: the group's figure, else
+        the wheel's, else the week's."""
+        return self.quota.get(category) or self.quota.get(wheel) or self.per_rider
 
-    def _fits(self, name, style):
+    def _room(self, name, category=None, wheel=None):
+        return self._quota(category, wheel) - self.total.get(name, 0)
+
+    def _fits(self, name, style, category=None, wheel=None):
         """Room left in this person's week, and the pictures are the kind they already send."""
-        if self._room(name) <= 0:
+        if self._room(name, category, wheel) <= 0:
             return False
         have = self.styles.get(name)
         return not (style and have and have != style)
 
-    def _has_room(self, name, _style=None):
+    def _has_room(self, name, _style=None, category=None, wheel=None):
         """Room left, whatever their pictures look like — the last resort, never the first."""
-        return self._room(name) > 0
+        return self._room(name, category, wheel) > 0
 
     def _drives(self, name, wheel):
         """Whether this person drives what the group holds.
@@ -227,7 +238,7 @@ class Allocator:
         # up and that person was handed a second folder in the same group.
         here = {r["name"].lower() for r in g["riders"]}
         for r in sorted(g["riders"], key=lambda r: (-r["n"], r["name"])):
-            if (r["n"] < self.per_rider and fits(r["name"], style)
+            if (r["n"] < self._quota(category, wheel) and fits(r["name"], style, category, wheel)
                     and not self._misplaced(r["name"], wheel)):
                 r["n"] += 1
                 self._take(r["name"], style)
@@ -235,8 +246,8 @@ class Allocator:
         for cat, gg in sorted(self.groups.items()):
             if cat == category:
                 continue
-            for r in sorted(gg["riders"], key=lambda r: (-self._room(r["name"]), r["name"])):
-                if (r["name"].lower() in here or not fits(r["name"], style)
+            for r in sorted(gg["riders"], key=lambda r: (-self._room(r["name"], category, wheel), r["name"])):
+                if (r["name"].lower() in here or not fits(r["name"], style, category, wheel)
                         or not self._drives(r["name"], wheel)):
                     continue
                 fid = self.drive.ensure_folder(
@@ -278,7 +289,7 @@ class Allocator:
         # Every name is drawn and every seat is taken. Say so in numbers — 'the names are all
         # used' once meant 'drawn', and read as 'full' when 194 seats were still free.
         have = sum(len(self.pool.get((wheel, k), [])) for k in (MAJOR[wheel], MINOR[wheel]))
-        return None, (f"สัปดาห์นี้เต็มแล้วสำหรับ {wheel} ({have} ชื่อ × {self.per_rider} เที่ยว "
+        return None, (f"สัปดาห์นี้เต็มแล้วสำหรับ {wheel} ({have} ชื่อ × {self._quota(category, wheel)} เที่ยว "
                       f"ไม่เหลือที่นั่ง) — งานที่เหลือต้องไปสัปดาห์หน้า หรือขอชื่อเพิ่มจาก Ops")
 
 

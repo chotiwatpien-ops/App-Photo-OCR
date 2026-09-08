@@ -216,6 +216,37 @@ g, e = a4c.folder_for("2 W Standard", "2W", "ครึ่ง/สว่าง")
 check("คนเดียวในรายชื่อ กลุ่มอื่น รูปคนละแบบ → ยังได้โฟลเดอร์ที่สอง ไม่ค้าง",
       g and not e and g.endswith("2 W Standard/01-ก Win") and a4c.mixed == {"ก Win": {"ครึ่ง/สว่าง"}})
 
+# --- a quota for one wheel count only (Ops, 2026-09-08 23:50: 'it is only 2 W Saver that is short')
+d4f = FakeDrive()
+a4f = distribute.Allocator(d4f, "week", SMALL, per_rider=2, seed=45, quota={"2W": 3})
+bike = [a4f.folder_for("2 W Saver", "2W")[0] for _ in range(3)]
+check("2W ใช้โควตาของตัวเอง: สามใบแรกลงคนเดียว (โควตา 3)", len(set(bike)) == 1)
+check("ใบที่สี่ค่อยเปิดคนใหม่", a4f.folder_for("2 W Saver", "2W")[0] != bike[0])
+car = [a4f.folder_for("4 W Standard", "4W")[0] for _ in range(3)]
+check("4W ยัง 2 ตามเดิม: ใบที่สามเป็นคนที่สอง", car[0] == car[1] != car[2])
+for _ in range(20):
+    a4f.folder_for("2 W Saver", "2W")
+_, e4f = a4f.folder_for("2 W Saver", "2W")
+check("ข้อความตอนเต็มบอกโควตาของล้อนั้น", e4f and "× 3 เที่ยว" in e4f)
+check("ไม่ระบุโควตาต่อล้อ ก็ใช้ตัวเลขเดียวทุกล้อ",
+      distribute.Allocator(FakeDrive(), "week", SMALL, per_rider=5)._quota("2 W Saver", "2W") == 5)
+
+# and for ONE group: '2W "Saver"' — the extra seats are for Saver trips, a Standard fare for
+# the same person still stops at the week's figure
+d4g = FakeDrive()
+a4g = distribute.Allocator(d4g, "week", {("2W", "Win"): ["ก"], ("2W", "Home"): [],
+                                          ("4W", "Taxi"): [], ("4W", "Home"): []},
+                           per_rider=2, seed=46, quota={"2 W Saver": 4})
+a4g.folder_for("2 W Standard", "2W"); a4g.folder_for("2 W Standard", "2W")     # ก at 2 = the 21
+_, e_std = a4g.folder_for("2 W Standard", "2W")
+check("Standard ใบที่สามของคนเดียวกัน: เต็มตามโควตาปกติ", e_std is not None)
+s3, _ = a4g.folder_for("2 W Saver", "2W")
+s4, _ = a4g.folder_for("2 W Saver", "2W")
+check("แต่งาน Saver ยังลงคนเดิมได้ถึง 4 (โฟลเดอร์ที่สองในกลุ่ม Saver)",
+      s3 and s4 == s3 and s3.endswith("2 W Saver/01-ก Win") and a4g.total["ก Win"] == 4)
+_, e_sv = a4g.folder_for("2 W Saver", "2W")
+check("Saver ใบที่ห้า: เต็มที่ 4 และข้อความบอก × 4", e_sv and "× 4 เที่ยว" in e_sv)
+
 # a caller with no style never trips the mixing record
 d4d = FakeDrive()
 a4d = distribute.Allocator(d4d, "week", SMALL, per_rider=2, seed=43)
