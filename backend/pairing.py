@@ -288,7 +288,8 @@ def inspect(source):
     info = {"width": im.width, "height": im.height, "amount": None, "alts": [],
             "theme": theme_of(a),
             "numbers": [], "seq": [], "cut_top": None}
-    if im.width / im.height < 0.36 or im.width / im.height > JOINED_MIN:
+    tall = im.width / im.height < 0.36
+    if tall or im.width / im.height > JOINED_MIN:
         # 'long' means 'this picture is a whole trip already — move it, do not look for a
         # partner'. Two shapes qualify. A tall one is a single scrolling screenshot. A WIDE one
         # is two screens someone joined before sending: a phone screen is always taller than it
@@ -297,6 +298,22 @@ def inspect(source):
         # album of pre-joined pictures into the pool and every one of them would have been read
         # as a half, found no partner, and sat there for ever.
         info["role"] = "long"
+        if tall and big:
+            # A tall picture that OPENS on 'คุณได้รับ' is not a whole trip. Natcha = 32 scrolled
+            # the fare breakdown into one capture, 2,155px tall on a 760px screen, with the big
+            # figure in the top 9% and no map anywhere — the lower half of a pair, just long.
+            # Fifteen of them were called 'long', moved nowhere ('ไม่รู้ประเภทรถ', because the
+            # chip lives on the other half) and their fifteen tops sat unpaired beside them. A
+            # whole trip in one tall screenshot carries the route and the map above the figure,
+            # which puts the figure well below the top quarter.
+            read = {t: _try_amount(im, mask, *t) for t in big}
+            priced = [t for t in big if (read[t][0] or 0) >= MIN_AMOUNT]
+            if priced:
+                y0, y1 = max(priced, key=lambda t: t[1])
+                if (y0 + y1) / 2 < im.height * 0.25:
+                    info["role"] = "bottom"
+                    info["amount"], info["alts"] = read[(y0, y1)]
+                    info["numbers"], info["seq"] = _all_numbers(im)
     elif big:
         # The map carries green of its own — the pick-up pin and the 'เส้นทางที่แนะนำ' legend sit
         # on one row, wide enough to pass for printed text and often TALLER than the ฿ figure
