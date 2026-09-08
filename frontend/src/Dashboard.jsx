@@ -156,7 +156,7 @@ export default function Dashboard({ onOpenJob }) {
             <p className="text-xs mt-0.5 tabular-nums">
               <span className="text-emerald-600">ลงไฟล์แล้ว {fmt(totalApproved)}</span>
               {totalWaiting > 0 && <span className="text-sky-600"> · รอตรวจ {fmt(totalWaiting)}</span>}
-              {totalUnread > 0 && <span className="text-amber-600"> · รออ่าน {fmt(totalUnread)}</span>}
+              {totalUnread > 0 && <span className="text-amber-600"> · รออ่านทั้งสัปดาห์ {fmt(totalUnread)}</span>}
             </p>
           </div>
         </div>
@@ -184,9 +184,13 @@ export default function Dashboard({ onOpenJob }) {
             คนที่ยังขาด
             <span className="text-sm font-normal text-slate-400"> {cat || 'ทุกกลุ่มรถ'} · เรียงจากขาดมากสุด · นับรวมทุกโฟลเดอร์ของคนเดียวกัน</span>
           </h2>
+          {/* Not the week's unread total: only what belongs to the people listed below. Someone
+              already past 21 is not on this list, and their slips still waiting in a batch are
+              counted in the week's figure above but not here. Two different questions, and
+              naming them both 'รออ่าน' made them look like the same one disagreeing with itself. */}
           <p className="text-sm text-slate-500">
             {short.length} คน
-            {shortUnread > 0 && <span className="text-amber-600"> · รออ่าน {fmt(shortUnread)} รูป</span>}
+            {shortUnread > 0 && <span className="text-amber-600"> · ในนั้นเป็นรูปรออ่านของคนกลุ่มนี้ {fmt(shortUnread)}</span>}
           </p>
         </div>
 
