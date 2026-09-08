@@ -177,49 +177,153 @@ def misfiled_jobs(jobs, pools):
 WRONG_WHEEL_DIR = "_ผิดล้อ"
 
 
-def wrong_wheel(d_from, d_to, per_rider, apply_it, log=print):
-    """Take every trip out of a folder that belongs to a rider of the other wheel, and give it to
-    somebody who drives what the trip was. Reports unless apply_it.
+def trip_wheel(t):
+    """What the trip itself was: the slip when it has been read, the group it sat in until then."""
+    import pairing
+    return (pairing.wheels_from_chip(str(t.get("service_type") or "").lower())
+            or wheel_of_category(t.get("_category")))
 
-    The rows are not re-read: a bike fare stays the bike fare it was read as, only the owner
-    changes — the same path as the quota rebalance. Rows still waiting for their batch result go
-    too; the result lands on the row wherever it lives, and the new job exports it."""
+
+def classify(job, trip, pools):
+    """None | 'other' | 'refile' — what a trip in this job needs.
+
+    'other': the trip is not what this rider drives — a car fare under a Win name, a bike fare
+    under a Taxi name — and has to go to somebody else. 'refile': the trip is right for the rider
+    but the job is in the other wheel's group (ดวงพร Win's bike fares in 4 W Standard), so it goes
+    to the same rider's own job on the right side and the customer folder follows. The delivered
+    file already carries ten bike slips under Taxi names from car albums, so this is asked of
+    every trip of the week, not only of the folders opened on the wrong side."""
+    rw = rider_wheel(job.get("driver_name"), pools)
+    if not rw:
+        return None
+    tw = trip_wheel(trip)
+    if tw and tw != rw:
+        return "other"
+    cw = wheel_of_category(job.get("category"))
+    if cw and cw != rw:
+        return "refile"
+    return None
+
+
+def _refile(drive, wk, jobs, pools, d_from, d_to, apply_it, log):
+    """Move each (job, trip) to the same rider's job in the group of their own wheel."""
+    import excel_writer
+    import pairing
+    from void_pool_pairs import drive_id
+    cats = {f["name"].strip(): f["id"] for f in drive.list_folders(wk["id"])}
+    touched, done = set(), 0
+    for job, ts in jobs:
+        rw = rider_wheel(job["driver_name"], pools)
+        for t in ts:
+            svc = str(t.get("service_type") or "").lower()
+            tier = pairing.tier_from_chip(svc) or (str(job.get("category") or "").split()[-1] or None)
+            cat = pairing.category_folder(rw, tier)
+            if not cat:
+                log(f"  ✗ {job['driver_name']} · {t.get('file_name')} — บอกไม่ได้ว่า Saver หรือ Standard")
+                continue
+            if not apply_it:
+                done += 1
+                continue
+            cat_id = cats.get(cat) or drive.ensure_folder(wk["id"], cat)
+            cats[cat] = cat_id
+            riders = drive.list_folders(cat_id)
+            mine = next((f["id"] for f in riders
+                         if _norm(bare(f["name"])) == _norm(job["driver_name"])), None)
+            if mine is None:
+                import distribute
+                mine = drive.ensure_folder(cat_id, distribute.folder_label(len(riders) + 1, job["driver_name"]))
+            job2 = (db.find_job(job["driver_name"], d_from, d_to, cat, None)
+                    or db.create_job(job["driver_name"], excel_writer.SHEET, d_from, d_to, category=cat,
+                                     folder_name=f"{cat}/{job['driver_name']}", drive_folder_id=mine))
+            src = drive_id(t.get("source_url"))
+            if src:
+                try:
+                    drive.move_file(src, mine)
+                except Exception as e:                          # noqa: BLE001
+                    log(f"  ⚠ ย้ายรูปไม่สำเร็จ {t.get('file_name')}: {str(e)[:80]}")
+                    continue
+            db.move_trips_to_job([t["id"]], job2)
+            touched.update({job2, job["id"]})
+            done += 1
+    return done, touched
+
+
+def bare(folder_name):
+    import distribute
+    return distribute.bare(folder_name)
+
+
+def wrong_wheel(d_from, d_to, per_rider, apply_it, log=print):
+    """Every trip of the week that is on the wrong side of the wheel, and where it goes.
+
+    Reports unless apply_it. Rows are not re-read: a fare stays what it was read as, only the
+    owner or the group changes. Rows still waiting for their batch result go too — the result
+    lands on the row wherever it lives, and whichever job holds it then exports it."""
     pools = {k: [n for n, kd in db.name_pool_for(k[0]) if kd == k[1]]
-             for k in (("2W", "Win"), ("2W", "Home"), ("4W", "Taxi"), ("4W", "Home"))}
+                      for k in (("2W", "Win"), ("2W", "Home"), ("4W", "Taxi"), ("4W", "Home"))}
     jobs = [j for (f, t), js in db.jobs_by_week().items() if f == d_from and t == d_to for j in js]
-    bad = misfiled_jobs(jobs, pools)
-    log(f"{d_from}..{d_to} · {len(jobs)} job · โฟลเดอร์ที่คนขับผิดล้อ {len(bad)}")
-    if not bad:
+    other, refile = {}, []
+    table = []
+    for j in jobs:
+        full = db.get_job(j["id"]) or {"trips": []}
+        o, r = [], []
+        for t in full["trips"]:
+            if t.get("status") not in ("pending", "done", "error"):
+                continue
+            t["_category"], t["driver_name"], t["job_id_"] = j.get("category"), j["driver_name"], j["id"]
+            what = classify(j, t, pools)
+            if what == "other":
+                o.append(t)
+            elif what == "refile":
+                r.append(t)
+        if o:
+            other.setdefault(j["driver_name"], {"keep": [], "release": []})["release"].extend(o)
+        if r:
+            refile.append((j, r))
+        if o or r:
+            table.append((j, o, r))
+    log(f"{d_from}..{d_to} · {len(jobs)} job · job ที่มีเที่ยวผิดล้อ {len(table)}")
+    if not table:
         log("ไม่มี ✔")
         return 0
+    log(f"\n{'กลุ่ม':<14}{'ไรเดอร์':<22}{'ขับ':<5}{'ไปคนอื่น':>9}{'ย้ายกลุ่ม':>10}{'รอผล':>6}{'ลงไฟล์แล้ว':>11}")
+    for j, o, r in sorted(table, key=lambda x: (str(x[0]["category"]), x[0]["driver_name"])):
+        ts = o + r
+        log(f"{str(j['category'])[:14]:<14}{j['driver_name'][:22]:<22}"
+            f"{rider_wheel(j['driver_name'], pools):<5}{len(o):>9}{len(r):>10}"
+            f"{sum(1 for t in ts if t.get('status') != 'done'):>6}"
+            f"{sum(1 for t in ts if t.get('committed')):>11}")
+    n_other = sum(len(v["release"]) for v in other.values())
+    n_refile = sum(len(r) for _j, r in refile)
+    log(f"\nไปหาคนอื่น {n_other} เที่ยว · ย้ายไปกลุ่มที่ถูกของคนเดิม {n_refile} เที่ยว\n")
 
-    over = {}
-    log(f"\n{'กลุ่ม':<14}{'ไรเดอร์':<22}{'ขับ':<5}{'อ่านแล้ว':>9}{'รอผล':>6}{'ลงไฟล์แล้ว':>11}")
-    for j, cw, rw in sorted(bad, key=lambda x: (x[0]["category"], x[0]["driver_name"])):
-        full = db.get_job(j["id"]) or {"trips": []}
-        ts = [t for t in full["trips"] if t.get("status") in ("pending", "done", "error")]
-        for t in ts:
-            t["_category"] = j["category"]
-            t["driver_name"] = j["driver_name"]
-            t["job_id_"] = j["id"]
-        done = sum(1 for t in ts if t.get("status") == "done")
-        committed = sum(1 for t in ts if t.get("committed"))
-        log(f"{str(j['category'])[:14]:<14}{j['driver_name'][:22]:<22}{rw:<5}"
-            f"{done:>9}{len(ts) - done:>6}{committed:>11}")
-        over.setdefault(j["driver_name"], {"keep": [], "release": []})["release"].extend(ts)
-    log("")
-    rc = reassign(over, d_from, d_to, per_rider, apply_it, log=log)
+    import roster
+    drive = roster._drive()
+    if not apply_it:
+        drive = DryDrive(drive)
+    wk = week_folder(drive, config.DRIVE_INBOX_FOLDER_ID, d_from, d_to)
+    if wk is None:
+        log(f"✗ ไม่พบโฟลเดอร์สัปดาห์ที่ครอบ {d_from}..{d_to} ใน Inbox")
+        return 1
+    rc = 0
+    if refile:
+        moved, touched = _refile(drive, wk, refile, pools, d_from, d_to, apply_it, log)
+        log(f"ย้ายกลุ่มให้คนเดิม{'แล้ว' if apply_it else 'ได้'} {moved} เที่ยว")
+        if apply_it and touched:
+            import ingest
+            rc = finish(drive, touched, ingest.week_label(d_from), log)
+    if other:
+        rc = reassign(other, d_from, d_to, per_rider, apply_it, log=log) or rc
+    elif not apply_it:
+        log("\n(รายงานอย่างเดียว — ยังไม่ได้แตะอะไร · ใส่ --apply เพื่อทำจริง)")
     if not apply_it or rc:
         return rc
 
-    # The folders are empty now. Left where they are, they are riders in the wrong group that
-    # the next round will read and count; parked beside the week they are a record of what
-    # happened, and nothing is deleted.
-    import roster
-    drive = roster._drive()
-    wk = week_folder(drive, config.DRIVE_INBOX_FOLDER_ID, d_from, d_to)
+    # The folders opened on the wrong side are empty now. Left where they are, they are riders in
+    # the wrong group that the next round will read and count; parked beside the week they are a
+    # record of what happened, and nothing is deleted.
     parked = 0
-    for j, _cw, _rw in bad:
+    for j, _cw, _rw in misfiled_jobs(jobs, pools):
         fid = j.get("drive_folder_id")
         if not fid or drive.list_images(fid):
             continue

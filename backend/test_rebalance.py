@@ -298,6 +298,29 @@ check("แถวที่อ่านแล้ว เชื่อสลิปม
 fid, cat, err = rq.find_new_home(al, {"service_type": None})
 check("ไม่มีทั้งสลิปทั้งกลุ่ม ก็บอกว่าอ่านไม่ออก", fid is None and err)
 
+# every trip of the week is asked, not only the folders opened on the wrong side: the delivered
+# file carries ten bike slips under Taxi names that came out of car albums
+win_in_car = {"id": 1, "driver_name": "ดวงพร Win", "category": "4 W Standard"}
+taxi_in_bike = {"id": 2, "driver_name": "ยอดยิ่ง Taxi", "category": "2 W Saver"}
+taxi_at_home = {"id": 5, "driver_name": "ยอดยิ่ง Taxi", "category": "4 W Standard"}
+check("รอผลอยู่ ไม่รู้สลิป — ใช้กลุ่มที่นั่งอยู่ตัดสิน",
+      rq.trip_wheel({"service_type": None, "_category": "2 W Saver"}) == "2W"
+      and rq.trip_wheel({"service_type": "Standard (JustGrab)", "_category": "2 W Saver"}) == "4W")
+check("ค่ารถยนต์ใต้ชื่อวิน → ไปคนอื่น",
+      rq.classify(win_in_car, {"service_type": "Standard Car", "_category": "4 W Standard"}, pools) == "other")
+check("ค่าวินใต้ชื่อวิน แต่ job อยู่กลุ่มรถยนต์ → ย้ายกลุ่มให้คนเดิม",
+      rq.classify(win_in_car, {"service_type": "Saver Bike", "_category": "4 W Standard"}, pools) == "refile")
+check("ค่าวินใต้ชื่อ Taxi ในกลุ่มรถยนต์เอง → ไปคนอื่น (Rabbit ส่งสลิปวินปนมา)",
+      rq.classify(taxi_at_home, {"service_type": "Standard Bike", "_category": "4 W Standard"}, pools) == "other")
+check("แถวรอผลของ Taxi ที่ถูกเปิดในวิน → ไปคนอื่น",
+      rq.classify(taxi_in_bike, {"service_type": None, "_category": "2 W Saver"}, pools) == "other")
+check("ทุกอย่างตรง ไม่แตะ",
+      rq.classify(taxi_at_home, {"service_type": "Standard (JustGrab)", "_category": "4 W Standard"}, pools) is None
+      and rq.classify(taxi_at_home, {"service_type": None, "_category": "4 W Standard"}, pools) is None)
+check("คนที่บอกล้อไม่ได้ ไม่แตะ",
+      rq.classify({"driver_name": "ตึก Home", "category": "2 W Saver"},
+                  {"service_type": "Standard Car", "_category": "2 W Saver"}, pools) is None)
+
 at_wrong = src.index("if a.wrong_wheel:")
 at_rows = src.index("rows = db.query_trips(")
 check("--wrong-wheel ต้องมาก่อนการอ่านแถวที่ลงไฟล์แล้ว (แถวส่วนใหญ่ยังรอผล batch)", at_wrong < at_rows)
