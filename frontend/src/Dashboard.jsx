@@ -4,10 +4,17 @@ import { api } from './api.js'
 const fmt = (n) => (n ?? 0).toLocaleString('th-TH', { maximumFractionDigits: 0 })
 const pct = (a, b) => (b ? Math.min(100, Math.round((a / b) * 100)) : 0)
 
-function Bar({ done, target, tone = 'bg-emerald-500', h = 'h-2' }) {
+function Bar({ done, target, tone = 'bg-emerald-500', h = 'h-2', pending = 0 }) {
+  // Slips already in hand but still inside a Gemini batch are drawn in a paler shade on the end
+  // of the same bar: they are work Ops has already sent, and the whole point of the screen is
+  // that nobody uploads a second copy of it while it waits.
+  const read = pct(done - pending, target)
   return (
-    <div className={`${h} w-full rounded-full bg-slate-100 overflow-hidden`}>
-      <div className={`h-full rounded-full ${tone}`} style={{ width: `${pct(done, target)}%` }} />
+    <div className={`${h} w-full rounded-full bg-slate-100 overflow-hidden flex`}>
+      <div className={`h-full ${tone}`} style={{ width: `${read}%` }} />
+      {pending > 0 && (
+        <div className="h-full bg-amber-300" style={{ width: `${pct(done, target) - read}%` }} />
+      )}
     </div>
   )
 }
@@ -31,14 +38,35 @@ function GroupCard({ g, active, onPick }) {
       <p className="text-xs text-slate-500 mb-2">
         {done ? `ถึงเป้า ${fmt(g.target)} แล้ว` : 'งานที่ยังขาด'}
       </p>
-      <Bar done={g.done} target={g.target} tone={done ? 'bg-emerald-500' : 'bg-amber-500'} />
+      <Bar done={g.done} target={g.target} pending={g.unread}
+        tone={done ? 'bg-emerald-500' : 'bg-amber-500'} />
       <p className="text-xs text-slate-500 mt-1.5 tabular-nums">
         {fmt(g.done)}/{fmt(g.target)} งาน ({pct(g.done, g.target)}%)
-        {g.unread > 0 && <span className="text-slate-400"> · รออ่าน {fmt(g.unread)}</span>}
+      </p>
+      {/* What Ops actually needs before deciding whether to go and collect more: everything in
+          this row is already in hand, so none of it should be sent a second time. */}
+      <div className="mt-2 grid grid-cols-3 gap-1 text-center">
+        <div className="rounded bg-emerald-50 py-1">
+          <p className="text-sm font-semibold tabular-nums text-emerald-700">{fmt(g.approved)}</p>
+          <p className="text-[11px] text-emerald-600">ลงไฟล์แล้ว</p>
+        </div>
+        <div className={`rounded py-1 ${g.waiting ? 'bg-sky-50' : 'bg-slate-50'}`}>
+          <p className={`text-sm font-semibold tabular-nums ${g.waiting ? 'text-sky-700' : 'text-slate-400'}`}>{fmt(g.waiting)}</p>
+          <p className={`text-[11px] ${g.waiting ? 'text-sky-600' : 'text-slate-400'}`}>รอตรวจ</p>
+        </div>
+        <div className={`rounded py-1 ${g.unread ? 'bg-amber-50' : 'bg-slate-50'}`}>
+          <p className={`text-sm font-semibold tabular-nums ${g.unread ? 'text-amber-700' : 'text-slate-400'}`}>{fmt(g.unread)}</p>
+          <p className={`text-[11px] ${g.unread ? 'text-amber-600' : 'text-slate-400'}`}>รออ่าน</p>
+        </div>
+      </div>
+      <p className={`text-xs mt-2 ${done ? 'text-emerald-700' : 'text-slate-600'}`}>
+        {done
+          ? 'ได้ครบแล้ว — ไม่ต้องส่งรูปกลุ่มนี้เพิ่ม'
+          : <>ยังต้องขอเพิ่มอีก <span className="font-semibold tabular-nums">{fmt(g.missing)}</span> งาน</>}
       </p>
       <p className="text-xs text-slate-400 mt-1">
         คนที่ยังขาด {g.short.length}
-        {g.absent.length > 0 && <span className="text-red-500"> · ยังไม่ส่งเลย {g.absent.length}</span>}
+        {g.absent.length > 0 && <span className="text-red-500"> · สัปดาห์ก่อนทำ แต่รอบนี้ยังไม่ส่ง {g.absent.length}</span>}
       </p>
       {g.heads_needed > 0 && (
         <p className="text-xs text-red-600 mt-1.5 rounded bg-red-50 border border-red-100 px-2 py-1">
@@ -79,6 +107,8 @@ export default function Dashboard({ onOpenJob }) {
   // its own group, and 'how many riders this week' is a different question with its own answer.
   const heads = cat ? groups.reduce((s, g) => s + g.riders + g.absent.length, 0) : w.riders
   const totalUnread = groups.reduce((s, g) => s + (g.unread || 0), 0)
+  const totalApproved = groups.reduce((s, g) => s + (g.approved || 0), 0)
+  const totalWaiting = groups.reduce((s, g) => s + (g.waiting || 0), 0)
 
   return (
     <div className="space-y-5">
@@ -122,13 +152,23 @@ export default function Dashboard({ onOpenJob }) {
             </p>
             <p className="text-xs text-slate-400">
               ไรเดอร์ {fmt(heads)} คน · เป้า {fmt(comp.group_target)} งาน/กลุ่มรถ · คนละ {comp.expected} งาน
-              {totalUnread > 0 && <span> · ในนั้นรออ่าน {fmt(totalUnread)}</span>}
+            </p>
+            <p className="text-xs mt-0.5 tabular-nums">
+              <span className="text-emerald-600">ลงไฟล์แล้ว {fmt(totalApproved)}</span>
+              {totalWaiting > 0 && <span className="text-sky-600"> · รอตรวจ {fmt(totalWaiting)}</span>}
+              {totalUnread > 0 && <span className="text-amber-600"> · รออ่าน {fmt(totalUnread)}</span>}
             </p>
           </div>
         </div>
         <div className="mt-3">
-          <Bar done={totalDone} target={totalTarget} h="h-3" tone={totalMissing ? 'bg-amber-500' : 'bg-emerald-500'} />
+          <Bar done={totalDone} target={totalTarget} h="h-3" pending={totalUnread}
+            tone={totalMissing ? 'bg-amber-500' : 'bg-emerald-500'} />
         </div>
+        {totalUnread > 0 && (
+          <p className="text-xs text-slate-500 mt-2">
+            แถบสีอ่อนท้ายบาร์คือรูปที่ส่งมาแล้วแต่ยังอ่านไม่เสร็จ นับรวมในยอด &quot;เก็บได้แล้ว&quot; เรียบร้อย — ไม่ต้องส่งซ้ำ
+          </p>
+        )}
       </section>
 
       {/* per vehicle group — this is what the Agent asks the admin for */}
