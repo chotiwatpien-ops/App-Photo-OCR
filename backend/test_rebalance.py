@@ -251,5 +251,56 @@ at_reassign = src.index("if a.reassign:")
 check("--fix-exports ต้องมาก่อนจุดที่ออกเพราะไม่มีใครเกิน", at_fix < at_quota)
 check("--reassign ยังอยู่หลังจุดนั้นตามเดิม", at_reassign > at_quota)
 
+# --- a folder on the wrong side of the wheel --------------------------------------------------
+# Run 131 gave a Win rider a folder in 4 W Standard; run 132 gave eight car riders folders in
+# 2 W Saver. The trips in them are mostly still waiting for a batch result, so they are not in
+# the delivered rows at all — the question has to be asked of the jobs.
+print("โฟลเดอร์ผิดล้อ:")
+pools = {("2W", "Win"): ["ดวงพร", "สมชาย"], ("2W", "Home"): ["มานิตย์"],
+         ("4W", "Taxi"): ["ยอดยิ่ง"], ("4W", "Home"): ["กัปตัน"]}
+check("อ่านล้อจากชื่อกลุ่ม", rq.wheel_of_category("2 W Saver") == "2W"
+      and rq.wheel_of_category("4 W Standard") == "4W" and rq.wheel_of_category("Pool") is None)
+check("ล้อของคนมาจากรายชื่อ Ops ก่อน", rq.rider_wheel("ดวงพร Win", pools) == "2W"
+      and rq.rider_wheel("กัปตัน Home", pools) == "4W" and rq.rider_wheel("มานิตย์ Home", pools) == "2W")
+check("ช่องว่างล่องหนจาก LINE ไม่ทำให้หาไม่เจอ", rq.rider_wheel("ดวงพร​ Win", pools) == "2W")
+check("ชื่อนอกรายชื่อ ดูจากท้ายชื่อ", rq.rider_wheel("มือ Win", pools) == "2W"
+      and rq.rider_wheel("มือ Taxi", pools) == "4W")
+check("Home นอกรายชื่อ ตัดสินไม่ได้ ตอบไม่รู้", rq.rider_wheel("ตึก Home", pools) is None)
+
+jobs = [{"id": 1, "driver_name": "ดวงพร Win", "category": "4 W Standard"},     # run 131
+        {"id": 2, "driver_name": "ยอดยิ่ง Taxi", "category": "2 W Saver"},     # run 132
+        {"id": 3, "driver_name": "กัปตัน Home", "category": "2 W Saver"},      # run 132, a Home
+        {"id": 4, "driver_name": "ดวงพร Win", "category": "2 W Standard"},     # her own side
+        {"id": 5, "driver_name": "กัปตัน Home", "category": "4 W Standard"},   # his own side
+        {"id": 6, "driver_name": "ตึก Home", "category": "2 W Saver"},         # unknowable
+        {"id": 7, "driver_name": "ก Win", "category": None}]                    # old layout
+bad = rq.misfiled_jobs(jobs, pools)
+check("เจอเฉพาะโฟลเดอร์ที่ล้อไม่ตรง", sorted(j["id"] for j, _c, _r in bad) == [1, 2, 3])
+check("Home ที่อยู่ในรายชื่อ 4W แต่ไปอยู่ในวิน ก็เจอ", any(j["id"] == 3 for j, _c, _r in bad))
+check("บอกด้วยว่ากลุ่มเป็นล้อไหน คนเป็นล้อไหน",
+      [(c, r) for j, c, r in bad if j["id"] == 1] == [("4W", "2W")])
+
+# a row still waiting for its slip has no service type; the group it sat in decides
+class _Alloc:
+    def __init__(self):
+        self.asked = []
+
+    def folder_for(self, cat, wheel, style=None):
+        self.asked.append((cat, wheel))
+        return "fid", None
+
+
+al = _Alloc()
+fid, cat, err = rq.find_new_home(al, {"service_type": None, "_category": "2 W Saver"})
+check("แถวที่ยังไม่มีผล ใช้กลุ่มเดิมตัดสิน", (cat, err, al.asked) == ("2 W Saver", None, [("2 W Saver", "2W")]))
+fid, cat, err = rq.find_new_home(al, {"service_type": "Standard (JustGrab)", "_category": "2 W Saver"})
+check("แถวที่อ่านแล้ว เชื่อสลิปมากกว่ากลุ่ม", cat == "4 W Standard" and al.asked[-1] == ("4 W Standard", "4W"))
+fid, cat, err = rq.find_new_home(al, {"service_type": None})
+check("ไม่มีทั้งสลิปทั้งกลุ่ม ก็บอกว่าอ่านไม่ออก", fid is None and err)
+
+at_wrong = src.index("if a.wrong_wheel:")
+at_rows = src.index("rows = db.query_trips(")
+check("--wrong-wheel ต้องมาก่อนการอ่านแถวที่ลงไฟล์แล้ว (แถวส่วนใหญ่ยังรอผล batch)", at_wrong < at_rows)
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

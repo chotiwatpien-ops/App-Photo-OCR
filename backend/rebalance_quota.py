@@ -126,9 +126,110 @@ def find_new_home(alloc, t):
     wheel, tier = pairing.wheels_from_chip(svc), pairing.tier_from_chip(svc)
     cat = pairing.category_folder(wheel, tier)
     if not cat:
+        # A row whose slip has not come back from the batch yet says nothing about itself, but
+        # the group it was filed in was read off the album, and that is the group it belongs in.
+        cat = t.get("_category")
+        wheel = wheel_of_category(cat)
+    if not cat or not wheel:
         return None, None, f"อ่านประเภทบริการไม่ออก ({t.get('service_type')!r})"
     fid, err = alloc.folder_for(cat, wheel, t.get("style"))
     return fid, cat, err
+
+
+def wheel_of_category(cat):
+    """'2 W Saver' -> '2W'. None when the group name does not say."""
+    m = re.match(r"\s*([24])\s*W\b", cat or "", re.IGNORECASE)
+    return f"{m.group(1)}W" if m else None
+
+
+def _norm(s):
+    return re.sub(r"[\s​]+", " ", s or "").strip().lower()   # LINE leaves zero-width spaces in names
+
+
+def rider_wheel(name, pools):
+    """Which wheel this rider drives: Ops' list first, then the kind on the name.
+
+    'Home' is used on both lists, so a Home rider who is on neither list cannot be judged and
+    the answer is None — never a guess."""
+    low = _norm(name)
+    for (wheel, kind), names in pools.items():
+        if any(_norm(f"{n} {kind}") == low for n in names):
+            return wheel
+    kind = (name or "").rsplit(" ", 1)[-1]
+    return {"Win": "2W", "Taxi": "4W"}.get(kind)
+
+
+def misfiled_jobs(jobs, pools):
+    """[(job, wheel of the group, wheel of the rider)] where the two disagree.
+
+    Runs 131 and 132 lent riders across the wheel: a Win rider with room was handed a folder in
+    4 W Standard for the car album Rabbit=246, and once every 2W name was used up eight car
+    riders were handed folders in 2 W Saver. A job is the folder, so the job's category against
+    the rider's own wheel is exactly the question."""
+    out = []
+    for j in jobs:
+        cw, rw = wheel_of_category(j.get("category")), rider_wheel(j.get("driver_name"), pools)
+        if cw and rw and cw != rw:
+            out.append((j, cw, rw))
+    return out
+
+
+WRONG_WHEEL_DIR = "_ผิดล้อ"
+
+
+def wrong_wheel(d_from, d_to, per_rider, apply_it, log=print):
+    """Take every trip out of a folder that belongs to a rider of the other wheel, and give it to
+    somebody who drives what the trip was. Reports unless apply_it.
+
+    The rows are not re-read: a bike fare stays the bike fare it was read as, only the owner
+    changes — the same path as the quota rebalance. Rows still waiting for their batch result go
+    too; the result lands on the row wherever it lives, and the new job exports it."""
+    pools = {k: [n for n, kd in db.name_pool_for(k[0]) if kd == k[1]]
+             for k in (("2W", "Win"), ("2W", "Home"), ("4W", "Taxi"), ("4W", "Home"))}
+    jobs = [j for (f, t), js in db.jobs_by_week().items() if f == d_from and t == d_to for j in js]
+    bad = misfiled_jobs(jobs, pools)
+    log(f"{d_from}..{d_to} · {len(jobs)} job · โฟลเดอร์ที่คนขับผิดล้อ {len(bad)}")
+    if not bad:
+        log("ไม่มี ✔")
+        return 0
+
+    over = {}
+    log(f"\n{'กลุ่ม':<14}{'ไรเดอร์':<22}{'ขับ':<5}{'อ่านแล้ว':>9}{'รอผล':>6}{'ลงไฟล์แล้ว':>11}")
+    for j, cw, rw in sorted(bad, key=lambda x: (x[0]["category"], x[0]["driver_name"])):
+        full = db.get_job(j["id"]) or {"trips": []}
+        ts = [t for t in full["trips"] if t.get("status") in ("pending", "done", "error")]
+        for t in ts:
+            t["_category"] = j["category"]
+            t["driver_name"] = j["driver_name"]
+            t["job_id_"] = j["id"]
+        done = sum(1 for t in ts if t.get("status") == "done")
+        committed = sum(1 for t in ts if t.get("committed"))
+        log(f"{str(j['category'])[:14]:<14}{j['driver_name'][:22]:<22}{rw:<5}"
+            f"{done:>9}{len(ts) - done:>6}{committed:>11}")
+        over.setdefault(j["driver_name"], {"keep": [], "release": []})["release"].extend(ts)
+    log("")
+    rc = reassign(over, d_from, d_to, per_rider, apply_it, log=log)
+    if not apply_it or rc:
+        return rc
+
+    # The folders are empty now. Left where they are, they are riders in the wrong group that
+    # the next round will read and count; parked beside the week they are a record of what
+    # happened, and nothing is deleted.
+    import roster
+    drive = roster._drive()
+    wk = week_folder(drive, config.DRIVE_INBOX_FOLDER_ID, d_from, d_to)
+    parked = 0
+    for j, _cw, _rw in bad:
+        fid = j.get("drive_folder_id")
+        if not fid or drive.list_images(fid):
+            continue
+        try:
+            drive.move_file(fid, drive.ensure_folder(wk["id"], WRONG_WHEEL_DIR))
+            parked += 1
+        except Exception as e:                                  # noqa: BLE001
+            log(f"  ⚠ พักโฟลเดอร์ {j.get('folder_name')} ไม่สำเร็จ: {str(e)[:60]}")
+    log(f"พักโฟลเดอร์ที่ว่างแล้วไว้ที่ {WRONG_WHEEL_DIR}/ {parked} โฟลเดอร์ (ไม่ได้ลบ)")
+    return 0
 
 
 class DryDrive:
@@ -366,10 +467,18 @@ def main(argv=None):
                     help="หาเจ้าของใหม่ให้เที่ยวส่วนเกิน (ยังเป็นรายงาน จนกว่าจะใส่ --apply)")
     ap.add_argument("--fix-exports", action="store_true",
                     help="สร้างรูปส่งลูกค้าของสัปดาห์นี้ใหม่ทั้งหมด (ใช้เมื่อเจ้าของเที่ยวเปลี่ยนไปแล้ว)")
+    ap.add_argument("--wrong-wheel", action="store_true",
+                    help="หาโฟลเดอร์ที่คนขับผิดล้อ (วินในรถยนต์ / Taxi ในวิน) แล้วย้ายเที่ยวไปให้คนที่ขับถูก")
     ap.add_argument("--apply", action="store_true",
                     help="ทำจริง: ย้ายรูปบน Drive · เปลี่ยนเจ้าของแถว · สร้างรูปและ Excel ใหม่")
     a = ap.parse_args(argv)
     db.init_db()
+
+    # Before the rows are even asked for: the folders opened on the wrong side hold trips that
+    # are mostly still waiting for their batch result, which the delivered-rows query below
+    # does not see and would answer 'nothing delivered' about.
+    if a.wrong_wheel:
+        return wrong_wheel(a.d_from, a.d_to, a.per_rider, a.apply, log=print)
 
     rows = db.query_trips(date_from=a.d_from, date_to=a.d_to)
     if not rows:

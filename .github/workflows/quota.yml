@@ -37,6 +37,10 @@ on:
         description: "สร้างรูปส่งลูกค้าของสัปดาห์นี้ใหม่ทั้งหมด (ใช้หลังเจ้าของเที่ยวเปลี่ยนไปแล้ว)"
         type: boolean
         default: false
+      wrong_wheel:
+        description: "หาโฟลเดอร์ที่คนขับผิดล้อ (วินในรถยนต์ / Taxi ในวิน) แล้วย้ายเที่ยวไปให้คนที่ขับถูก"
+        type: boolean
+        default: false
       apply:
         description: "ทำจริง: ย้ายรูปบน Drive · เปลี่ยนเจ้าของแถว · สร้างรูปและ Excel ใหม่"
         type: boolean
@@ -58,7 +62,7 @@ jobs:
       # only the reassign path opens pictures — it reads the theme off them, which is a mean and
       # not an OCR, but it still needs numpy and Pillow
       - run: pip install -r backend/requirements-pairing.txt
-        if: github.event.inputs.reassign == 'true'
+        if: github.event.inputs.reassign == 'true' || github.event.inputs.wrong_wheel == 'true'
       - name: Who is over, and is there room for what comes off
         working-directory: backend
         env:
@@ -73,5 +77,6 @@ jobs:
           if [ "${{ github.event.inputs.list }}" = "true" ]; then ARGS="$ARGS --list"; fi
           if [ "${{ github.event.inputs.reassign }}" = "true" ]; then ARGS="$ARGS --reassign"; fi
           if [ "${{ github.event.inputs.fix_exports }}" = "true" ]; then ARGS="$ARGS --fix-exports"; fi
+          if [ "${{ github.event.inputs.wrong_wheel }}" = "true" ]; then ARGS="$ARGS --wrong-wheel"; fi
           if [ "${{ github.event.inputs.apply }}" = "true" ]; then ARGS="$ARGS --apply"; fi
           python rebalance_quota.py $ARGS

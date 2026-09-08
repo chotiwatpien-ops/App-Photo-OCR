@@ -299,6 +299,20 @@ bike_folders16 = (list(d16.tree.get("week/2 W Saver", {})) + list(d16.tree.get("
 check("คนขับรถยนต์ยังอยู่โฟลเดอร์เดิมของเขา",
       bike_folders16 and all(distribute.bare(n).split()[-1] != "Taxi" for n in bike_folders16))
 
+# a folder already opened on the wrong side must not be topped up either, or emptying it with
+# the cleanup only fills it again next round
+d17 = FakeDrive()
+d17.ensure_folder("week", "4 W Standard")
+# the fuller folder is topped up first, so the wrong-side one is made the fuller of the two —
+# a test where the right answer is also the fullest proves nothing
+d17.images[d17.ensure_folder("week/4 W Standard", "13-ดวงพร Win")] = 2
+d17.images[d17.ensure_folder("week/4 W Standard", "14-ฉ Taxi")] = 1
+a17 = distribute.Allocator(d17, "week", SMALL, per_rider=4, seed=17)
+got17, _ = a17.folder_for("4 W Standard", "4W")
+check("โฟลเดอร์วินที่ค้างอยู่ในรถยนต์ไม่ถูกเติม", distribute.bare(got17.rsplit("/", 1)[1]) != "ดวงพร Win")
+check("ไปลงคนขับรถยนต์ที่อยู่ในกลุ่มแทน", distribute.bare(got17.rsplit("/", 1)[1]) == "ฉ Taxi")
+check("Home พิมพ์มือในกลุ่มตัวเองยังถูกเติมตามปกติ", not a17._misplaced("ตึก Home", "4W"))
+
 # a rider folder typed by hand that is on no list: the kind on the folder decides
 d15 = FakeDrive()
 d15.ensure_folder("week", "2 W Saver")

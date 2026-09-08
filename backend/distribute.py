@@ -176,6 +176,20 @@ class Allocator:
                 return w == wheel
         return name.rsplit(" ", 1)[-1] == MAJOR[wheel]
 
+    def _misplaced(self, name, wheel):
+        """A folder already sitting in a group whose rider drives the other wheel.
+
+        Weaker than _drives on purpose: a folder that exists is presumed right unless Ops' list,
+        or a Win/Taxi on the name, says otherwise — a hand-typed Home rider in their own group
+        is still topped up. The folders runs 131 and 132 opened on the wrong side are not, or
+        emptying them would only fill them again next round."""
+        low = name.lower()
+        for (w, _k), names in self.pool.items():
+            if any(n.lower() == low for n in names):
+                return w != wheel
+        kind = name.rsplit(" ", 1)[-1]
+        return kind in MAJOR.values() and kind != MAJOR[wheel]
+
     def _take(self, name, style):
         self.total[name] = self.total.get(name, 0) + 1
         if style and not self.styles.get(name):    # riders from before this rule adopt the first
@@ -195,7 +209,8 @@ class Allocator:
         # never topped up and that person was handed a second folder in the same group.
         here = {r["name"].lower() for r in g["riders"]}
         for r in sorted(g["riders"], key=lambda r: (-r["n"], r["name"])):
-            if r["n"] < self.per_rider and self._fits(r["name"], style):
+            if (r["n"] < self.per_rider and self._fits(r["name"], style)
+                    and not self._misplaced(r["name"], wheel)):
                 r["n"] += 1
                 self._take(r["name"], style)
                 return r["id"], None
