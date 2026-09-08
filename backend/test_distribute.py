@@ -286,6 +286,19 @@ check("แต่ได้ชื่อจากรายชื่อ 4W ตาม
 bike14, _ = a14.folder_for("2 W Standard", "2W")
 check("ส่วนงานวินยังยืมคนเดิมข้ามกลุ่ม Saver/Standard ได้เหมือนเดิม",
       distribute.bare(bike14.rsplit("/", 1)[1]) == distribute.bare(sv14.rsplit("/", 1)[1]))
+# and the other way round — run 132 did this eight times over: every 2W name was used up, so
+# the bike albums borrowed the car riders who still had room ('2 W Saver/125-ยอดยิ่ง Taxi')
+d16 = FakeDrive()
+a16 = distribute.Allocator(d16, "week", SMALL, per_rider=2, seed=16)
+car16, _ = a16.folder_for("4 W Standard", "4W")
+for _ in range(2 * 5):                       # 5 bike names × 2 trips: the 2W list is now empty
+    a16.folder_for("2 W Saver", "2W")
+bike16, err16 = a16.folder_for("2 W Standard", "2W")
+check("ชื่อวินหมดแล้ว ก็ต้องบอกว่าหมด ไม่ไปยืมคนขับรถยนต์ที่ยังว่าง", bike16 is None and err16)
+bike_folders16 = (list(d16.tree.get("week/2 W Saver", {})) + list(d16.tree.get("week/2 W Standard", {})))
+check("คนขับรถยนต์ยังอยู่โฟลเดอร์เดิมของเขา",
+      bike_folders16 and all(distribute.bare(n).split()[-1] != "Taxi" for n in bike_folders16))
+
 # a rider folder typed by hand that is on no list: the kind on the folder decides
 d15 = FakeDrive()
 d15.ensure_folder("week", "2 W Saver")
