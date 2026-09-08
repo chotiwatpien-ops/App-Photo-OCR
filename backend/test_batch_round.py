@@ -14,8 +14,8 @@ os.environ.pop("DATABASE_URL", None)          # local sqlite, never production
 sys.path.insert(0, "backend")
 sys.stdout.reconfigure(encoding="utf-8")
 
-PROD = ("postgresql+psycopg://neondb_owner:npg_XvkWCE5z9SYA@ep-calm-bread-b3zclnuw.c-4."
-        "ap-southeast-1.aws.neon.tech/neondb?sslmode=require&connect_timeout=15")
+# Set PHOTO_OCR_PROD_URL in the shell instead; the repository is public now.
+PROD = os.environ.get("PHOTO_OCR_PROD_URL", "")
 
 import config                                                   # noqa: E402
 import db                                                       # noqa: E402
