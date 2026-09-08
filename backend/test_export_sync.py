@@ -82,12 +82,25 @@ r = c.post("/api/export/sync")
 check("กดซ้ำระหว่างทำ → ตอบสถานะเดิม ไม่เริ่มใหม่", r.json()["state"] == "running")
 main._sync.update(state="idle")
 
+# nothing approved has changed since the last write: no 13,000-row pull from Neon, no upload
+n_before = len(fake.uploaded)
+c.post("/api/export/sync")
+for _ in range(100):
+    if main._sync["state"] != "running":
+        break
+    time.sleep(0.1)
+check("กดซ้ำเมื่อไม่มีอะไรเปลี่ยน → บอกว่าไม่มีอะไรเปลี่ยน ไม่เขียนไฟล์ ไม่ดึงแถว",
+      main._sync["state"] == "done" and main._sync.get("unchanged") is True and len(fake.uploaded) == n_before)
+
 # a Drive failure is reported, not swallowed
 class BadDrive:
     def upload_xlsx(self, *a):
         raise RuntimeError("EOF occurred in violation of protocol")
 
 
+import db                                                       # noqa: E402
+import ingest                                                   # noqa: E402
+db.state_set(ingest.XLSX_KEY, "")                               # something changed since
 roster._drive = lambda: BadDrive()
 c.post("/api/export/sync")
 for _ in range(100):

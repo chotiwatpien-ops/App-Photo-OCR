@@ -621,6 +621,14 @@ def _sync_workbooks():
     import ingest
     import roster
     try:
+        # The same fingerprint an ingest round uses: three numbers from one small query. When
+        # nothing approved has changed since the workbooks were last written, there is nothing
+        # to write — and no 13,000-row pull from Neon for a click that changes nothing.
+        stamp = f"{excel_writer.LAYOUT}:{db.committed_fingerprint()}"
+        if stamp == db.state_get(ingest.XLSX_KEY):
+            _sync.update(state="done", rows=0, unchanged=True, error=None,
+                         finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            return
         drive = roster._drive()
         rows = db.query_trips(committed_only=True)
         fid = drive.upload_xlsx(config.DRIVE_EXPORTS_FOLDER_ID, "Rider Trips.xlsx",

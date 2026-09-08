@@ -114,7 +114,9 @@ function ExcelSync() {
       </button>
       {st?.state === 'done' && (
         <span className="text-xs text-emerald-700">
-          ✓ ขึ้น Drive แล้ว {st.finished_at?.slice(11, 16)} · {fmt(st.rows)} แถว
+          {st.unchanged
+            ? `✓ ไม่มีอะไรเปลี่ยนตั้งแต่เขียนครั้งก่อน (${st.finished_at?.slice(11, 16)})`
+            : `✓ ขึ้น Drive แล้ว ${st.finished_at?.slice(11, 16)} · ${fmt(st.rows)} แถว`}
         </span>
       )}
       {st?.state === 'error' && <span className="text-xs text-red-600">✗ {st.error}</span>}
