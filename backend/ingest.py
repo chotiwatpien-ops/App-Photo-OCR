@@ -126,7 +126,22 @@ def parse_rider_folder(name, default_year=None):
     return clean_name(m.group("name")), d1, d2
 
 
-def _rider_items(drive, folder, name, week_label_, d_from, d_to, category, skipped, folder_name, admin=None):
+def _rider_items(drive, folder, name, week_label_, d_from, d_to, category, skipped, folder_name,
+                 admin=None, walk=None):
+    """walk, when given, is this round's folder bookkeeping:
+        clean   {folder id: modifiedTime} — read to the end by an earlier round, nothing new left
+        visited {folder id: modifiedTime} — listed by THIS round
+        skipped {folder id: modifiedTime} — not listed, because Drive's stamp had not moved
+    Drive stamps a folder whenever a file enters or leaves it, so an unchanged stamp means the
+    folder holds exactly what it held when a round last read every picture in it. 270 rider
+    folders and 22,000 pictures cost six minutes a round to list, four rounds a day, almost
+    always to find nothing."""
+    if walk is not None:
+        mt = folder.get("mtime")
+        if mt and walk["clean"].get(folder["id"]) == mt:
+            walk["skipped"][folder["id"]] = mt
+            return []
+        walk["visited"][folder["id"]] = mt
     items = []
     for img in drive.list_images(folder["id"]):
         items.append({"file": img, "rider": name, "week": week_label_, "category": category, "admin": admin,
@@ -145,7 +160,7 @@ def _rider_items(drive, folder, name, week_label_, d_from, d_to, category, skipp
     return items
 
 
-def _discover_category(drive, cat_folder, category, d_from, d_to, wk_name, skipped, items):
+def _discover_category(drive, cat_folder, category, d_from, d_to, wk_name, skipped, items, walk=None):
     """Children of a category folder are either Admin folders (production) or rider folders."""
     for child in drive.list_folders(cat_folder["id"]):
         adm = ADMIN_RE.match(clean_name(child["name"]))
@@ -156,18 +171,19 @@ def _discover_category(drive, cat_folder, category, d_from, d_to, wk_name, skipp
                 if not name:
                     continue
                 items += _rider_items(drive, rider, name, wk_name, d_from, d_to, category, skipped,
-                                      f"{category}/{clean_name(child['name'])}/{clean_name(rider['name'])}", admin=admin)
+                                      f"{category}/{clean_name(child['name'])}/{clean_name(rider['name'])}",
+                                      admin=admin, walk=walk)
             continue
         # rider folder directly under the category (older layout, may carry its own date range)
         parsed = parse_rider_folder(child["name"])
         if parsed:
             name, r1, r2 = parsed
             items += _rider_items(drive, child, name, week_label(r1.isoformat()), r1.isoformat(), r2.isoformat(),
-                                  category, skipped, f"{category}/{clean_name(child['name'])}")
+                                  category, skipped, f"{category}/{clean_name(child['name'])}", walk=walk)
         elif d_from:
             name = rider_display_name(child["name"])
             items += _rider_items(drive, child, name, wk_name, d_from, d_to, category, skipped,
-                                  f"{category}/{clean_name(child['name'])}")
+                                  f"{category}/{clean_name(child['name'])}", walk=walk)
         else:
             skipped.append(f"'{category}/{child['name']}' อ่านชื่อ/ช่วงวันที่ไม่ออก — ข้าม")
 
@@ -225,7 +241,11 @@ def nothing_new(drive) -> bool:
     return not (set(ids) - db.already_ingested(ids))
 
 
-def discover(drive, inbox_id):
+def new_walk(clean=None):
+    return {"clean": dict(clean or {}), "visited": {}, "skipped": {}}
+
+
+def discover(drive, inbox_id, walk=None):
     """Walk the Inbox. Two layouts are understood:
       A) Inbox/<YYYY-Www>/<rider>/[YYYY-MM-DD/]*.jpg
       B) Inbox/<4 W Standard|4 W Saver|2 W Standard|2 W Saver>/<NN name D-D Mon>/*.jpg   (the team's)
@@ -244,7 +264,7 @@ def discover(drive, inbox_id):
             wk = week_label(d1.isoformat())
             for cat in drive.list_folders(top["id"]):
                 if clean_name(cat["name"]).lower() in CATEGORIES:
-                    _discover_category(drive, cat, clean_name(cat["name"]), d1.isoformat(), d2.isoformat(), wk, skipped, items)
+                    _discover_category(drive, cat, clean_name(cat["name"]), d1.isoformat(), d2.isoformat(), wk, skipped, items, walk)
                 elif clean_name(cat["name"]).lower() in POOL_FOLDER_NAMES:
                     continue  # Phase 2 album pool (pool.py) — whole albums, not yet sorted into riders
                 elif cat["name"].lstrip().startswith("_"):
@@ -261,10 +281,10 @@ def discover(drive, inbox_id):
                 parsed = parse_rider_folder(rider["name"])
                 name = parsed[0] if parsed else clean_name(rider["name"])
                 items += _rider_items(drive, rider, name, top["name"], monday.isoformat(), sunday.isoformat(),
-                                      None, skipped, f"{top['name']}/{rider['name']}")
+                                      None, skipped, f"{top['name']}/{rider['name']}", walk=walk)
             continue
         if clean_name(top["name"]).lower() in CATEGORIES:  # layout B (test folder)
-            _discover_category(drive, top, clean_name(top["name"]), None, None, None, skipped, items)
+            _discover_category(drive, top, clean_name(top["name"]), None, None, None, skipped, items, walk)
             continue
         skipped.append(f"โฟลเดอร์ '{top['name']}' ไม่ใช่สัปดาห์ (2026-W34) หรือกลุ่มรถ (4 W Standard ...) — ข้าม")
     return items, skipped
@@ -399,29 +419,61 @@ def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True, force=Fals
     whose upload failed). Returns (error_count, failed_job_ids)."""
     errors = 0
     failed = []
+    todo = []
     for (d_from, d_to), js in sorted(db.jobs_by_week().items()):
         wk = week_label(d_from)
         for j in js:
             if only_job_ids is not None and j["id"] not in only_job_ids:
                 continue
-            try:
-                week_dir = drive.ensure_folder(exports_id, wk)
-                db.record_drive_file(wk, "week_folder", week_dir)
-                cat_dir = drive.ensure_folder(week_dir, j.get("category") or "อัปโหลดมือ")
-                db.record_drive_file(wk, "rider_folder", cat_dir, j.get("category"), ref=j["id"])
-                dup = sum(1 for x in js if x["driver_name"] == j["driver_name"] and x.get("category") == j.get("category")) > 1
-                display = f"{j['driver_name']}-{j.get('admin')}" if (dup and j.get("admin")) else j["driver_name"]
-                imgs = list(pipeline.customer_images(j["id"], display, fetch=drive.download,
-                                                     only_missing=not force))
-                if not imgs:
-                    continue                    # every picture for this job is already on Drive
-                with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
-                    list(ex.map(lambda nd: drive.upload_file(cat_dir, nd[0], nd[1], "image/jpeg"), imgs))
-                log(f"🖼 {display}: {len(imgs)} รูป → Exports/{wk}/{j.get('category') or 'อัปโหลดมือ'}/")
-            except Exception as e:  # noqa: BLE001
-                log(f"✗ images {j['driver_name']}: {e}")
-                errors += 1
-                failed.append(j["id"])
+            dup = sum(1 for x in js if x["driver_name"] == j["driver_name"]
+                      and x.get("category") == j.get("category")) > 1
+            display = f"{j['driver_name']}-{j.get('admin')}" if (dup and j.get("admin")) else j["driver_name"]
+            todo.append({"job": j, "week": wk, "display": display,
+                         "cat": j.get("category") or "อัปโหลดมือ"})
+
+    # Folders first, one at a time — Drive must never be asked to make the same one twice, and
+    # sixty riders of one group share one folder. Then the riders themselves in parallel: each
+    # is downloads, joining and uploads that wait on nothing the others need. Run #141 did them
+    # one after another and took forty minutes over sixty riders.
+    dirs = {}
+    for t in list(todo):
+        key = (t["week"], t["cat"])
+        try:
+            if key not in dirs:
+                week_dir = drive.ensure_folder(exports_id, t["week"])
+                db.record_drive_file(t["week"], "week_folder", week_dir)
+                dirs[key] = drive.ensure_folder(week_dir, t["cat"])
+            db.record_drive_file(t["week"], "rider_folder", dirs[key], t["job"].get("category"),
+                                 ref=t["job"]["id"])
+            t["dir"] = dirs[key]
+        except Exception as e:  # noqa: BLE001
+            log(f"✗ images {t['job']['driver_name']}: {e}")
+            errors += 1
+            failed.append(t["job"]["id"])
+            todo.remove(t)
+
+    def one(t):
+        """(job id, n pictures, error) for one rider."""
+        try:
+            imgs = list(pipeline.customer_images(t["job"]["id"], t["display"], fetch=drive.download,
+                                                 only_missing=not force))
+            if not imgs:
+                return t["job"]["id"], 0, None   # every picture for this job is already on Drive
+            for name, data in imgs:
+                drive.upload_file(t["dir"], name, data, "image/jpeg")
+            return t["job"]["id"], len(imgs), None
+        except Exception as e:  # noqa: BLE001
+            return t["job"]["id"], 0, e
+
+    if todo:
+        with ThreadPoolExecutor(max_workers=max(1, min(DRIVE_PARALLEL, len(todo)))) as ex:
+            for t, (jid, n, err) in zip(todo, ex.map(one, todo)):
+                if err is not None:
+                    log(f"✗ images {t['job']['driver_name']}: {err}")
+                    errors += 1
+                    failed.append(jid)
+                elif n:
+                    log(f"🖼 {t['display']}: {n} รูป → Exports/{t['week']}/{t['cat']}/")
     if with_xlsx:
         rows = db.query_trips(committed_only=True)
         try:
@@ -512,6 +564,14 @@ def fix_hidden_turbo() -> int:
     return 0
 
 
+# How much may pile up before it is handed to the batch queue. A batch job per rider meant run
+# #141 created 125 of them for 251 pictures and spent 21 minutes next round asking Google about
+# each one; one job carries up to 60 pictures. The cap is on bytes as well as count so a
+# 1,200-picture round never holds the whole pile in memory.
+BATCH_FLUSH_ITEMS = 240
+BATCH_FLUSH_BYTES = 24 * 1024 * 1024
+
+
 def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     run_id = None if dry_run else db.start_ingest_run()
     t0 = time.time()
@@ -532,7 +592,15 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         else:
             pool.round_step(drive, inbox_id, run_id=run_id, dry_run=dry_run, log=log,
                             issues=issues)
-    items, skipped = ([], []) if quiet else discover(drive, inbox_id)
+    # The cache is trusted only on an ordinary round: --only reads a slice, so the folders it
+    # leaves out must not be called clean, and force_walk (which turns the probe off) means
+    # somebody wants every folder listed whatever Drive says.
+    use_walk_cache = bool(config.WALK_CACHE and config.DRIVE_PROBE and not only and not dry_run)
+    walk = new_walk(db.walk_cache_load() if use_walk_cache else None)
+    items, skipped = ([], []) if quiet else discover(drive, inbox_id, walk=walk)
+    if walk["skipped"]:
+        log(f"⏭ ข้ามโฟลเดอร์ไรเดอร์ที่ Drive บอกว่าไม่มีอะไรเปลี่ยน {len(walk['skipped'])} โฟลเดอร์"
+            f" · เดินจริง {len(walk['visited'])}")
     issues += [(f"folder:{s}", "folder", s) for s in skipped]
     if only:
         keys = [k.strip() for k in only.split(",") if k.strip()]
@@ -541,6 +609,13 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     seen = db.already_ingested(i["file"]["id"] for i in items)
     new = [i for i in items if i["file"]["id"] not in seen]
     log(f"พบรูป {len(items)} · ใหม่ {len(new)} · เคยอ่านแล้ว {len(items) - len(new)}")
+    if use_walk_cache and not quiet:
+        # A folder is clean only when this round listed it AND found nothing in it it had not
+        # already read — so a picture whose download failed is still tried again next round.
+        # Folders that have gone are dropped: what is written is what this round actually saw.
+        busy = {i.get("folder_id") for i in new}
+        db.walk_cache_save({**walk["skipped"],
+                            **{f: m for f, m in walk["visited"].items() if m and f not in busy}})
     for s in skipped:
         log("⚠ " + s)
     cap = limit or config.MAX_NEW_PER_ROUND
@@ -718,6 +793,34 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         errors += errs
         for jid in still_failed:
             issues.append((f"images:{jid}", "images", f"อัพโหลดรูปส่งลูกค้า job #{jid} ยังไม่สำเร็จ (ลองซ้ำแล้ว)"))
+    queue = []                   # (trip_id, job_id, bytes, mime) waiting for one hand-over
+    queue_bytes = 0
+
+    def flush_batch(force=False):
+        """Hand what has piled up to the batch queue — a few big jobs instead of one per rider."""
+        nonlocal queue, queue_bytes, submitted, errors
+        if not queue or (not force and len(queue) < BATCH_FLUSH_ITEMS
+                         and queue_bytes < BATCH_FLUSH_BYTES):
+            return
+        pile, queue, queue_bytes = queue, [], 0
+        try:
+            for b in batch_client.submit([(t, d, m) for t, _j, d, m in pile],
+                                         display_name=f"run{run_id or 0}", workers=DRIVE_PARALLEL):
+                db.record_batch(b["name"], b["model"], b["trips"], run_id)
+                submitted += len(b["trips"])
+            log(f"  📤 ส่งเข้า batch {len(pile)} รูป (ครึ่งราคา · ผลมารอบหน้า)")
+        except Exception as e:  # noqa: BLE001 — the pictures are still pending rows either way
+            log(f"  ✗ ส่ง batch ไม่สำเร็จ: {str(e)[:150]} — อ่านแบบปกติแทน")
+            issues.append(("batch:submit", "process", f"ส่งรูปเข้า batch ไม่สำเร็จ: {str(e)[:200]}"))
+            by_job = {}
+            for t, j, d, m in pile:
+                by_job.setdefault(j, {})[t] = (d, m)
+            for j, imgs in by_job.items():
+                with ThreadPoolExecutor(max_workers=INGEST_PARALLEL) as ex:
+                    res = list(ex.map(lambda tid, _j=j, _i=imgs: pipeline.process_trip(tid, _j, _i.get(tid)),
+                                      list(imgs)))
+                errors += res.count("error")
+
     for (rider, d_from, d_to), group in groups.items():
         meta = by_key[(rider, d_from, d_to)]
         folder_id = meta.get("folder_id")
@@ -790,20 +893,14 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             log(f"  ⏭ ข้ามรูปที่เนื้อหาซ้ำกับที่อ่านไปแล้ว {n_same} ใบ (ไม่เสียค่าอ่านซ้ำ)")
 
         if config.INGEST_BATCH and trip_ids:
-            # hand the pile over and move on — the next round collects the answers and does the
+            # queue the pile and move on — the next round collects the answers and does the
             # pairing, images and approvals for this job
-            try:
-                items = [(tid, *images[tid]) for tid in trip_ids if tid in images]
-                for b in batch_client.submit(items, display_name=f"job{job_id}",
-                                             workers=DRIVE_PARALLEL):
-                    db.record_batch(b["name"], b["model"], b["trips"], run_id)
-                    submitted += len(b["trips"])
-                log(f"  📤 ส่งเข้า batch {len(trip_ids)} รูป (ครึ่งราคา · ผลมารอบหน้า)")
-            except Exception as e:  # noqa: BLE001
-                log(f"  ✗ ส่ง batch ไม่สำเร็จ: {str(e)[:150]} — อ่านแบบปกติแทน")
-                issues.append((f"batch:{job_id}", "process", f"ส่ง batch ของ {rider} ไม่สำเร็จ: {str(e)[:200]}"))
-                with ThreadPoolExecutor(max_workers=INGEST_PARALLEL) as ex:
-                    ex.map(lambda tid: pipeline.process_trip(tid, job_id, images.get(tid)), trip_ids)
+            for tid in trip_ids:
+                if tid in images:
+                    queue.append((tid, job_id, *images[tid]))
+                    queue_bytes += len(images[tid][0])
+            log(f"  📤 เข้าคิว batch {len(trip_ids)} รูป")
+            flush_batch()
             processed_images += len(group)
             db.update_ingest_run_progress(run_id, files_new=processed_images,
                                           auto_approved=approved, flagged=flagged)
@@ -853,6 +950,8 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
                                       auto_approved=approved, flagged=flagged)
         dup_note = f" · ทิ้งซ้ำอัตโนมัติ {stats['discarded']}" if stats.get("discarded") else ""
         log(f"  ✓ อนุมัติอัตโนมัติ {stats['approved']} · รอคน {stats['flagged']}{dup_note} · error {results.count('error')}")
+
+    flush_batch(force=True)
 
     # ONE continuous workbook for the whole project (all weeks appended). Regenerated EVERY
     # run — not just when new photos arrived — so edits/approvals made in the web app between

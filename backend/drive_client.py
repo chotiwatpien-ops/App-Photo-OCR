@@ -76,9 +76,12 @@ class DriveClient:
                 return out
 
     def list_folders(self, parent_id):
+        # modifiedTime rides along: Drive stamps a folder when a file is added to or removed
+        # from it, which is how a round can tell that a rider folder holds exactly what it held
+        # last time and skip listing it. It costs nothing to ask for.
         rows = self._list(f"'{parent_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false",
-                          "id, name")
-        return [{"id": r["id"], "name": r["name"]} for r in rows]
+                          "id, name, modifiedTime")
+        return [{"id": r["id"], "name": r["name"], "mtime": r.get("modifiedTime")} for r in rows]
 
     def list_images(self, parent_id):
         rows = self._list(f"'{parent_id}' in parents and trashed=false", "id, name, mimeType, webViewLink")
@@ -218,7 +221,10 @@ class LocalDrive:
 
     def list_folders(self, parent_id):
         p = Path(parent_id)
-        return [{"id": str(d), "name": d.name} for d in sorted(p.iterdir()) if d.is_dir()]
+        # nanoseconds, because Drive's own stamp has milliseconds: a whole-second stamp would
+        # call a folder unchanged when a file landed in it the same second it was read
+        return [{"id": str(d), "name": d.name, "mtime": str(d.stat().st_mtime_ns)}
+                for d in sorted(p.iterdir()) if d.is_dir()]
 
     def list_images(self, parent_id):
         p = Path(parent_id)

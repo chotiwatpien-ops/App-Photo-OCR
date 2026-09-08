@@ -226,6 +226,18 @@ def spread_dates(job_id, date_from, date_to, only_missing=True) -> int:
     return n
 
 
+def _number_in(name, rider, wk):
+    """The number inside a customer picture's name, but only when the name is one THIS rider
+    would be given now — a rider renamed (or given an admin suffix because two share a name)
+    must not keep a file name that says somebody else."""
+    import stitch
+    m = re.search(r"(\d+)\.jpe?g$", name or "", re.IGNORECASE)
+    if not m:
+        return None
+    k = int(m.group(1))
+    return k if stitch.customer_name(rider, k, wk) == name else None
+
+
 def customer_images(job_id, rider, fetch=None, cache=None, only_missing=True):
     """Yield (file_name, jpeg_bytes) for every trip in customer order: '<rider>1.jpg', '<rider>2.jpg', ...
 
@@ -235,9 +247,16 @@ def customer_images(job_id, rider, fetch=None, cache=None, only_missing=True):
 
     only_missing skips trips whose image was already made and named, without downloading or
     stitching them again — a round with no new photos was spending an hour rebuilding files
-    that already sat on Drive. Numbering is unaffected: every trip still takes its place in the
-    order, so the skipped ones keep the names they have. Pass only_missing=False to rebuild a
-    job whose upload failed, or when the pictures themselves must be made again."""
+    that already sat on Drive. Pass only_missing=False to rebuild a job whose upload failed, or
+    when the pictures themselves must be made again.
+
+    A picture that has already been delivered keeps its number (config.CUSTOMER_IMAGE_NUMBERING
+    = 'append'). Numbering used to be recomputed from the date order every time, so one trip
+    added to a rider who was already finished pushed every later trip up one and the round
+    rebuilt and re-uploaded the lot: run #141 spent forty minutes remaking 1,200 files whose
+    contents had not changed. New work takes the numbers after the highest one in use, so the
+    numbers no longer run strictly in date order — set CUSTOMER_IMAGE_NUMBERING=bydate to go
+    back to renumbering."""
     import stitch
     from datetime import date as _date
     job = db.get_job_meta(job_id)
@@ -248,15 +267,25 @@ def customer_images(job_id, rider, fetch=None, cache=None, only_missing=True):
     rows = db.trips_with_images(job_id)
     rows.sort(key=lambda r: (r["trip_date"] or "9999", _natural_key(r["file_name"])))
     cache = cache or {}
-    if only_missing:
-        # work out each trip's name first; a trip that already carries it needs nothing done
-        n = 0
+    taken = set()
+    if config.CUSTOMER_IMAGE_NUMBERING == "append":
         for r in rows:
-            n += 1
-            r["_name"] = stitch.customer_name(rider, n, wk)
-            r["_skip"] = r.get("customer_image") == r["_name"]
-        if all(r["_skip"] for r in rows):
-            return
+            k = _number_in(r.get("customer_image"), rider, wk)
+            if k:                       # a name this rider's own naming produced — keep it
+                r["_name"], r["_num"] = r["customer_image"], k
+                taken.add(k)
+    nxt = 1
+    for r in rows:                      # everything else numbers after what is already out
+        if r.get("_name"):
+            continue
+        while nxt in taken:
+            nxt += 1
+        r["_name"], r["_num"] = stitch.customer_name(rider, nxt, wk), nxt
+        taken.add(nxt)
+    for r in rows:
+        r["_skip"] = only_missing and r.get("customer_image") == r["_name"]
+    if only_missing and all(r["_skip"] for r in rows):
+        return
     for r in rows:                       # bytes this round already has cost nothing to reuse
         if r["top_blob"] is None and r["id"] in cache:
             r["top_blob"] = cache[r["id"]][0]
@@ -279,16 +308,22 @@ def customer_images(job_id, rider, fetch=None, cache=None, only_missing=True):
         with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
             for (r, key, _), data in zip(need, ex.map(lambda t: fetch(t[2]), need)):
                 r[key] = data
-    n = 0
-    for r in rows:
-        n += 1
-        name = r.get("_name") or stitch.customer_name(rider, n, wk)
-        if r.get("_skip"):
-            continue                     # already on Drive under this name
-        if not r["top_blob"]:
-            continue
-        db.update_trip(r["id"], {"customer_image": name})  # so Sheet1 can trace back to this file
-        yield name, stitch.stitch(r["top_blob"], r["bottom_blob"])
+    todo = [r for r in rows if not r.get("_skip") and r["top_blob"]]
+    if not todo:
+        return
+    # Joining two halves is PIL work, and a rider with twenty new trips did it one after another
+    # while the network sat idle. The order of what comes out is the order of the rows.
+    from concurrent.futures import ThreadPoolExecutor
+    from config import DRIVE_PARALLEL as _par
+
+    def make(r):
+        return r, stitch.stitch(r["top_blob"], r["bottom_blob"])
+
+    with ThreadPoolExecutor(max_workers=max(1, min(_par, len(todo)))) as ex:
+        made = list(ex.map(make, todo))
+    for r, img in made:
+        db.update_trip(r["id"], {"customer_image": r["_name"]})  # Sheet1 traces back to this file
+        yield r["_name"], img
 
 
 # team's vehicle groups -> template Service Type values

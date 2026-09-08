@@ -79,6 +79,15 @@ GITHUB_WORKFLOW = _setting("GITHUB_WORKFLOW", "github_workflow", "ingest.yml")
 
 # trips each rider owes the customer per week (3/day × 7) — used for the per-rider shortfall list
 EXPECTED_TRIPS_PER_WEEK = int(os.environ.get("EXPECTED_TRIPS_PER_WEEK", "21"))
+# How a customer picture gets its number. 'append': a picture already delivered keeps the number
+# it has and new work takes the numbers after it — so adding two trips to a rider who was already
+# finished costs two files, not twenty-one. 'bydate': renumber every time so the numbers always
+# run in date order, which is what happened until 2026-09-09 and cost a round forty minutes of
+# rebuilding files whose contents had not changed. Ops decides which the customer reads.
+CUSTOMER_IMAGE_NUMBERING = os.environ.get("CUSTOMER_IMAGE_NUMBERING", "append").strip().lower()
+# Skip listing a rider folder Drive says has not been touched since the round that last read it
+# to the end. Set to 0 to walk every folder every round.
+WALK_CACHE = os.environ.get("WALK_CACHE", "1").strip().lower() not in ("0", "false", "no")
 # One round can carry a different figure for one vehicle group (or one wheel count): Ops
 # (2026-09-08) wanted this week's 2 W Saver complete before anything else and let the 21 go
 # for that group only — a rider may hold more than 21 when the extra are Saver trips, and

@@ -49,18 +49,19 @@ if second:
     ok = False
     print("   ✗ ยังสร้างซ้ำอยู่")
 
-# A new trip lands in the MIDDLE of the order. Numbering is positional, so it takes slot 3 and
-# pushes the old 3 and 4 down one — those three files must be rebuilt, and only those three.
+# A new trip lands in the MIDDLE of the order. Since 2026-09-09 a picture keeps the number it
+# was delivered under, so the newcomer takes the number after the last one instead of pushing
+# four files along — one file is made, not three.
 tid5 = db.create_trip(job, "2b.jpg", slip(9), "image/jpeg")
 db.update_trip(tid5, {"status": "done", "kind": "full", "net_earnings": 55.0, "base_fare": 55.0,
                       "check_status": "pass", "trip_date": "2026-08-25"})
 third = list(pipeline.customer_images(job, "สมชาย"))
 made = [n for n, _ in third]
 print(f"3) มีทริปใหม่แทรกกลางลำดับ → สร้าง {len(third)} รูป: {made}")
-print("   (ใบ 1-2 ไม่ถูกแตะ · ใบที่เลื่อนลำดับกับใบใหม่ถูกสร้างใหม่)")
-if len(third) != 3 or any(n.endswith(("สมชาย1.jpg", "สมชาย2.jpg")) for n in made):
+print("   (ของเดิมทั้งสี่ใบไม่ถูกแตะ · ใบใหม่ได้เลขต่อท้าย)")
+if len(third) != 1 or not made[0].endswith("สมชาย5.jpg"):
     ok = False
-    print("   ✗ ควรสร้างเฉพาะใบที่ลำดับเปลี่ยน ไม่แตะใบ 1-2")
+    print("   ✗ ควรสร้างใบเดียว และเป็นเลข 5 (ต่อท้าย ไม่แทรกกลาง)")
 
 forced = list(pipeline.customer_images(job, "สมชาย", only_missing=False))
 print(f"4) สั่งสร้างใหม่ทั้งหมด → {len(forced)} รูป — ต้องเป็น 5")

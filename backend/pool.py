@@ -153,21 +153,73 @@ def fetch(drive, images, workers, errors):
         return {k: v for k, v in ex.map(one, images) if v is not None}
 
 
+class Images(dict):
+    """The pool's pictures, downloaded when something actually needs them.
+
+    A half left in the pool is looked at again every round, and its OCR verdict never changes —
+    but the verdict was kept under the md5 of the bytes, so the bytes had to be downloaded to
+    find out that they need not be read. Keeping the md5 under the Drive file id as well means
+    a picture whose verdict is already known costs nothing at all: 316 of run #141's 404
+    downloads were of pictures it then did not look at. What still needs bytes — a fresh
+    reading, a chip, a pair being joined — asks for them here."""
+
+    def __init__(self, have, fetch_one=None, workers=1, errors=None):
+        super().__init__(have)
+        self._fetch, self._workers, self._errors = fetch_one, max(1, workers), errors
+
+    def _load(self, key):
+        try:
+            return self._fetch(key) if self._fetch else None
+        except Exception as e:  # noqa: BLE001 — a picture that will not come is not fatal
+            if self._errors is not None:
+                self._errors.append(f"โหลดไม่ได้ {key}: {str(e)[:120]}")
+            return None
+
+    def __missing__(self, key):
+        got = self._load(key)
+        if got is None:
+            raise KeyError(key)
+        self[key] = got
+        return got
+
+    def get(self, key, default=None):
+        try:
+            return self[key]
+        except KeyError:
+            return default
+
+    def prefetch(self, ids):
+        """Bring several down at once — one at a time is a round-trip each."""
+        want = [i for i in dict.fromkeys(ids) if i not in self and self._fetch]
+        if not want:
+            return
+        with ThreadPoolExecutor(max_workers=min(self._workers, len(want))) as ex:
+            for i, got in zip(want, ex.map(self._load, want)):
+                if got is not None:
+                    self[i] = got
+
+
 # --- 2-3. duplicates + pairing ------------------------------------------------------------
-def analyse(albums, data, workers, cache=None):
+def analyse(albums, data, workers, cache=None, known_md5=None):
     """cache: optional dict-like {md5: info} of earlier inspect() results — a half left in the
-    pool is looked at again every run, and the OCR verdict for the same bytes never changes."""
+    pool is looked at again every run, and the OCR verdict for the same bytes never changes.
+    known_md5: {drive id: md5} remembered from an earlier round, so a picture whose verdict is
+    already known never has to be downloaded to work out which verdict is its own."""
     report = {"albums": [], "duplicates": [], "errors": []}
+    known_md5 = known_md5 or {}
+    new_md5 = {}
     seen = {}                                   # md5 -> "album/name" of the first copy
     todo = []                                   # (album index, image) that need inspecting
     hashes = {}
     for ai, alb in enumerate(albums):
         alb["_keep"] = []
         for img in sorted(alb["images"], key=lambda i: pairing._natural(i["name"])):
-            raw = data.get(img["id"])
-            if raw is None:
-                continue
-            h = hashlib.md5(raw).hexdigest()
+            h = known_md5.get(img["id"])
+            if h is None:
+                raw = data.get(img["id"])
+                if raw is None:
+                    continue                    # could not be downloaded — reported by fetch()
+                h = new_md5[img["id"]] = hashlib.md5(raw).hexdigest()
             where = f"{alb['album']}/{img['name']}"
             if h in seen:
                 report["duplicates"].append({"week": alb["week"], "group": alb["group"],
@@ -208,6 +260,7 @@ def analyse(albums, data, workers, cache=None):
         log(f"  เติมธีมให้ผลที่อ่านไว้ก่อนหน้า {len(patched)} รูป (ไม่ได้อ่าน OCR ใหม่)")
         fresh.update(patched)                         # stored like the rest, so this is once only
     report["ocr_fresh"] = fresh
+    report["md5_fresh"] = new_md5
 
     def target_for(img_id, album_name):
         """Category folder for a trip: the chip on its top/long image, else the album name."""
@@ -222,6 +275,11 @@ def analyse(albums, data, workers, cache=None):
         by_name = {img["name"]: img for img in alb["_keep"]}
         pairs, leftovers = pairing.pair_album(items)
         d = dict(items)
+        if hasattr(data, "prefetch"):
+            # the chip is read off the top half / the long picture, and the pair is joined from
+            # both halves — everything that is about to move needs its bytes after all
+            data.prefetch([by_name[n]["id"] for n, i in items if i["role"] == "long"]
+                          + [by_name[t]["id"] for t, _b, _d in pairs])
         entry = {
             "week": alb["week"], "group": alb["group"], "album": alb["album"],
             "n_images": len(alb["images"]),
@@ -623,19 +681,33 @@ def run_pool(drive, albums, move, preview=True, use_db=True, started=None, label
         return None
     errors = []
     t0 = time.time()
-    data = fetch(drive, [i for a in albums for i in a["images"]], config.DRIVE_PARALLEL, errors)
-    log(f"โหลดแล้ว {len(data)} รูป ใน {time.time() - t0:.0f} วิ")
-    t0 = time.time()
-    cache = {}
+    every = [i for a in albums for i in a["images"]]
+    known_md5, cache = {}, {}
     if use_db:
         import db
         db.init_db()
-        cache = db.pool_ocr_cache_load(pairing.cache_key(hashlib.md5(v).hexdigest())
-                                       for v in data.values())
-    report = analyse(albums, data, config.POOL_PARALLEL, cache)
+        known_md5 = db.pool_md5_load(i["id"] for i in every)
+        cache = db.pool_ocr_cache_load(pairing.cache_key(h) for h in known_md5.values())
+    # bytes are needed for a picture whose verdict is not known, and for one whose stored
+    # verdict predates themes (ensure_theme reads the picture to add it)
+    def _unread(img):
+        h = known_md5.get(img["id"])
+        hit = cache.get(pairing.cache_key(h)) if h else None
+        return hit is None or not hit.get("theme")
+
+    need = [i for i in every if _unread(i)]
+    data = Images(fetch(drive, need, config.DRIVE_PARALLEL, errors),
+                  fetch_one=drive.download, workers=config.DRIVE_PARALLEL, errors=errors)
+    skipped_dl = len(every) - len(need)
+    log(f"โหลดแล้ว {len(data)} รูป ใน {time.time() - t0:.0f} วิ"
+        + (f" · ไม่ต้องโหลด {skipped_dl} รูปที่รู้ผลอยู่แล้ว" if skipped_dl else ""))
+    t0 = time.time()
+    report = analyse(albums, data, config.POOL_PARALLEL, cache, known_md5)
     fresh = report.pop("ocr_fresh", {})
-    if use_db and fresh:
+    fresh_md5 = report.pop("md5_fresh", {})
+    if use_db and (fresh or fresh_md5):
         db.pool_ocr_cache_save(fresh)
+        db.pool_md5_save(fresh_md5)
         db.pool_ocr_cache_prune()
     report["errors"] = errors + report["errors"]
     report["started_at"] = started

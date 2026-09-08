@@ -1358,6 +1358,25 @@ def state_set(key, value):
             c.execute(app_state.insert().values(key=key, **vals))
 
 
+WALK_KEY = "walked_folders"
+
+
+def walk_cache_load() -> dict:
+    """{drive folder id: modifiedTime} for folders a past round read with nothing left new."""
+    import json as _json
+    raw = state_get(WALK_KEY)
+    try:
+        got = _json.loads(raw) if raw else {}
+        return got if isinstance(got, dict) else {}
+    except Exception:                                            # noqa: BLE001
+        return {}
+
+
+def walk_cache_save(mapping: dict) -> None:
+    import json as _json
+    state_set(WALK_KEY, _json.dumps(mapping, separators=(",", ":")))
+
+
 def committed_fingerprint() -> str:
     """One cheap line that changes whenever the workbook would come out different: a row added,
     a row approved, or a figure edited. Three numbers instead of 13,000 rows."""
@@ -1462,6 +1481,27 @@ def pool_ocr_cache_load(hashes) -> dict:
                                      .where(pool_ocr_cache.c.hash.in_(part))).all():
                 out[h] = _json.loads(info)
     return out
+
+
+def pool_md5_load(drive_ids) -> dict:
+    """{drive file id: md5} — what a past round worked out about pictures still in the pool.
+
+    The OCR verdict is kept under the md5 of the bytes, which is right: the same picture read
+    twice must not be read twice. But finding the md5 meant downloading the picture, so a round
+    downloaded 404 pictures to discover it needed to look at 88. A Drive file's bytes do not
+    change under it, so the id is a safe way in."""
+    import json as _json
+    ids = [f"id:{i}" for i in drive_ids]
+    out = {}
+    for k, v in pool_ocr_cache_load(ids).items():
+        md5 = (v or {}).get("md5") if isinstance(v, dict) else None
+        if md5:
+            out[k[3:]] = md5
+    return out
+
+
+def pool_md5_save(mapping: dict) -> None:
+    pool_ocr_cache_save({f"id:{i}": {"md5": h} for i, h in (mapping or {}).items() if h})
 
 
 def pool_ocr_cache_prune(days: int = 30) -> int:
