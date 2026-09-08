@@ -408,11 +408,19 @@ def completeness():
 
     def blank(cat):
         return {"category": cat, "riders": 0, "done": 0, "read": 0, "approved": 0,
-                "waiting": 0, "unread": 0, "short": [], "absent": []}
+                "waiting": 0, "unread": 0, "short": [], "absent": [], "_people": set()}
 
     out = []
     for W in weeks_:
         groups, present = {cat: blank(cat) for cat in running}, set()
+        # A rider is a person, not a folder. Someone who works both tiers has a folder in each
+        # group and one 21 across the two — the way the allocator has counted them since the
+        # quota was moved onto the person. Counting folders here reported มานิตย์ as 21/21 in
+        # Standard and, on the same screen, 0/21 in Saver; it counted a folder the quota
+        # rebalance had emptied as a whole missing 21; and it read the ~500 seats that repeat
+        # pictures were holding as riders who had sent nothing. So the totals below stay per
+        # group, because trips are what a group owes, and who is short is asked of the person.
+        people = {}
         for g in W["groups"]:
             cat = g["category"] or "ไม่ระบุกลุ่มรถ"
             b = groups.setdefault(cat, blank(cat))
@@ -420,20 +428,39 @@ def completeness():
                 present.add(j["driver_name"])
                 # read + still queued + failed to read: all three are slips already in hand
                 collected = (j["done"] or 0) + (j["pending"] or 0) + (j["errors"] or 0)
-                b["riders"] += 1
                 b["done"] += collected
                 b["read"] += j["done"] or 0
                 b["approved"] += j["approved"] or 0
                 b["waiting"] += j["waiting"] or 0
                 b["unread"] += (j["pending"] or 0) + (j["errors"] or 0)
-                missing = max(0, exp - collected)
-                if missing:
-                    b["short"].append({
-                        "driver_name": j["driver_name"], "job_id": j["id"],
-                        "done": collected, "read": j["done"] or 0, "approved": j["approved"] or 0,
-                        "waiting": j["waiting"] or 0, "pending": j["pending"] or 0,
-                        "errors": j["errors"] or 0, "missing": missing,
-                    })
+                b["_people"].add(j["driver_name"])
+                p = people.setdefault(j["driver_name"], {
+                    "driver_name": j["driver_name"], "done": 0, "read": 0, "approved": 0,
+                    "waiting": 0, "pending": 0, "errors": 0, "job_id": j["id"], "cats": {},
+                })
+                p["done"] += collected
+                p["read"] += j["done"] or 0
+                p["approved"] += j["approved"] or 0
+                p["waiting"] += j["waiting"] or 0
+                p["pending"] += j["pending"] or 0
+                p["errors"] += j["errors"] or 0
+                p["cats"][cat] = p["cats"].get(cat, 0) + collected
+                if collected >= max(p["cats"].values()):
+                    p["job_id"] = j["id"]        # open the folder holding most of their week
+        for p in people.values():
+            missing = max(0, exp - p["done"])
+            if not missing:
+                continue
+            home = max(p["cats"], key=lambda c: (p["cats"][c], c))
+            groups.setdefault(home, blank(home))["short"].append({
+                "driver_name": p["driver_name"], "job_id": p["job_id"], "done": p["done"],
+                "read": p["read"], "approved": p["approved"], "waiting": p["waiting"],
+                "pending": p["pending"], "errors": p["errors"], "missing": missing,
+                # so the screen can say 'ยังอ่านไม่เสร็จ' rather than 'ยังไม่ได้ส่ง': a rider
+                # whose slips are all sitting in a batch is not a rider anyone should chase
+                "folders": len(p["cats"]),
+                "unread": p["pending"] + p["errors"],
+            })
         for rider, since in first_seen.items():
             if rider in present or since >= W["date_from"]:
                 continue
@@ -442,6 +469,7 @@ def completeness():
 
         packed = []
         for b in groups.values():
+            b["riders"] = len(b.pop("_people"))          # people, not folders
             b["short"].sort(key=lambda r: -r["missing"])
             b["absent"].sort()
             heads = b["riders"] + len(b["absent"])
@@ -458,7 +486,9 @@ def completeness():
         packed.sort(key=lambda b: -b["missing"])
         out.append({
             "week": W["week"], "date_from": W["date_from"], "date_to": W["date_to"],
-            "riders": sum(b["riders"] + len(b["absent"]) for b in packed),
+            # summing the groups counts anyone who works two tiers twice
+            "riders": len(people) + sum(len(b["absent"]) for b in packed),
+            "short": sum(len(b["short"]) for b in packed),
             "done": sum(b["done"] for b in packed),
             "read": sum(b["read"] for b in packed),
             "unread": sum(b["unread"] for b in packed),

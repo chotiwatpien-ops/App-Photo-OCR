@@ -71,6 +71,7 @@ export default function Dashboard({ onOpenJob }) {
   if (!comp || !w) return <p className="text-slate-400">กำลังโหลด...</p>
 
   const shown = showAll ? short : short.slice(0, 15)
+  const shortUnread = short.reduce((s, r) => s + (r.unread || 0), 0)
   const totalMissing = groups.reduce((s, g) => s + g.missing, 0)
   const totalDone = groups.reduce((s, g) => s + g.done, 0)
   const totalTarget = groups.reduce((s, g) => s + g.target, 0)
@@ -139,9 +140,12 @@ export default function Dashboard({ onOpenJob }) {
         <div className="flex items-baseline justify-between gap-3 flex-wrap">
           <h2 className="font-semibold">
             คนที่ยังขาด
-            <span className="text-sm font-normal text-slate-400"> {cat || 'ทุกกลุ่มรถ'} · เรียงจากขาดมากสุด · * มีรูปที่ยังรออ่าน</span>
+            <span className="text-sm font-normal text-slate-400"> {cat || 'ทุกกลุ่มรถ'} · เรียงจากขาดมากสุด · นับรวมทุกโฟลเดอร์ของคนเดียวกัน</span>
           </h2>
-          <p className="text-sm text-slate-500">{short.length} คน</p>
+          <p className="text-sm text-slate-500">
+            {short.length} คน
+            {shortUnread > 0 && <span className="text-amber-600"> · รออ่าน {fmt(shortUnread)} รูป</span>}
+          </p>
         </div>
 
         {short.length === 0 ? (
@@ -151,11 +155,22 @@ export default function Dashboard({ onOpenJob }) {
             {shown.map((r) => (
               <button key={r.job_id} onClick={() => onOpenJob?.(r.job_id)}
                 className="w-full flex items-center gap-3 text-sm rounded-lg px-2 py-1.5 hover:bg-slate-50 text-left">
-                <span className="w-32 truncate font-medium">{r.driver_name}</span>
+                <span className="w-32 truncate font-medium">
+                  {r.driver_name}
+                  {r.folders > 1 && <span className="text-xs text-slate-400 font-normal"> ·{r.folders} โฟลเดอร์</span>}
+                </span>
                 {!cat && <span className="w-28 text-xs text-slate-400 truncate">{r.category}</span>}
                 <span className="flex-1 min-w-24"><Bar done={r.done} target={comp.expected} /></span>
-                <span className="w-16 text-right tabular-nums text-slate-600" title={r.read !== r.done ? `อ่านแล้ว ${r.read} · รออ่าน ${r.done - r.read}` : undefined}>
-                  {r.done}/{comp.expected}{r.read !== r.done && <span className="text-slate-400">*</span>}
+                <span className="w-16 text-right tabular-nums text-slate-600"
+                  title={`อ่านแล้ว ${r.read} · รออ่าน ${r.unread ?? 0}`}>
+                  {r.done}/{comp.expected}
+                </span>
+                {/* slips already in hand but still inside a Gemini batch. Someone whose whole
+                    week is sitting in a batch is not someone Ops should be chasing for photos. */}
+                <span className="w-24 text-right tabular-nums text-xs">
+                  {r.unread > 0
+                    ? <span className="text-amber-600">รออ่าน {r.unread}</span>
+                    : <span className="text-slate-300">อ่านครบ</span>}
                 </span>
                 <span className="w-20 text-right text-red-600 tabular-nums font-medium">ขาด {r.missing}</span>
               </button>
