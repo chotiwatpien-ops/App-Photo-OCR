@@ -433,7 +433,29 @@ def _tier_one(net, green, nums):
     return None
 
 
-def _tip_gap(nets, greens, seq, card_figs):
+def _printed_twice(seq, v):
+    """A figure the slip repeats. The tip is printed as ค่าทิป in the extra-income section,
+    again as that section's total, and once more as a deduction inside the passenger card;
+    a passenger fare is printed once, which is the whole difference between them."""
+    return sum(1 for x in seq if abs(x - v) < 0.01) >= 2
+
+
+def _by_fee_card(nets, cards, nums, card_figs):
+    """Tier 0/1 measured against the income the fee card prints, or None.
+
+    The card is 'ค่าโดยสารของผู้โดยสาร − รายได้จากรอบขับ = ค่าบริการที่แกร็บได้รับ', three figures
+    that check each other, so the income in the middle of it is as good as a green one."""
+    best = None
+    for net in nets:
+        for _a, inc, _c in cards:
+            pool = [n for n in nums if n not in card_figs and 0 < n <= 0.5 * inc]
+            t = _tier_one(net, inc, pool)
+            if t in (0, 1) and (best is None or t < best):
+                best = t
+    return best
+
+
+def _tip_gap(nets, greens, seq, card_figs, nums=()):
     """Tier 3 when the gap between the two halves is a tip, else None.
 
     A tip has no ceiling: a passenger can add ฿50 to a ฿32 fare, so the rule that keeps a
@@ -444,12 +466,32 @@ def _tip_gap(nets, greens, seq, card_figs):
     extra income, again as that section's total, and once more as a deduction inside the
     passenger's card. The figure this rule must never admit, a passenger fare, is printed once —
     ฿348 against an income of 149 with 199 on the page is the wrong pair this guards. Weak by
-    design, so pair_album() can only take it as the nearest unambiguous candidate."""
+    design, so pair_album() can only take it as the nearest unambiguous candidate.
+
+    A tip is not always the whole gap. 4W-Home Sirinapa's ฿117 top sits on a bottom reading
+    73 + ค่าทิป 40 + อินเซนทีฟเทอร์โบ 4, so the gap is 44 while the figure printed three times
+    over is 40: the rule looked for 44, found it once, and threw a correct pair away. What has
+    to stay true is that the part with no ceiling is the one the slip repeats, and that what
+    rides along with it is an incentive — small next to the fare, never a second fare."""
     for net in nets:
         for green in greens:
             gap = net - green
-            if gap > 0 and not any(abs(gap - c) < 0.01 for c in card_figs)                     and sum(1 for v in seq if abs(v - gap) < 0.01) >= 2:
+            if gap <= 0 or any(abs(gap - c) < 0.01 for c in card_figs):
+                continue
+            if _printed_twice(seq, gap):
                 return 3
+            for tip in {v for v in seq if 0 < v < gap and _printed_twice(seq, v)
+                        and not any(abs(v - c) < 0.01 for c in card_figs)}:
+                rest = gap - tip
+                if rest <= 0.01 or rest > 0.5 * green:
+                    continue
+                smalls = [n for n in nums if 0 < n <= 0.5 * green
+                          and not any(abs(n - c) < 0.01 for c in card_figs)]
+                if any(abs(rest - s) < 0.01 for s in smalls):
+                    return 3
+                for i, s in enumerate(smalls):
+                    if any(abs(rest - s - s2) < 0.01 for s2 in smalls[i + 1:]):
+                        return 3
     return None
 
 
@@ -487,16 +529,18 @@ def match_tier(top, bottom):
                 if t in (0, 1) and (best is None or t < best):
                     best = t
         if best is None:
-            best = _tip_gap(nets, greens, bottom.get("seq") or [], card_figs)
+            best = _tip_gap(nets, greens, bottom.get("seq") or [], card_figs, nums)
+        # A green figure that agrees with nothing is not the last word. When the bottom is cut
+        # above the round-income card, the only green left on the page is the extra-income
+        # total: 4W-Home Sirinapa's ฿308 top sits on a bottom whose green reads ฿15, the turbo,
+        # while the fee card two cards below prints รายได้จากรอบขับ 293 — and 293 + 15 is 308.
+        # The card was never consulted, because the strongest kind of evidence decided alone
+        # even when it had decided nothing.
+        if best is None and cards:
+            best = _by_fee_card(nets, cards, nums, card_figs)
         return best
     if cards:                                                    # B
-        for net in nets:
-            for _a, inc, _c in cards:
-                pool = [n for n in nums if n not in card_figs and 0 < n <= 0.5 * inc]
-                t = _tier_one(net, inc, pool)
-                if t in (0, 1) and (best is None or t < best):
-                    best = t
-        return best
+        return _by_fee_card(nets, cards, nums, card_figs)
     for net in nets:                                             # C
         t = _tier_one(net, None, nums)
         if t is not None and (best is None or t < best):

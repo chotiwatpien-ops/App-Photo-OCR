@@ -38,6 +38,43 @@ check("เลขที่พิมพ์ครั้งเดียวไม่�
       not pairing.matches({"amount": 348.0},
                           {"amount": 149.0, "numbers": [7, 9, 50, 149, 199],
                            "seq": [149, 149, 7, 7, 50, 199, 149, 50]}))
+# --- 4W-Home Sirinapa, the two pairs the matcher threw away -------------------------------------
+# Ops put them in a training folder after the album came back with four unpaired halves. Both are
+# correct pairs and both were rejected, for two different reasons.
+
+# S__126665022 (฿117) + S__126665021: base 73, ค่าทิป 40, อินเซนทีฟเทอร์โบ 4. The gap is 44, but
+# the figure the slip prints three times is the tip alone; the turbo rides along with it. The
+# extras ceiling (half the fare) blocks tier 1 at 44 > 36.5, and the tip rule used to look for
+# the whole 44 and find it once.
+siri117 = {"amount": 73.0, "numbers": [4, 19, 20, 3, 40, 44, 73, 92, 155],
+           "seq": [73, 73, 40, 4, 44, 155, 20, 3, 40, 92, 92, 73, 19]}
+check("ทิป 40 + เทอร์โบ 4 บนค่าโดยสาร 73 → จับกับ ฿117 ได้",
+      pairing.matches({"amount": 117.0}, siri117))
+check("และยังเป็นหลักฐานอ่อน ต้องชนะด้วยระยะห่างเหมือนเดิม",
+      pairing.match_tier({"amount": 117.0}, siri117) == 3)
+
+# S__126665204 (฿308) + S__126665203: the bottom is cut above the round-income card, so its only
+# green figure is the extra-income total ฿15. Two cards below, the fee card prints
+# 369 − 293 = 76, and 293 + 15 is 308.
+siri308 = {"amount": 15.0, "numbers": [15, 20, 50, 76, 293, 369, 389],
+           "seq": [15, 15, 50, 389, 20, 50, 50, 369, 369, 293, 76]}
+check("เลขเขียวเป็นยอดรายได้เพิ่ม ไม่ใช่รายได้รอบขับ → ถอยไปใช้การ์ดค่าบริการ",
+      pairing.matches({"amount": 308.0}, siri308))
+check("และได้ tier 1 เพราะการ์ดยืนยันตัวเอง ไม่ใช่หลักฐานอ่อน",
+      pairing.match_tier({"amount": 308.0}, siri308) == 1)
+
+# the loosening must not open the door the old rules were holding shut
+check("เลขเขียวที่ใช้ไม่ได้ ไม่ได้แปลว่าจับกับอะไรก็ได้",
+      not pairing.matches({"amount": 999.0}, siri308))
+check("ส่วนที่พ่วงมากับทิปต้องเล็ก ไม่ใช่ค่าโดยสารอีกก้อน",
+      not pairing.matches({"amount": 262.0},
+                          {"amount": 73.0, "numbers": [40, 73, 149],
+                           "seq": [73, 73, 40, 40, 149, 40]}))
+check("ทิปที่พิมพ์ครั้งเดียว ต่อให้มีของเล็กพ่วง ก็ยังไม่จับ",
+      not pairing.matches({"amount": 117.0},
+                          {"amount": 73.0, "numbers": [4, 40, 73],
+                           "seq": [73, 73, 40, 4]}))
+
 check("ช่องว่างที่ตรงกับตัวเลขในการ์ดค่าธรรมเนียม ไม่นับเป็นทิป",
       not pairing.matches({"amount": 500.0},
                           {"amount": 426.0, "numbers": [21, 25, 54, 74, 426, 500],
