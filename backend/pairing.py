@@ -256,6 +256,23 @@ def date_bar_cut(im):
     return (runs[0][1] + runs[1][0]) // 2
 
 
+def content_ratio(a, white=245, frac=0.003):
+    """Width over height of what is actually drawn, ignoring a white mat around it.
+
+    VV = 21 sent every trip as three screens laid side by side — route, 'คุณได้รับ', the fare
+    card — pasted onto a portrait page with a white margin above and below. The page measures
+    0.71, a phone's shape, so each one read as a half and hunted for a partner it could never
+    have; the picture itself is 1.4 wide, three screens' worth, and a whole trip. Rows and
+    columns holding at least 0.3% ink count; on the 2,900 pictures of the training folders
+    only VV's move from one side of JOINED_MIN to the other."""
+    ink = (a < white).any(axis=2)
+    rows = np.where(ink.mean(axis=1) > frac)[0]
+    cols = np.where(ink.mean(axis=0) > frac)[0]
+    if len(rows) < 2 or len(cols) < 2:
+        return a.shape[1] / a.shape[0]
+    return (cols[-1] - cols[0] + 1) / (rows[-1] - rows[0] + 1)
+
+
 def inspect(source):
     """source: path or bytes. Returns {'role': 'long'|'top'|'bottom', 'amount', 'numbers', ...}."""
     im = Image.open(io.BytesIO(source) if isinstance(source, (bytes, bytearray)) else source).convert("RGB")
@@ -289,7 +306,7 @@ def inspect(source):
             "theme": theme_of(a),
             "numbers": [], "seq": [], "cut_top": None}
     tall = im.width / im.height < 0.36
-    if tall or im.width / im.height > JOINED_MIN:
+    if tall or im.width / im.height > JOINED_MIN or content_ratio(a) > JOINED_MIN:
         # 'long' means 'this picture is a whole trip already — move it, do not look for a
         # partner'. Two shapes qualify. A tall one is a single scrolling screenshot. A WIDE one
         # is two screens someone joined before sending: a phone screen is always taller than it

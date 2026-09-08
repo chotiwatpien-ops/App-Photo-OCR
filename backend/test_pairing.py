@@ -400,8 +400,6 @@ check("จอมืด: เจอสองบรรทัดเหมือน�
 check("ตำแหน่งบรรทัดตรงกันทั้งสองธีม", _runs(_band(20, 245)) == _runs(_band(240, 15)))
 check("จอเปล่าไม่มีบรรทัดไหนเลย", _runs(_Im.fromarray(_np.full((60, 200, 3), 15, "uint8"))) == [])
 
-print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
-sys.exit(0 if ok else 1)
 
 
 # --- a tall picture that opens on 'คุณได้รับ' is a lower half, not a whole trip (Natcha = 32) ----
@@ -420,3 +418,47 @@ if os.path.isdir(_natcha):
     check("สองใบนี้จับคู่กัน", [(t, b) for t, b, _ in got] == [("t", "b")] and not left)
 else:
     print("(ข้ามเทสต์ Natcha — ไม่มีโฟลเดอร์ Train ในเครื่องนี้)")
+
+
+# --- a tall picture that opens on 'คุณได้รับ' is a lower half, not a whole trip (Natcha = 32) ----
+# Natcha scrolled the fare breakdown into one 2,155px capture: the big figure sits in the top
+# 9% and there is no map. 'long' meant every one of them was moved nowhere and its top sat
+# unpaired beside it. Real pictures, from Ops' training folder, when they are on this machine.
+_natcha = os.path.join(os.path.dirname(__file__), "..", "Phase2", "For Train Model", "4W - Taxi Natcha = 32")
+if os.path.isdir(_natcha):
+    tall = pairing.inspect(os.path.join(_natcha, "120828_0.jpg"))
+    top = pairing.inspect(os.path.join(_natcha, "120839_0.jpg"))
+    check("รูปสูงที่เปิดด้วย 'คุณได้รับ' คือครึ่งล่าง ไม่ใช่รูปยาว", tall["role"] == "bottom")
+    check("และอ่านยอดจากตัวเลขใหญ่ได้ (฿117)", tall["amount"] == 117.0)
+    check("มีเลขในรายละเอียดให้ตรวจคู่ด้วย", 111 in (tall.get("numbers") or []))
+    check("ครึ่งบนของมันยังเป็นครึ่งบน ยอดเดียวกัน", top["role"] == "top" and top["amount"] == 117.0)
+    got, left = pairing.pair_album([("t", top), ("b", tall)])
+    check("สองใบนี้จับคู่กัน", [(t, b) for t, b, _ in got] == [("t", "b")] and not left)
+else:
+    print("(ข้ามเทสต์ Natcha — ไม่มีโฟลเดอร์ Train ในเครื่องนี้)")
+
+
+# --- three screens side by side on a white page are one trip (VV = 21) -------------------------
+# VV pasted route, 'คุณได้รับ' and the fare card next to each other on a portrait page with a
+# white margin above and below. The page is a phone's shape, so every one read as a half and
+# hunted for a partner; the drawing itself is 1.4 wide — three screens — and a whole trip.
+import numpy as _np
+_page = Image.new("RGB", (1414, 2000), "white")
+_page.paste(Image.new("RGB", (1250, 890), (240, 240, 240)), (82, 440))
+check("เนื้อหากว้างบนหน้ากระดาษแคบ → วัดจากเนื้อหา (1.4)", abs(pairing.content_ratio(_np.asarray(_page).astype(int)) - 1250 / 890) < 0.01)
+_shot = Image.new("RGB", (1080, 2400), "white")
+_shot.paste(Image.new("RGB", (1080, 2300), (250, 250, 250)), (0, 100))
+check("ภาพหน้าจอธีมสว่างธรรมดายังเป็นหน้าจอ (ไม่ใช่รูปยาว)",
+      pairing.content_ratio(_np.asarray(_shot).astype(int)) < 0.5)
+check("หน้าขาวล้วนไม่พัง", pairing.content_ratio(_np.asarray(Image.new("RGB", (100, 200), "white")).astype(int)) == 0.5)
+_vv = os.path.join(os.path.dirname(__file__), "..", "Phase2", "For Train Model", "4W-Taxi VV=21")
+if os.path.isdir(_vv):
+    v3 = pairing.inspect(os.path.join(_vv, "vv3.jpg"))
+    check("รูป VV ของจริง: รูปยาว ไม่ใช่ครึ่ง", v3["role"] == "long")
+    check("และอ่านชิปได้ว่าเป็นรถยนต์ Standard", pairing.vehicle_type(os.path.join(_vv, "vv3.jpg")) == ("4W", "Standard"))
+else:
+    print("(ข้ามเทสต์ VV — ไม่มีโฟลเดอร์ Train ในเครื่องนี้)")
+
+
+print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
+sys.exit(0 if ok else 1)
