@@ -160,6 +160,9 @@ def _all_numbers(im):
 JOINED_MIN = 0.80
 
 MAX_FILL = 0.75    # ink density above which a green block is a bar or an icon, not a figure
+# The weakest match there is: the figures agree only in the sense that one is a little above the
+# other, with nothing on either page to say why. Accepted between neighbours and nowhere else.
+NEIGHBOUR_ONLY = 4
 MIN_AMOUNT = 15    # no Grab trip nets less than this; a smaller "amount" is a misread digit
 
 # What inspect() answered for a picture is cached on the picture's bytes, which is right until the
@@ -195,8 +198,10 @@ def ensure_theme(info, source):
 # pool keeps its verdicts by this key, so a fix reaches nothing in the cache otherwise. r7:
 # a small 'คุณได้รับ' low on the screen is a top half (Keang = 67); run #139 carried the fix
 # and still paired none of Keang's 134, because every verdict came back from the cache as
-# 'bottom' — the code had changed and the key had not.
-READER = "r7"
+# 'bottom' — the code had changed and the key had not. r8: the fare is the topmost small green
+# line that READS as money, not the topmost one outright — the map's own green route legend was
+# being read instead, and Keang's 13421 was filed as a bottom half with no amount at all.
+READER = "r8"
 
 
 def cache_key(md5_hex: str) -> str:
@@ -354,8 +359,19 @@ def inspect(source):
     else:
         info["role"] = "bottom"
         if small:
-            y0, y1 = small[0]                                # topmost small green line = 'รวมรายได้จากรอบขับ'
-            info["amount"], info["alts"] = _try_amount(im, mask, y0, y1)
+            # The topmost small green line, of those that read as money. Taking the topmost
+            # outright let the map decide: 13421 of Keang = 67 draws its 'เส้นทางที่ใช้' legend
+            # in green, 14px tall at 47% of the screen, and it sits ABOVE the ฿96 — so the fare
+            # was never looked at, the amount came back empty, and the picture was filed as a
+            # bottom half although its map, its chip and its 'คุณได้รับ' all say top. Its own
+            # neighbour 13422 then had no partner and both sat in the pool. The big-figure
+            # branch above learned this same lesson about the map's green; this one had not.
+            # Falling back to the topmost keeps a picture whose fare truly is unreadable exactly
+            # where it was.
+            read = {t: _try_amount(im, mask, *t) for t in small}
+            priced = [t for t in small if (read[t][0] or 0) >= MIN_AMOUNT]
+            y0, y1 = priced[0] if priced else small[0]
+            info["amount"], info["alts"] = read[(y0, y1)]
             # Position decides here too. A screen zoomed out far enough to fit the route, the
             # map AND the first fare card renders everything smaller: Keang = 67 sent 134 such
             # pictures whose 'คุณได้รับ' measured 37px on an 800px screen, under the 44px that
@@ -509,11 +525,20 @@ def _card_plus_green(nets, cards, greens):
     return None
 
 
-def _by_fee_card(nets, cards, nums, card_figs):
-    """Tier 0/1 measured against the income the fee card prints, or None.
+def _by_fee_card(nets, cards, nums, card_figs, neighbours=False):
+    """Tier 0/1 measured against the income the fee card prints, else tier 4, else None.
 
     The card is 'ค่าโดยสารของผู้โดยสาร − รายได้จากรอบขับ = ค่าบริการที่แกร็บได้รับ', three figures
-    that check each other, so the income in the middle of it is as good as a green one."""
+    that check each other, so the income in the middle of it is as good as a green one.
+
+    Tier 4 is for the shape Nun = 91 sends: the bottom half is cut below the income card, so the
+    only figures on it are the passenger card and the fee card, and the rider's extra income —
+    'รายได้เพิ่มเติมที่ไม่หักค่าธรรมเนียม' — sits in a card that is COLLAPSED on the top half and
+    absent from the bottom. The net is then a few percent above the income and the difference is
+    printed nowhere: 213/203, 71/68, 48/46, 102/97, 249/237 … seventeen consecutive pairs, every
+    one of them net above income, fifteen of them by exactly 5%. Nothing on the page can confirm
+    such a pair, so it is the weakest evidence there is and pair_album() takes it only between
+    two pictures standing next to each other."""
     best = None
     for net in nets:
         for _a, inc, _c in cards:
@@ -521,7 +546,19 @@ def _by_fee_card(nets, cards, nums, card_figs):
             t = _tier_one(net, inc, pool)
             if t in (0, 1) and (best is None or t < best):
                 best = t
-    return best
+    if best is not None:
+        return best
+    if not neighbours:
+        # The caller cannot weigh this verdict, so it must not hear it. ฿229 over a bottom whose
+        # card prints รายได้ 221 is 3.6% above the income — the very shape Nun's real pairs have,
+        # and a pair this repo knows to be wrong. No figure on either page can tell the two apart;
+        # only standing next to each other can, and only pair_album() knows that.
+        return None
+    for net in nets:
+        for _a, inc, _c in cards:
+            if inc < net <= inc * 1.5:
+                return NEIGHBOUR_ONLY
+    return None
 
 
 def _tip_gap(nets, greens, seq, card_figs, nums=()):
@@ -564,7 +601,7 @@ def _tip_gap(nets, greens, seq, card_figs, nums=()):
     return None
 
 
-def match_tier(top, bottom):
+def match_tier(top, bottom, neighbours=False):
     """How strongly a top half and a bottom half agree, or None. Evidence is ranked and the
     strongest kind available DECIDES — weaker kinds are never consulted behind it:
       A. the bottom's own green figure ('คุณได้รับ' / 'รวมรายได้จากรอบขับ') is readable:
@@ -574,7 +611,12 @@ def match_tier(top, bottom):
          three consecutive figures): same two tiers against that income
       C. neither: tier 2 when the net appears among the bottom's numbers, or is the largest
          of 2-3 of them plus small extras — weak, so pair_album() lets it win only by distance
-    Every plausible reading of either figure (the '฿'-as-digit variants) is tried."""
+    Every plausible reading of either figure (the '฿'-as-digit variants) is tried.
+
+    neighbours=True adds one verdict on top of B: NEIGHBOUR_ONLY, where the net is merely a few
+    percent above the card's income and nothing explains the difference. It is off by default
+    because it cannot stand on its own — pass it only from a caller that knows the two pictures
+    are touching, which is pair_album() and, once a pair is already settled, agreed_amount()."""
     nets = [n for n in [top.get("amount")] + list(top.get("alts") or []) if n is not None and n > 0]
     if not nets:
         return None
@@ -608,8 +650,8 @@ def match_tier(top, bottom):
         if best is None and cards:
             best = _card_plus_green(nets, cards, greens)
         return best
-    if cards:                                                    # B
-        return _by_fee_card(nets, cards, nums, card_figs)
+    if cards:                                                    # B (tier 4 only for pair_album)
+        return _by_fee_card(nets, cards, nums, card_figs, neighbours)
     for net in nets:                                             # C
         t = _tier_one(net, None, nums)
         if t is not None and (best is None or t < best):
@@ -631,7 +673,7 @@ def agreed_amount(top, bottom):
     nets = [n for n in [top.get("amount")] + list(top.get("alts") or []) if n is not None and n > 0]
     best, best_tier = top.get("amount"), None
     for net in nets:
-        t = match_tier({"amount": net, "alts": []}, bottom)
+        t = match_tier({"amount": net, "alts": []}, bottom, neighbours=True)
         if t is not None and (best_tier is None or t < best_tier):
             best, best_tier = net, t
     return best
@@ -645,15 +687,24 @@ def pair_album(items):
     info = dict(items)
     tops = [k for k, d in items if d["role"] == "top"]
     bottoms = [k for k, d in items if d["role"] == "bottom"]
-    cands = []
+    cands, weak = [], []
     for t in tops:
         for b in bottoms:
             # One rider, one phone, one theme setting for the evening. A dark top and a
             # light bottom are two different people's screens, whatever their figures say.
             if info[t].get("theme") != info[b].get("theme"):
                 continue
-            tier = match_tier(info[t], info[b])
+            tier = match_tier(info[t], info[b], neighbours=True)
             if tier is not None:
+                if tier == NEIGHBOUR_ONLY:
+                    # Nothing on either page confirms this one — only touching does, and even
+                    # then it must not be ranked beside real evidence: adjacency outranks tier
+                    # here, so a weak neighbour would beat an exact figure 33 pictures away and
+                    # Ploy145 (whose pairs really are that far apart) lost 37 correct pairs to
+                    # them. It gets its own pass, over the halves nothing else could place.
+                    if abs(order[t] - order[b]) <= 1:
+                        weak.append(((0, tier, abs(order[t] - order[b])), t, b))
+                    continue
                 # Sitting next to each other is evidence in its own right, and until now it
                 # counted for nothing until the tiers tied. A rider takes the two shots back to
                 # back, so halves 15 pictures apart are a pair only if the rider interleaved
@@ -697,6 +748,13 @@ def pair_album(items):
         pairs = greedy(ranked)
     pairs = [(t, b, d[2]) for t, b, d in pairs]  # report the file distance, not the rank
     used = {k for t, b, _ in pairs for k in (t, b)}
+    if weak:
+        # Second pass, over what is left: two neighbours whose only agreement is that one figure
+        # sits a little above the other. It can take nothing away from the pass above.
+        rest = [c for c in sorted(weak) if c[1] not in used and c[2] not in used]
+        for t, b, d in greedy(rest):
+            pairs.append((t, b, d[2]))
+            used.update((t, b))
     leftovers = [k for k in tops + bottoms if k not in used]
     return pairs, leftovers
 

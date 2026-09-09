@@ -9,12 +9,24 @@ sys.path.insert(0, "backend")
 import pairing                                                  # noqa: E402
 
 ok = True
+skipped = []          # checks that never ran, and why
 
 
 def check(name, cond):
     global ok
     print(("✅" if cond else "✗"), name)
     ok = ok and cond
+
+
+def skip(what, why):
+    """A test that cannot run must SAY SO at the end, not only where it stands.
+
+    The pictures these tests read are rider photos and stay out of the repo, so on a machine
+    without them — every CI runner — four whole blocks quietly print one line each and the run
+    still ends 'ผ่านทั้งหมด'. That reads as 'everything was checked' and it is not: the Keang,
+    Natcha, VV and Nun findings are exactly the ones no synthetic image can stand in for."""
+    skipped.append((what, why))
+    print(f"(ข้าม {what} — {why})")
 
 
 top = {"role": "top", "amount": 104.0}
@@ -166,7 +178,7 @@ if os.path.isdir(sample) and os.environ.get("PAIRING_SAMPLE", "1") == "1":
         pairs, left, longs, info = pairing.run_folder(sample, out=None)
         check("ตัวอย่างจริง Test 7 จับคู่ได้ ≥ 85%", 2 * len(pairs) >= 0.85 * (len(info) - len(longs)))
     except ImportError as e:
-        print("(ข้ามการทดสอบกับรูปจริง: ไม่มี rapidocr —", e, ")")
+        skip("การทดสอบกับรูปจริง", f"ไม่มี rapidocr ({e})")
 
 # The Saver slips of 2026-09-05, which took one album from 87% to 100% and cost three readings
 # to get there. Each of these seven trips failed a different way:
@@ -195,7 +207,7 @@ if os.path.isdir(maps) and os.environ.get("PAIRING_SAMPLE", "1") == "1":
         check("ทุกคู่เป็นรูปที่อยู่ติดกัน ไม่ใช่จับข้ามอัลบั้ม",
               all(d == 1 for _, _, d in pairs))
     except ImportError as e:
-        print("(ข้ามการทดสอบแผนที่เขียว: ไม่มี rapidocr —", e, ")")
+        skip("การทดสอบแผนที่เขียว", f"ไม่มี rapidocr ({e})")
 
 # Standard slips, where Grab's cut is real. Every sample above is Saver, whose commission is
 # near zero — the 'ค่าบริการที่แกร็บได้รับ' card is all but empty there, so nothing was holding
@@ -212,15 +224,22 @@ if os.path.isdir(std) and os.environ.get("PAIRING_SAMPLE", "1") == "1":
         check("Standard: การ์ดค่าธรรมเนียมอ่านออก (ค่าโดยสาร − รายได้ = ส่วนที่แกร็บหัก)",
               [cards[n][-1] for n in (29, 37, 69)] == [(40.0, 33.0, 7.0), (184.0, 150.0, 34.0),
                                                        (25.0, 21.0, 4.0)])
-        check("ครึ่งล่างที่อ่านเลขสีเขียวไม่ออก ยังจับคู่ได้ด้วยการ์ด",
-              seen[37]["amount"] is None
-              and pairing.match_tier(seen[38], seen[37]) is not None)
+        # 37 used to come back with no amount at all: its topmost green line is unreadable and
+        # that was the only one the small-figure branch looked at. It now reads the income under
+        # it, ฿150, which is what a bottom half's green says. The pair no longer needs the card —
+        # so the card branch is asked directly, on this same picture with its green taken away,
+        # because that branch has no other real screenshot holding it down.
+        check("ครึ่งล่างอ่านรายได้จากรอบขับได้แล้ว (เดิมอ่านไม่ออกเลย)", seen[37]["amount"] == 150.0)
+        _no_green = {k: v for k, v in seen[37].items() if k not in ("amount", "alts")}
+        _no_green["amount"], _no_green["alts"] = None, []
+        check("และถึงเลขเขียวหายไป การ์ด 184−150=34 ก็ยังบอกได้ว่าคู่กับใบไหน",
+              pairing.match_tier(seen[38], _no_green) is not None)
         pairs, left = pairing.pair_album(sorted(seen.items()))
         check("Standard: จับคู่ได้ครบทั้ง 3 คู่", len(pairs) == 3 and left == [])
         check("Standard: ยอดถูกทุกคู่",
               sorted(seen[t]["amount"] for t, _, _ in pairs) == [21.0, 33.0, 150.0])
     except ImportError as e:
-        print("(ข้ามการทดสอบ Standard: ไม่มี rapidocr —", e, ")")
+        skip("การทดสอบ Standard", f"ไม่มี rapidocr ({e})")
 
 # ผลของ inspect() ถูก cache ด้วยไบต์ของรูป ซึ่งถูกจนกว่าตัวอ่านเองจะเปลี่ยน — รอบ 2026-09-06
 # แก้ '฿78 อ่านเป็น 878' ไปแล้ว แต่รอบถัดมายังได้ 878 เพราะไบต์เดิมยังแฮชได้ค่าเดิม
@@ -402,11 +421,18 @@ check("จอเปล่าไม่มีบรรทัดไหนเลย"
 
 
 
+# Real pictures Ops sent, kept in the repo as the evidence for bugs that actually happened.
+# They used to be read straight out of Phase2/For Train Model, which the pool empties album by
+# album every round — Keang = 67 was down to 4 of its 134 pictures by the time this was written,
+# and a test whose picture has gone quietly skips itself and stops checking anything.
+_SAMPLES = os.path.join(os.path.dirname(__file__), "..", "test-images", "samples")
+
+
 # --- a tall picture that opens on 'คุณได้รับ' is a lower half, not a whole trip (Natcha = 32) ----
 # Natcha scrolled the fare breakdown into one 2,155px capture: the big figure sits in the top
 # 9% and there is no map. 'long' meant every one of them was moved nowhere and its top sat
 # unpaired beside it. Real pictures, from Ops' training folder, when they are on this machine.
-_natcha = os.path.join(os.path.dirname(__file__), "..", "Phase2", "For Train Model", "4W - Taxi Natcha = 32")
+_natcha = os.path.join(_SAMPLES, "natcha32")
 if os.path.isdir(_natcha):
     tall = pairing.inspect(os.path.join(_natcha, "120828_0.jpg"))
     top = pairing.inspect(os.path.join(_natcha, "120839_0.jpg"))
@@ -417,7 +443,7 @@ if os.path.isdir(_natcha):
     got, left = pairing.pair_album([("t", top), ("b", tall)])
     check("สองใบนี้จับคู่กัน", [(t, b) for t, b, _ in got] == [("t", "b")] and not left)
 else:
-    print("(ข้ามเทสต์ Natcha — ไม่มีโฟลเดอร์ Train ในเครื่องนี้)")
+    skip("เทสต์ Natcha", "ไม่มีรูปตัวอย่างในเครื่องนี้ (test-images/ ไม่ถูก push — เป็นรูปผู้โดยสาร)")
 
 
 # --- three screens side by side on a white page are one trip (VV = 21) -------------------------
@@ -433,14 +459,86 @@ _shot.paste(_Img.new("RGB", (1080, 2300), (250, 250, 250)), (0, 100))
 check("ภาพหน้าจอธีมสว่างธรรมดายังเป็นหน้าจอ (ไม่ใช่รูปยาว)",
       pairing.content_ratio(_np.asarray(_shot).astype(int)) < 0.5)
 check("หน้าขาวล้วนไม่พัง", pairing.content_ratio(_np.asarray(_Img.new("RGB", (100, 200), "white")).astype(int)) == 0.5)
-_vv = os.path.join(os.path.dirname(__file__), "..", "Phase2", "For Train Model", "4W-Taxi VV=21")
+_vv = os.path.join(_SAMPLES, "vv21")
 if os.path.isdir(_vv):
     v3 = pairing.inspect(os.path.join(_vv, "vv3.jpg"))
     check("รูป VV ของจริง: รูปยาว ไม่ใช่ครึ่ง", v3["role"] == "long")
     check("และอ่านชิปได้ว่าเป็นรถยนต์ Standard", pairing.vehicle_type(os.path.join(_vv, "vv3.jpg")) == ("4W", "Standard"))
 else:
-    print("(ข้ามเทสต์ VV — ไม่มีโฟลเดอร์ Train ในเครื่องนี้)")
+    skip("เทสต์ VV", "ไม่มีรูปตัวอย่างในเครื่องนี้ (test-images/ ไม่ถูก push — เป็นรูปผู้โดยสาร)")
+
+
+# --- the map's own green is not the fare, and a neighbour may vouch (Keang = 67) ---------------
+# Two of Keang's trips sat in the pool after every other picture of the album had been filed.
+# 13421 draws its 'เส้นทางที่ใช้' route legend in green, 14px tall at 47% of the screen, ABOVE
+# the ฿96 at 68%: the branch that reads a small fare took the topmost green line outright, got
+# nothing off the legend, and filed a picture carrying a map, a chip and 'คุณได้รับ' as a bottom
+# half with no amount. Its neighbour 13422 was then a bottom with no top, and both stuck.
+# The pair itself needs the other rule too: ฿96 over a card printing รายได้ 91 is 5.5% above the
+# income, with the incentive card collapsed — evidence no page can confirm, which pair_album()
+# accepts between two pictures standing next to each other and match_tier() alone must not.
+_keang = os.path.join(_SAMPLES, "keang67")
+if os.path.isdir(_keang):
+    k1 = pairing.inspect(os.path.join(_keang, "13421_0.jpg"))
+    k2 = pairing.inspect(os.path.join(_keang, "13422_0.jpg"))
+    check("เส้นเขียวในแผนที่ไม่ใช่ค่าโดยสาร — อ่าน ฿96 ที่อยู่ถัดลงไปแทน", k1["amount"] == 96.0)
+    check("รูปที่มีแผนที่และ 'คุณได้รับ' คือครึ่งบน", k1["role"] == "top")
+    check("อีกใบเป็นครึ่งล่าง มีการ์ด 114/91/23", k2["role"] == "bottom"
+          and (114.0, 91.0, 23.0) in pairing._fee_card(k2.get("seq") or []))
+    got, left = pairing.pair_album([("t", k1), ("b", k2)])
+    check("สองใบที่ติดกันจับคู่กันได้", [(t, b) for t, b, _ in got] == [("t", "b")] and not left)
+    check("คู่นี้มีหลักฐานจริงรับรอง — อินเซนทีฟเทอร์โบ ฿5 พิมพ์อยู่บนครึ่งล่าง (96 = 91 + 5)",
+          pairing.match_tier(k1, k2) == 1)
+    # The album's other stuck pair has no such line: ฿362 over a card printing 345, and the 17
+    # baht between them appears nowhere. Only standing next to each other can carry that one.
+    k3 = pairing.inspect(os.path.join(_keang, "13309_0.jpg"))
+    k4 = pairing.inspect(os.path.join(_keang, "13310_0.jpg"))
+    check("อีกคู่ไม่มีบรรทัดไหนอธิบายส่วนต่าง 17 บาท", pairing.match_tier(k3, k4) is None)
+    check("จึงต้องอาศัยว่าอยู่ติดกัน จึงรับเป็นหลักฐานอ่อนที่สุด",
+          pairing.match_tier(k3, k4, neighbours=True) == pairing.NEIGHBOUR_ONLY)
+    got2, left2 = pairing.pair_album([("t", k3), ("b", k4)])
+    check("และจับคู่ได้เมื่อผ่าน pair_album", [(t, b) for t, b, _ in got2] == [("t", "b")] and not left2)
+else:
+    skip("เทสต์ Keang", "ไม่มีรูปตัวอย่างในเครื่องนี้ (test-images/ ไม่ถูก push — เป็นรูปผู้โดยสาร)")
+
+
+# --- the weak tier stays out of reach of anyone who cannot measure distance --------------------
+# ฿229 over a bottom whose card prints รายได้ 221 is 3.6% above the income: exactly the shape of
+# Nun's seventeen real pairs, and a pair this repo knows to be wrong. No figure separates them.
+_b221 = {"amount": None, "numbers": [20, 50, 55, 221, 276, 346],
+         "seq": [50, 346, 20, 50, 276, 276, 221, 55]}
+check("ผู้เรียกที่ไม่รู้ระยะ ไม่มีทางได้ยินคำตัดสินนี้", not pairing.matches({"amount": 229.0}, _b221))
+check("แต่เมื่อรู้ว่าติดกัน ก็ยังได้ยิน",
+      pairing.match_tier({"amount": 229.0}, _b221, neighbours=True) == pairing.NEIGHBOUR_ONLY)
+check("หลักฐานแข็งกว่ายังชนะเหมือนเดิม ไม่ถูกกฎอ่อนแทรก",
+      pairing.match_tier({"amount": 221.0}, _b221, neighbours=True) == 0)
+
+
+# --- the shape the weak tier exists for, on Nun's own pictures (4W Home Nun = 91) -------------
+# The bottom half is cut below the income card, so the incentive card — collapsed on the top half
+# and absent here — is nowhere on either page. 'คุณได้รับ' then reads a few percent above the
+# income the fee card prints, and nothing can confirm it. Three of the seventeen, in album order.
+_nun = os.path.join(_SAMPLES, "nun91")
+if os.path.isdir(_nun):
+    _pics = ["S__641875978_0.jpg", "S__641875979_0.jpg", "S__641875999_0.jpg",
+             "S__641876000_0.jpg", "S__641876001_0.jpg", "S__641876002_0.jpg"]
+    _n = [(f, pairing.inspect(os.path.join(_nun, f))) for f in _pics]
+    check("สลับบน-ล่าง-บน-ล่าง ตามลำดับไฟล์", [i["role"] for _f, i in _n]
+          == ["top", "bottom", "top", "bottom", "top", "bottom"])
+    check("อ่านยอดครึ่งบนได้ทั้งสามใบ (213 / 71 / 48)",
+          [i["amount"] for f, i in _n if i["role"] == "top"] == [213.0, 71.0, 48.0])
+    got, left = pairing.pair_album(_n)
+    check("จับได้ครบสามคู่ ไม่เหลือใบไหน", len(got) == 3 and not left)
+    check("ทุกคู่คือไฟล์ที่อยู่ติดกัน", all(d == 1 for _t, _b, d in got))
+    check("และทุกคู่ต้องอาศัยกฎเพื่อนบ้าน ลำพังตัวเลขจับไม่ได้",
+          all(pairing.match_tier(dict(_n)[t], dict(_n)[b]) is None for t, b, _d in got))
+else:
+    skip("เทสต์ Nun", "ไม่มีรูปตัวอย่างในเครื่องนี้ (test-images/ ไม่ถูก push — เป็นรูปผู้โดยสาร)")
 
 
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
+if skipped:
+    print(f"⚠ แต่มี {len(skipped)} ชุดที่ไม่ได้รัน — ผลข้างบนไม่ได้ครอบคลุมทั้งหมด:")
+    for _what, _why in skipped:
+        print(f"    · {_what}: {_why}")
 sys.exit(0 if ok else 1)
