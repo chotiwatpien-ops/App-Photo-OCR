@@ -85,9 +85,17 @@ EXPECTED_TRIPS_PER_WEEK = int(os.environ.get("EXPECTED_TRIPS_PER_WEEK", "21"))
 # run in date order, which is what happened until 2026-09-09 and cost a round forty minutes of
 # rebuilding files whose contents had not changed. Ops decides which the customer reads.
 CUSTOMER_IMAGE_NUMBERING = os.environ.get("CUSTOMER_IMAGE_NUMBERING", "append").strip().lower()
-# Skip listing a rider folder Drive says has not been touched since the round that last read it
-# to the end. Set to 0 to walk every folder every round.
-WALK_CACHE = os.environ.get("WALK_CACHE", "1").strip().lower() not in ("0", "false", "no")
+# OFF, and it should stay off until somebody finds a signal Drive actually gives.
+#
+# The idea was to skip listing a rider folder whose modifiedTime had not moved since a round
+# read every picture in it. It rests on Drive stamping a folder when a file enters it, which a
+# filesystem does and Drive does not: on 2026-09-09 the pool moved 19 long pictures into
+# '4 W Standard/ศิริวัฒน์ Taxi' at 01:08, and at 08:11 that folder's modifiedTime still read
+# 2026-09-08T19:42 — so the round skipped it and did not see any of them. Nothing was lost (a
+# picture is found by its Drive id, and none of these had been ingested), but they sat unread
+# for a round, and 'not walked' is indistinguishable from 'nothing there' to everything
+# downstream. The local-folder tests passed because a real directory does update its mtime.
+WALK_CACHE = os.environ.get("WALK_CACHE", "0").strip().lower() not in ("0", "false", "no")
 # One round can carry a different figure for one vehicle group (or one wheel count): Ops
 # (2026-09-08) wanted this week's 2 W Saver complete before anything else and let the 21 go
 # for that group only — a rider may hold more than 21 when the extra are Saver trips, and

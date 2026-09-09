@@ -5,11 +5,14 @@ ONE HAND-OVER. Pictures used to go to the batch queue a rider at a time: run #14
 batch jobs for 251 pictures and spent 21 minutes of the next round asking Google about each
 one. One job carries up to 60 pictures, so the whole round now goes over in a few.
 
-WALKING WHAT CHANGED. Drive stamps a folder whenever a file enters or leaves it. A rider folder
-whose stamp has not moved since a round read every picture in it holds exactly what it held
-then, and listing it again costs a Drive call for nothing — 270 of them, four rounds a day.
-The safety is that a folder counts as read only when the round found nothing in it that it had
-not already ingested, so a picture whose download failed is still tried again.
+WALKING WHAT CHANGED — OFF since the day it shipped, and these tests say why it is off.
+The rule below is correct in itself, and it rests on something untrue: that Drive stamps a
+folder when a file enters it. A directory on disk does, which is why every check here passed;
+Drive does not. On 2026-09-09 the pool moved 19 pictures into a rider folder at 01:08 and at
+08:11 the folder's modifiedTime still read the previous evening, so the round skipped it and
+saw none of them. The tests are kept because the bookkeeping they cover is right and would be
+needed again by a version built on a signal Drive really gives — but the default is off, and
+this file checks that too.
 """
 import os
 import shutil
@@ -106,6 +109,9 @@ def round_once(drive):
 
 
 # --- one hand-over for the whole round ---------------------------------------------------------
+check("ค่าเริ่มต้นคือปิด — Drive ไม่ประทับเวลาโฟลเดอร์เมื่อมีไฟล์ถูกย้ายเข้า", config.WALK_CACHE is False)
+config.WALK_CACHE = True      # the rest of this file tests the bookkeeping itself
+
 d = Drive(ROOT)
 round_once(d)
 check("สามไรเดอร์ หกรูป → ส่ง batch ครั้งเดียว ไม่ใช่สามครั้ง", len(submits) == 1)
