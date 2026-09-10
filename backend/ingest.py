@@ -457,23 +457,27 @@ def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True, force=Fals
         try:
             imgs = list(pipeline.customer_images(t["job"]["id"], t["display"], fetch=drive.download,
                                                  only_missing=not force))
-            if not imgs:
-                return t["job"]["id"], 0, None   # every picture for this job is already on Drive
             for name, data in imgs:
                 drive.upload_file(t["dir"], name, data, "image/jpeg")
-            return t["job"]["id"], len(imgs), None
+            # a finished row still without a picture name was skipped for want of its bytes —
+            # say so, rather than leave a blank in the workbook for someone else to find
+            bare_rows = [r for r in db.trips_with_images(t["job"]["id"]) if not r.get("customer_image")]
+            return t["job"]["id"], len(imgs), None, len(bare_rows)
         except Exception as e:  # noqa: BLE001
-            return t["job"]["id"], 0, e
+            return t["job"]["id"], 0, e, 0
 
     if todo:
         with ThreadPoolExecutor(max_workers=max(1, min(DRIVE_PARALLEL, len(todo)))) as ex:
-            for t, (jid, n, err) in zip(todo, ex.map(one, todo)):
+            for t, (jid, n, err, bare_n) in zip(todo, ex.map(one, todo)):
                 if err is not None:
                     log(f"✗ images {t['job']['driver_name']}: {err}")
                     errors += 1
                     failed.append(jid)
-                elif n:
+                    continue
+                if n:
                     log(f"🖼 {t['display']}: {n} รูป → Exports/{t['week']}/{t['cat']}/")
+                if bare_n:
+                    log(f"⚠ {t['display']} (job #{jid}): {bare_n} แถวไม่มีรูปต้นทางให้ต่อ — ในไฟล์จะไม่มีชื่อรูป")
     if with_xlsx:
         rows = db.query_trips(committed_only=True)
         try:

@@ -226,6 +226,12 @@ def spread_dates(job_id, date_from, date_to, only_missing=True) -> int:
     return n
 
 
+def _drive_file_id(url):
+    """The file id inside a Drive link, or None for a local path or nothing."""
+    m = re.search(r"/d/([-\w]{25,})|[?&]id=([-\w]{25,})", url or "")
+    return (m.group(1) or m.group(2)) if m else None
+
+
 def _number_in(name, rider, wk):
     """The number inside a customer picture's name, but only when the name is one THIS rider
     would be given now — a rider renamed (or given an admin suffix because two share a name)
@@ -300,9 +306,16 @@ def customer_images(job_id, rider, fetch=None, cache=None, only_missing=True):
         for r in rows:
             if r.get("_skip"):
                 continue
+            # A row the ingest log never recorded (copied, moved between jobs, collected from
+            # the web) still carries the link to its own picture. Without this, such a row was
+            # skipped without a word and stayed in the workbook with no picture name — four of
+            # W36's 4,411 rows on 2026-09-10.
+            bid = r.get("bottom_id")
+            for key, url in ((r["id"], r.get("source_url")), (bid, r.get("bottom_source_url"))):
+                if key and key not in drive_ids and url and _drive_file_id(url):
+                    drive_ids[key] = _drive_file_id(url)
             if r["top_blob"] is None and r["id"] in drive_ids:
                 need.append((r, "top_blob", drive_ids[r["id"]]))
-            bid = r.get("bottom_id")
             if r["bottom_blob"] is None and bid and bid in drive_ids:
                 need.append((r, "bottom_blob", drive_ids[bid]))
         with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
