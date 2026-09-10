@@ -1,0 +1,51 @@
+name: Redate to week — กระจายวันที่ของแถวที่ถูกยกมาให้อยู่ในสัปดาห์ของไฟล์
+
+# A row carried into next week's file kept the day it was driven. Fiat checked the W37 file on
+# 2026-09-10 and reversed that: the reader must not see a W36 date in the W37 file, so the
+# carried rows are dated across the week they are filed under, in the order they were driven.
+# The slip's own day is kept in the row's note. Rows already dated inside the week are left
+# alone, so this is safe to run again. Then run ingest with xlsx_only for the new dates to
+# reach both workbooks.
+
+on:
+  workflow_dispatch:
+    inputs:
+      date_from:
+        description: "วันแรกของสัปดาห์ของไฟล์ (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-09-07"
+      date_to:
+        description: "วันสุดท้ายของสัปดาห์ (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-09-13"
+      apply:
+        description: "ลงวันที่จริง (ไม่ติ๊ก = รายงานอย่างเดียว)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: drive-write
+  cancel-in-progress: false
+
+jobs:
+  redate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: กระจายวันที่ให้อยู่ในสัปดาห์
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TZ: Asia/Bangkok
+        run: |
+          ARGS="--from ${{ github.event.inputs.date_from }} --to ${{ github.event.inputs.date_to }}"
+          if [ "${{ github.event.inputs.apply }}" = "true" ]; then ARGS="$ARGS --apply"; fi
+          python redate_to_week.py $ARGS

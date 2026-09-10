@@ -93,12 +93,15 @@ with db.engine.begin() as c:
                db.trips.c.note, db.trips.c.net_earnings)).mappings().all()}
 check("แถวที่ยกอยู่ job สัปดาห์หน้า", rows["s2.jpg"]["job_id"] == j_next and rows["s4.jpg"]["job_id"] == j_next)
 check("แถวที่เหลืออยู่ที่เดิม", all(rows[f]["job_id"] == j_saver for f in ("s1.jpg", "s3.jpg", "s5.jpg")))
-check("วันที่บนสลิปไม่ถูกเปลี่ยน", rows["s2.jpg"]["trip_date"] == "2026-09-06")
+check("แถวที่ยกได้วันที่ในสัปดาห์หน้า กระจายตามลำดับที่ขับ: 07:00 ได้จันทร์ · 09:00 ได้พฤหัส",
+      rows["s4.jpg"]["trip_date"] == "2026-09-07" and rows["s2.jpg"]["trip_date"] == "2026-09-10")
+check("แถวที่ไม่ได้ยกยังเป็นวันที่บนสลิป", rows["s1.jpg"]["trip_date"] == "2026-09-01")
 check("ตัวเลขไม่ถูกแตะ", rows["s2.jpg"]["net_earnings"] == 20)
 check("customer_image ถูกล้าง เพื่อให้สัปดาห์หน้าตั้งชื่อใหม่", rows["s2.jpg"]["customer_image"] is None
       and rows["s1.jpg"]["customer_image"] == "WK36-สมชาย Win1.jpg")
-check("โน้ตบอกว่ายกไปทำไมและวันที่คงไว้",
-      "ยกไปสัปดาห์ 2026-09-07..2026-09-13" in rows["s2.jpg"]["note"] and "คงไว้" in rows["s2.jpg"]["note"])
+check("โน้ตบอกว่ายกไปทำไม และวันที่บนสลิปเก็บไว้ในโน้ต",
+      "ยกไปสัปดาห์ 2026-09-07..2026-09-13" in rows["s2.jpg"]["note"]
+      and "วันที่บนสลิป 2026-09-06 → ลงเป็น 2026-09-10" in rows["s2.jpg"]["note"])
 
 # --- now the group is at target: nothing more to carry ---------------------------------------------------
 again, counts2, _ = ce.excess_rows(D_FROM, D_TO, target=3)

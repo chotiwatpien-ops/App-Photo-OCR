@@ -14,8 +14,11 @@ What moves, per row:
   3. the delivered picture, OUT of this week's Export Pic into its _แทนที่แล้ว holding folder —
      it was named for this week (WK36-…), and next week's export names its own (WK37-…), so the
      row's customer_image is cleared and the exporter makes it afresh under the new name.
-The date on the row is the date on the slip and stays exactly that: a trip carried into next
-week's file still says the day it was driven. Nothing is deleted and no row is re-read.
+  4. the date: the carried rows are dated across next week in the order they were driven
+     (redate_to_week.spread), the slip's own day kept in the note. They were first left as
+     driven, and Fiat reversed that on seeing the file the same evening: a W37 file must not
+     carry W36 dates ("วันที่ต้องไม่ใช่ WK ที่ Run").
+Nothing is deleted and no row is re-read.
 
     python carry_excess.py --week "Week 31 Aug-6 Sep" --from 2026-08-31 --to 2026-09-06 --target 1470
     python carry_excess.py ... --apply
@@ -29,6 +32,7 @@ from datetime import date, timedelta
 from sqlalchemy import select
 
 import db
+import redate_to_week
 from distribute import NUM_PREFIX, bare, folder_label
 
 REPLACED_DIR = "_แทนที่แล้ว"
@@ -142,6 +146,7 @@ class Weeks:
 def apply(drive, wk, d_from, d_to, excess, log=print):
     n_from, n_to = next_week(d_from, d_to)
     done = Counter()
+    moved = []
     for group, items in excess.items():
         by_rider = defaultdict(list)
         for r, j in items:
@@ -171,13 +176,17 @@ def apply(drive, wk, d_from, d_to, excess, log=print):
                     else:
                         done["หารูปลูกค้าเดิมไม่เจอ"] += 1
                 db.move_trips_to_job([r["id"]], jid)
-                note = (f"ยกไปสัปดาห์ {n_from}..{n_to} เพราะ {group} เกินเป้า "
-                        f"(เดิม job #{j['id']} · วันที่บนสลิป {r.get('trip_date')} คงไว้)")
+                note = f"ยกไปสัปดาห์ {n_from}..{n_to} เพราะ {group} เกินเป้า (เดิม job #{j['id']})"
                 db.update_trip(r["id"], {"customer_image": None,
                                          "note": f"{note} | {r['note']}" if r.get("note") else note})
+                r["note"] = f"{note} | {r['note']}" if r.get("note") else note
+                moved.append(r)
                 done["ย้ายแถว"] += 1
                 if done["ย้ายแถว"] % 50 == 0:
                     log(f"    ย้ายแล้ว {done['ย้ายแถว']} แถว")
+    # the carried rows take dates inside the week they now belong to, spread in driven order
+    done["ลงวันที่ในสัปดาห์หน้า"] = redate_to_week.apply(redate_to_week.spread(moved, n_from, n_to),
+                                                       n_from, n_to, log=log)
     return done
 
 
