@@ -1,0 +1,125 @@
+name: Service chip audit — ประเภทงานตรงกับชิปบนสลิปหรือไม่
+
+# service-audit.yml asks the folder a picture sits in. That only works while the folder is
+# right, and on 2026-09-10 Ops found rows where it is not — the job's group, the folder and the
+# row all say Standard while the chip on the slip says Saver (WK36-มนันตรา Win20), and a car
+# sits in 2 W Standard because its chip reads 'Standard | Women driver' and names no vehicle
+# (WK36-ชลิต Home4). Only the picture is evidence, so this reads every one of them.
+#
+# Reading is the whole cost — about 3 seconds a picture — so the week is split across parallel
+# jobs and the shards' findings are merged at the end. Report mode and apply mode read exactly
+# the same amount; apply only adds the writing, which takes under a minute.
+#
+# Tiers and wheels are separate switches on purpose. A tier the chip states is safe to take.
+# A wheel is taken only where the chip names the vehicle, and chips that name none are counted
+# by label for Ops to rule on — guessing from 'Standard' alone once put a bike rider's whole
+# week under 4 W Standard.
+
+on:
+  workflow_dispatch:
+    inputs:
+      date_from:
+        description: "วันแรกของสัปดาห์ (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-08-31"
+      date_to:
+        description: "วันสุดท้ายของสัปดาห์ (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-09-06"
+      apply:
+        description: "แก้จริง (ไม่ติ๊ก = รายงานอย่างเดียว)"
+        type: boolean
+        default: false
+      wheels:
+        description: "แก้ล้อด้วย — เฉพาะแถวที่ชิประบุ bike/car ชัดเจน"
+        type: boolean
+        default: false
+      shards:
+        description: "แบ่งเป็นกี่ก้อนขนานกัน"
+        type: choice
+        options: ["1", "4", "8", "12"]
+        default: "8"
+
+# Reading does not write to Drive, but --apply writes rows the exporter reads, so it queues
+# behind anything else that is rewriting the week.
+concurrency:
+  group: drive-write
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        run: |
+          N=${{ github.event.inputs.shards }}
+          echo "matrix=$(python3 -c "import json,sys; n=int('$N'); print(json.dumps([f'{i}/{n}' for i in range(n)]))")" >> "$GITHUB_OUTPUT"
+
+  read:
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      # the chip is read with the free OCR the pool uses, which lives in the pairing requirements
+      - run: pip install -r backend/requirements.txt -r backend/requirements-pairing.txt
+      - name: อ่านชิปส่วนที่ ${{ matrix.shard }}
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.DRIVE_OAUTH_TOKEN_JSON }}
+          DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
+          TZ: Asia/Bangkok
+        run: |
+          SAFE=$(echo "${{ matrix.shard }}" | tr '/' '-')
+          ARGS="--from ${{ github.event.inputs.date_from }} --to ${{ github.event.inputs.date_to }}"
+          ARGS="$ARGS --shard ${{ matrix.shard }} --out shard-$SAFE.json --workers 4"
+          # Every shard reports; only the merge step writes, so a shard that dies leaves nothing
+          # half-applied and can simply be re-run.
+          python service_chip_audit.py $ARGS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chip-shard-${{ strategy.job-index }}
+          path: backend/shard-*.json
+
+  merge:
+    needs: read
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: chip-shard-*
+          merge-multiple: true
+          path: backend/shards
+      - name: รวมผลทุกก้อน แล้วแก้ถ้าสั่งไว้
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          APPLY: ${{ github.event.inputs.apply }}
+          WHEELS: ${{ github.event.inputs.wheels }}
+          TZ: Asia/Bangkok
+        run: python apply_chip_audit.py shards/*.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chip-audit-result
+          path: backend/shards/*.json
