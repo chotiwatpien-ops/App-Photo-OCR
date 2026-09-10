@@ -1686,6 +1686,27 @@ def get_job_meta(job_id):
         return dict(r) if r else None
 
 
+def customer_images_in_week(date_from, date_to):
+    """Every customer picture name already handed out in one week, across all of its jobs.
+
+    A picture is named for its rider and week ('WK36-สมชาย4.jpg'), but the number used to be
+    chosen from one job's rows. rehome and carry give a rider a second and third job inside one
+    week, and each of them started again at 1: 513 names in W36 belonged to two rows or three,
+    and 211 of those appeared in a single day. The number has to be picked against the week.
+
+    Finished rows only. A voided trip keeps the name it was given, and that number has to go
+    back into the pool: the picture it made is still on Drive, and the next trip to take the
+    number uploads over it. Counting voided rows here would leave that stale file there for
+    good, and the customer would see a gap in the numbering.
+    """
+    with engine.begin() as c:
+        return [r[0] for r in c.execute(
+            select(trips.c.customer_image)
+            .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+            .where(jobs.c.date_from == date_from, jobs.c.date_to == date_to,
+                   trips.c.status == "done", trips.c.customer_image.isnot(None))).all()]
+
+
 def drive_ids_for_job(job_id):
     """trip_id -> Drive file id (for re-downloading originals after blobs were cleared)."""
     with engine.begin() as c:

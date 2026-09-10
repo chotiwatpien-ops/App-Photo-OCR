@@ -275,6 +275,16 @@ def customer_images(job_id, rider, fetch=None, cache=None, only_missing=True):
     cache = cache or {}
     taken = set()
     if config.CUSTOMER_IMAGE_NUMBERING == "append":
+        # Numbers already handed out to THIS rider anywhere in the week, not just in this job.
+        # The name says rider and week; the number used to be chosen from one job's rows, so a
+        # rider whose rows rehome or carry had split across two jobs got 'WK36-สมชาย1.jpg' twice
+        # — 513 names in W36, 211 of them appearing in one day. _number_in returns None for a
+        # name this rider would not be given, so sweeping the week picks up only their own.
+        if job and job.get("date_from"):
+            for name in db.customer_images_in_week(job["date_from"], job["date_to"]):
+                k = _number_in(name, rider, wk)
+                if k:
+                    taken.add(k)
         for r in rows:
             k = _number_in(r.get("customer_image"), rider, wk)
             if k:                       # a name this rider's own naming produced — keep it

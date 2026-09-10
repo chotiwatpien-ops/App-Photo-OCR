@@ -466,9 +466,23 @@ def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True, force=Fals
         except Exception as e:  # noqa: BLE001
             return t["job"]["id"], 0, e, 0
 
+    def rider_run(group):
+        """One rider's jobs, one after another. Their pictures are numbered against the whole
+        week now, so two jobs of one rider running side by side would read the same set of used
+        numbers and both claim the next one — the collision the week-wide numbering just fixed,
+        put back by the thread pool. Different riders never share a number and still run
+        together."""
+        return [one(t) for t in group]
+
     if todo:
-        with ThreadPoolExecutor(max_workers=max(1, min(DRIVE_PARALLEL, len(todo)))) as ex:
-            for t, (jid, n, err, bare_n) in zip(todo, ex.map(one, todo)):
+        by_rider = collections.defaultdict(list)
+        for t in todo:
+            by_rider[t["display"]].append(t)
+        groups = list(by_rider.values())
+        ordered = [t for g in groups for t in g]
+        with ThreadPoolExecutor(max_workers=max(1, min(DRIVE_PARALLEL, len(groups)))) as ex:
+            results = [r for rs in ex.map(rider_run, groups) for r in rs]
+        for t, (jid, n, err, bare_n) in zip(ordered, results):
                 if err is not None:
                     log(f"✗ images {t['job']['driver_name']}: {err}")
                     errors += 1
