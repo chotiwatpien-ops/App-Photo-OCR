@@ -1,0 +1,74 @@
+name: Fill from past — เติมงานของกลุ่มให้ถึงเป้าด้วยสำเนาจากสัปดาห์ก่อน
+
+# The last resort, after the week's own parked work is back in (Fiat, 2026-09-10). Copies —
+# not moves — finished rows of the same group from earlier weeks under a job of the same rider
+# in this week, with the stitched picture copied into this week's rider folder. The date on the
+# row stays the date on the slip; every copied row's note names the week and row it came from.
+# Drawn at random with a fixed seed so the draw can be repeated. Then run ingest with
+# exports_only so the copied rows get this week's customer pictures.
+
+on:
+  workflow_dispatch:
+    inputs:
+      week:
+        description: "ชื่อโฟลเดอร์สัปดาห์นี้บน Drive"
+        type: string
+        required: true
+        default: "Week 31 Aug-6 Sep"
+      date_from:
+        description: "วันแรกของสัปดาห์ (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-08-31"
+      date_to:
+        description: "วันสุดท้ายของสัปดาห์ (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-09-06"
+      group:
+        description: "กลุ่มที่ขาด"
+        type: choice
+        options: ["2 W Standard", "2 W Saver", "4 W Standard"]
+        default: "2 W Standard"
+      need:
+        description: "จำนวนแถวที่ต้องเติม"
+        type: string
+        required: true
+        default: "300"
+      seed:
+        description: "seed ของการสุ่ม (เลขเดิม = หยิบชุดเดิม)"
+        type: string
+        default: "36"
+      apply:
+        description: "คัดลอกจริง (ไม่ติ๊ก = รายงานอย่างเดียว)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: drive-write
+  cancel-in-progress: false
+
+jobs:
+  fill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: เติมจากสัปดาห์ก่อน
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.DRIVE_OAUTH_TOKEN_JSON }}
+          DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
+          TZ: Asia/Bangkok
+        run: |
+          ARGS="--week '${{ github.event.inputs.week }}' --from ${{ github.event.inputs.date_from }} --to ${{ github.event.inputs.date_to }}"
+          ARGS="$ARGS --group '${{ github.event.inputs.group }}' --need ${{ github.event.inputs.need }} --seed ${{ github.event.inputs.seed }}"
+          if [ "${{ github.event.inputs.apply }}" = "true" ]; then ARGS="$ARGS --apply"; fi
+          eval python fill_from_past.py $ARGS
