@@ -116,6 +116,9 @@ def apply(drive, mv, d_from, d_to, moves, log=print):
         if not jid:
             jid = db.create_job(name, "Trips", d_from, d_to, category=want,
                                 folder_name=f"{want}/{bare(name)}", admin=admin, drive_folder_id=fid)
+            # every row it will ever hold is already finished; left as "running" the round
+            # would re-reconcile it, seven seconds a job, a hundred and fifty jobs at a time
+            db.set_job_status(jid, "committed")
             log(f"  + job #{jid} {name} · {want}" + (" (เปิดโฟลเดอร์ใหม่)" if made else ""))
         for r, j in items:
             # 2. the stitched picture, from the old rider folder to the new one

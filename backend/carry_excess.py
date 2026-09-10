@@ -152,6 +152,7 @@ def apply(drive, wk, d_from, d_to, excess, log=print):
             if not jid:
                 jid = db.create_job(name, "Trips", n_from, n_to, category=group,
                                     folder_name=f"{group}/{bare(name)}", admin=admin, drive_folder_id=fid)
+                db.set_job_status(jid, "committed")   # holds finished rows only; "running" would be re-reconciled every round
                 log(f"  + job #{jid} {name} · {group} · {n_from}..{n_to}" + (" (เปิดโฟลเดอร์ใหม่)" if made else ""))
             for r, j in rows:
                 src = j.get("drive_folder_id")

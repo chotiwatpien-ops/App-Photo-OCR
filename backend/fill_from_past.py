@@ -100,6 +100,9 @@ def apply(drive, tgt, d_from, d_to, group, picks, log=print):
         if not jid:
             jid = db.create_job(name, "Trips", d_from, d_to, category=group,
                                 folder_name=f"{group}/{bare(name)}", admin=admin, drive_folder_id=fid)
+            # every row it will ever hold is already finished; left as "running" the round
+            # would re-reconcile it, seven seconds a job, a hundred and fifty jobs at a time
+            db.set_job_status(jid, "committed")
             log(f"  + job #{jid} {name} · {group}" + (" (เปิดโฟลเดอร์ใหม่)" if made else ""))
         for r, j, a, b in items:
             # a Drive link carries the file id; a local stand-in's link IS the path
