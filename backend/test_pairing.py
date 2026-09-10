@@ -570,6 +570,17 @@ check("กฎเพื่อนบ้านยังทำงานเมื่�
                                      "numbers": [20, 55, 203, 258], "seq": [258, 203, 55]})])[0]) == 1)
 
 
+# --- 'Standard | Women driver' is a car (Ops, 2026-09-10) ------------------------------------
+# The label names no vehicle in words; with None the job's group decided and a car was filed
+# under 2 W Standard (WK36-ชลิต Home4). The OCR runs the words together in every way it can.
+for _t in ("standard|women driver", "standardwomen driver", "standard | womendriver qulasu b"):
+    check(f"ชิป {_t!r} → รถยนต์ Standard",
+          (pairing.wheels_from_chip(_t), pairing.tier_from_chip(_t)) == ("4W", "Standard"))
+check("'standard' เฉย ๆ ยังไม่ใช่รถยนต์ (บทเรียนอาลิฟ)", pairing.wheels_from_chip("standard") is None)
+check("'standard bike' ยังเป็นมอเตอร์ไซค์ แม้มีคำว่า driver ที่อื่น",
+      pairing.wheels_from_chip("standard bike women driver") == "2W")
+
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 if skipped:
     print(f"⚠ แต่มี {len(skipped)} ชุดที่ไม่ได้รัน — ผลข้างบนไม่ได้ครอบคลุมทั้งหมด:")

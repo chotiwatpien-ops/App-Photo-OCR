@@ -405,7 +405,13 @@ def wheels_from_chip(txt):
     t = txt or ""
     if re.search(r"bike", t):
         return "2W"
-    return "4W" if re.search(r"car|justgrab|premium", t) else None
+    # 'Standard | Women driver' names no vehicle in words, and the reader answered None for it,
+    # so the job's group decided — and a car sat in 2 W Standard (WK36-ชลิต Home4, Ops,
+    # 2026-09-10). Across the week's chips the label appears on the 4 W Taxi riders' slips
+    # as well; Ops confirmed it is a car service. The OCR runs the words together in every
+    # way ('standardwomen driver', 'standard|womendriver'), so only 'women' next to 'driver'
+    # is looked for.
+    return "4W" if re.search(r"car|justgrab|premium|women\s*driver", t) else None
 
 
 def tier_from_chip(txt):
