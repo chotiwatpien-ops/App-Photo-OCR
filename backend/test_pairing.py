@@ -536,6 +536,40 @@ else:
     skip("เทสต์ Nun", "ไม่มีรูปตัวอย่างในเครื่องนี้ (test-images/ ไม่ถูก push — เป็นรูปผู้โดยสาร)")
 
 
+# --- a pair that is not touching must agree to the baht --------------------------------------
+# Distance is exposure, not evidence: the further apart two halves sit, the more figures lie
+# between them for one to agree with by chance. 4W-Taxi Trin=238 joined three pairs across 33,
+# 48 and 95 pictures on 'income plus something' and all three were wrong. Exact agreement is the
+# one kind that is hard to reach by accident, so beyond a neighbour it is the only kind accepted.
+_top114 = {"amount": 114.0, "alts": [], "role": "top", "theme": "สว่าง"}
+_bot104 = {"amount": None, "alts": [], "role": "bottom", "theme": "สว่าง",
+           "numbers": [10, 20, 30, 104, 134, 144], "seq": [5, 10, 20, 144, 134, 104, 30]}
+check("ยอด 114 กับรายได้ 104 + ส่วนลด 10 = หลักฐานระดับ 1",
+      pairing.match_tier(_top114, _bot104) == 1)
+_apart = [("t", _top114)] + [(f"x{i}", {"role": "top", "amount": 999.0, "alts": [],
+                                        "theme": "สว่าง"}) for i in range(5)] + [("b", _bot104)]
+check("ห่างกัน 6 ใบ ด้วยหลักฐานระดับ 1 → ไม่จับ ปล่อยค้าง", pairing.pair_album(_apart)[0] == [])
+check("คู่เดิมถ้าอยู่ติดกัน → จับได้ตามเดิม",
+      [(t, b) for t, b, _d in pairing.pair_album([("t", _top114), ("b", _bot104)])[0]] == [("t", "b")])
+
+# The same distance with an exact agreement is still allowed: Ploy182 and Natcha = 32 send real
+# pairs 6 to 19 pictures apart, and 123 of the 129 far pairs in the training albums read this way.
+_top77 = {"amount": 77.0, "alts": [], "role": "top", "theme": "สว่าง"}
+_bot77 = {"amount": None, "alts": [], "role": "bottom", "theme": "สว่าง",
+          "numbers": [15, 77, 92], "seq": [92, 77, 15]}
+check("ยอด 77 เท่ากับรายได้ 77 ในการ์ด = หลักฐานระดับ 0", pairing.match_tier(_top77, _bot77) == 0)
+_far0 = [("t", _top77)] + [(f"x{i}", {"role": "top", "amount": 999.0, "alts": [],
+                                      "theme": "สว่าง"}) for i in range(5)] + [("b", _bot77)]
+check("ห่างกัน 6 ใบ แต่ยอดตรงเป๊ะ → จับได้",
+      [(t, b) for t, b, _d in pairing.pair_album(_far0)[0]] == [("t", "b")])
+
+# The weak neighbour tier is unaffected — it was already refused beyond a neighbour.
+check("กฎเพื่อนบ้านยังทำงานเมื่อติดกัน (Nun ไม่ถูกกระทบ)",
+      len(pairing.pair_album([("t", {"amount": 213.0, "alts": [], "role": "top", "theme": "สว่าง"}),
+                              ("b", {"amount": None, "alts": [], "role": "bottom", "theme": "สว่าง",
+                                     "numbers": [20, 55, 203, 258], "seq": [258, 203, 55]})])[0]) == 1)
+
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 if skipped:
     print(f"⚠ แต่มี {len(skipped)} ชุดที่ไม่ได้รัน — ผลข้างบนไม่ได้ครอบคลุมทั้งหมด:")

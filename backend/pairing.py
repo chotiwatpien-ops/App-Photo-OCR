@@ -714,6 +714,24 @@ def pair_album(items):
                 # and stopped an exact ฿161 at distance 15 from stealing a bottom off the pair
                 # beside it, which orphaned BOTH correct pairs.
                 dist = abs(order[t] - order[b])
+                if dist > 1 and tier != 0:
+                    # Distance is not evidence, it is exposure: the further two halves stand
+                    # apart, the more figures lie between them for one to agree with by
+                    # accident. So a pair that is not touching has to bring the one kind of
+                    # agreement that is hard to reach by accident — the net EQUALS the income,
+                    # to the baht. 'Income plus something' does not qualify: three pairs in
+                    # 4W-Taxi Trin=238 were joined that way across 33, 48 and 95 pictures, all
+                    # three were opened and read, and all three were wrong — the top's own
+                    # income card said 109, 94 and 89 where its partner's said 104, 44 and 85.
+                    #
+                    # Measured over the 20 training albums, 1,085 pairs: of the 129 made at a
+                    # distance, 123 already agree exactly. The rule costs six pairs in
+                    # 2W-Win Ploy145 — an album Ops uploaded in two blocks, tops then bottoms,
+                    # so almost every one of its pairs is far — and nothing anywhere else.
+                    # Those six are not lost, they stay in the pool where Ops can see them.
+                    # Touching pairs are untouched, and 90 of them rest on weaker evidence
+                    # than this, the seventeen of 4W Home Nun = 91 among them.
+                    continue
                 cands.append(((0 if dist <= 1 else 1, tier, dist), t, b))
     cands.sort()
 
