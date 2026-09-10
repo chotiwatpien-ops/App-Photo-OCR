@@ -1002,7 +1002,20 @@ if config.FRONTEND_DIST.exists():
 
     @app.get("/{path:path}")
     def spa(path: str):
-        f = config.FRONTEND_DIST / path
-        if path and f.is_file():
+        """Serve a built file, or the SPA's index for any route the app handles itself.
+
+        The path must resolve INSIDE the built folder. This route sits outside the /api/
+        prefix the auth gate checks, so it answers without a cookie — and '..' written as
+        '%2e%2e' or '..%2f' survives the client's own normalising, arrives here decoded, and
+        walked straight out of the folder: '/%2e%2e/%2e%2e/service_account.json' handed over
+        the Drive key, and on the server '/%2e%2e/%2e%2e/%2e%2e/%2e%2e/proc/self/environ' the
+        database URL and every API key in one request. Verified reproducible before the fix.
+        """
+        root = config.FRONTEND_DIST.resolve()
+        try:
+            f = (root / path).resolve()
+        except (OSError, ValueError):          # a name the filesystem will not even parse
+            f = None
+        if path and f is not None and f.is_file() and root in f.parents:
             return FileResponse(f)
-        return FileResponse(config.FRONTEND_DIST / "index.html")
+        return FileResponse(root / "index.html")
