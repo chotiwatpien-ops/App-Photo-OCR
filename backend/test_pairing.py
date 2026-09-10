@@ -581,6 +581,64 @@ check("'standard bike' ยังเป็นมอเตอร์ไซค์ �
       pairing.wheels_from_chip("standard bike women driver") == "2W")
 
 
+# --- the phone's clock is on both halves (2W-NUI=117, 2026-09-10) ---------------------------
+# An album whose halves sit three pictures apart as a habit: 112 pairs were made on exact
+# figures, and ฿66 = 56 + a ฿10 tip (94+97) and ฿78 = 38 + a ฿40 tip (115+117) were refused by
+# the far-pair rule although both halves showed the same minute on the status bar.
+check("อ่านนาฬิกา '2.27km 20:41 u.' → 20:41 (ไม่ใช่ 02:27)", pairing.CLOCK.search("2.27km 20:41 u.").group(0) == "20:41")
+check("'314:56m' คือระยะทางทับนาฬิกา → ไม่อ่าน", pairing.CLOCK.search("314:56m") is None)
+check("'20:350nun' → 20:35", pairing.CLOCK.search("20:350nun").group(0) == "20:35")
+_top66 = {"role": "top", "amount": 66.0, "alts": [], "theme": "สว่าง", "clock": 20 * 60 + 34}
+_tip56 = {"role": "bottom", "amount": 56.0, "alts": [], "theme": "สว่าง", "clock": 20 * 60 + 34,
+          "numbers": [1, 10, 56, 66, 77], "seq": [56, 56, 10, 10, 77, 1, 10, 66, 66, 56, 10]}
+
+
+def _pad(k, clock):
+    return (k, {"role": "bottom", "amount": 30.0, "alts": [], "theme": "สว่าง", "clock": clock,
+                "numbers": [30], "seq": [30, 30]})
+
+
+# ...and on that bottom the ฿10 tip and Grab's ฿10 cut are the same figure, which reads exactly
+# like the ฿500-on-426 pair Test 9 caught being made wrongly. Only the clock tells them apart.
+check("ช่องว่างเท่ากับตัวเลขในการ์ด: ลำพังหน้ากระดาษยังไม่พอ", pairing.match_tier(_top66, _tip56) is None)
+check("นาฬิกาตรงนาทีเดียวกัน = ถ่ายจากงานเดียวกัน → ช่องว่างคือทิป",
+      pairing.match_tier(_top66, _tip56, same_shot=True) == 3)
+_b426_cut = {"amount": 426.0, "numbers": [21, 25, 54, 74, 426, 500], "seq": [426, 426, 74, 74, 500, 426, 74]}
+check("คู่ผิดของ Test 9 (฿500 บนรายได้ 426) ยังถูกปฏิเสธเหมือนเดิม — นาฬิกาของคนละงานไม่มีทางตรงกัน",
+      pairing.match_tier({"amount": 500.0}, _b426_cut) is None)
+_far = [("t", {"role": "top", "amount": 500.0, "alts": [], "theme": "สว่าง", "clock": 600}),
+        ("b", dict(_b426_cut, role="bottom", alts=[], theme="สว่าง", clock=637))]
+check("สองครึ่งที่นาฬิกาห่างกัน 37 นาที ไม่ถูกจับ ไม่ว่าตัวเลขจะชวนให้จับแค่ไหน",
+      pairing.pair_album(_far)[0] == [])
+
+_album = [("t", _top66), _pad("p1", 20 * 60 + 34), _pad("p2", 20 * 60 + 35), ("b", _tip56)]
+_pairs, _left = pairing.pair_album(_album)
+check("฿66 = 56 + ทิป 10 ห่าง 3 ใบ แต่นาฬิกานาทีเดียวกัน → จับคู่", [(t, b) for t, b, _ in _pairs] == [("t", "b")])
+check("รายงานระยะห่างจริง (3) ไม่ใช่ลำดับ", [d for _, _, d in _pairs] == [3])
+check("ไม่มีนาฬิกา กฎห่างเกิน 1 ยังปฏิเสธเหมือนเดิม",
+      pairing.pair_album([(k, dict(v, clock=None)) for k, v in _album])[0] == [])
+_apart = [("t", dict(_top66, clock=20 * 60)),
+          ("b", {"role": "bottom", "amount": 66.0, "alts": [], "theme": "สว่าง", "clock": 20 * 60 + 30,
+                 "numbers": [11, 66, 77], "seq": [66, 66, 77, 11]})]
+check("ยอดตรงเป๊ะและติดกัน แต่นาฬิกาห่าง 30 นาที → คนละงาน ไม่จับ", pairing.pair_album(_apart)[0] == [])
+check("นาฬิกาห่าง 2 นาทียังยอมให้ (ถ่ายช้าไปหน่อย)",
+      len(pairing.pair_album([("t", dict(_top66, clock=20 * 60)), ("b", dict(_apart[1][1], clock=20 * 60 + 2))])[0]) == 1)
+check("รูปยาวไม่มีนาฬิกา", pairing.clock_gap({"clock": None}, {"clock": 5}) is None)
+_nui = os.path.join(_SAMPLES, "nui6")
+if os.path.isdir(_nui):
+    import re as _re
+    _p, _l, _lg, _i = pairing.run_folder(_nui, log=lambda *a: None)
+    _num = lambda f: int(_re.search(r"_(\d+)\.jpg$", f).group(1))
+    _got = sorted((_num(t), _num(b)) for t, b, _ in _p)
+    check("NUI: 94+97 (฿66 = 56 + ทิป 10) และ 115+117 (฿78 = 38 + ทิป 40) จับได้ด้วยนาฬิกา",
+          all(x in _got for x in [(94, 97), (115, 117)]))
+    check("NUI: อ่านนาฬิกาได้ทั้ง 6 ใบ (ระยะทางทับนาฬิกาบนครึ่งบน)", all(v["clock"] is not None for v in _i.values()))
+    check("NUI: 46+49 ฿99 ยังพลาด — ตัวอ่านอ่านครึ่งบนเป็น ฿66 (คนละเรื่องกับกฎจับคู่)",
+          (46, 49) not in _got and _i[[k for k in _i if k.endswith("_46.jpg")][0]]["amount"] == 66.0)
+else:
+    skip("เทสต์ NUI นาฬิกา", "ไม่มีรูปตัวอย่างในเครื่องนี้ (test-images/ ไม่ถูก push — เป็นรูปผู้โดยสาร)")
+
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 if skipped:
     print(f"⚠ แต่มี {len(skipped)} ชุดที่ไม่ได้รัน — ผลข้างบนไม่ได้ครอบคลุมทั้งหมด:")

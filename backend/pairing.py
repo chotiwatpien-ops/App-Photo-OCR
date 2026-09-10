@@ -201,7 +201,41 @@ def ensure_theme(info, source):
 # 'bottom' — the code had changed and the key had not. r8: the fare is the topmost small green
 # line that READS as money, not the topmost one outright — the map's own green route legend was
 # being read instead, and Keang's 13421 was filed as a bottom half with no amount at all.
-READER = "r8"
+# r9: every half also carries the phone's clock (info['clock']), read off the status bar, so a
+# cached verdict from r8 has no clock and would pair as if the rule below did not exist.
+READER = "r9"
+
+# The status-bar clock: '19:56 น.' — hour and minute, a colon between, no digit touching it on
+# the left (the app writes '3.41 km' straight over the clock on a top half, and '314:56' is
+# that collision, not a time). A dot is not accepted in place of the colon: '2.27km 20:41'
+# would otherwise read as 02:27.
+CLOCK = re.compile(r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)")
+CLOCK_APART = 3     # minutes; two shots of one trip are seconds apart, not this
+
+
+def read_clock(im):
+    """Minutes since midnight on the phone's status bar, or None when it cannot be read.
+
+    Only the ink is read: on a top half the app draws the distance ('3.41 km') in grey right
+    across the clock, and OCR of the plain crop gets 150 of 234 on an album where the same crop
+    with everything but the black strokes painted white gets 222. Where both read, they agreed
+    on 146 of 148 and the two disagreements were the plain crop's."""
+    band = im.crop((0, 0, int(im.width * 0.5), int(im.height * 0.05)))
+    g = np.asarray(band.convert("L"))
+    keep = (g > 165) if int(np.median(g)) < 128 else (g < 90)      # dark theme: ink is light
+    ink = Image.fromarray(np.where(keep, 0, 255).astype(np.uint8)).convert("RGB")
+    try:
+        txt = _read_text(ink.resize((ink.width * 3, ink.height * 3), Image.LANCZOS))
+    except Exception:  # noqa: BLE001 — a band that will not read is a clock we do not have
+        return None
+    m = CLOCK.search(txt)
+    return int(m.group(1)) * 60 + int(m.group(2)) if m else None
+
+
+def clock_gap(a, b):
+    """Minutes between two halves' clocks, or None when either is unread."""
+    ca, cb = a.get("clock"), b.get("clock")
+    return None if ca is None or cb is None else abs(ca - cb)
 
 
 def cache_key(md5_hex: str) -> str:
@@ -388,6 +422,10 @@ def inspect(source):
         # ฿4, ฿8 … are never a fare: the OCR dropped digits (or read the bonus line). Treated
         # as unreadable, so two such misreads can never be glued together as a "฿4 trip".
         info["amount"], info["alts"] = None, []
+    # The clock on the status bar: the two shots of one trip are taken seconds apart, so their
+    # clocks agree, and two halves whose clocks are minutes apart are two trips whatever their
+    # figures say. A whole trip in one picture has no partner to compare with.
+    info["clock"] = None if info["role"] == "long" else read_clock(im)
     return info
 
 
@@ -567,7 +605,7 @@ def _by_fee_card(nets, cards, nums, card_figs, neighbours=False):
     return None
 
 
-def _tip_gap(nets, greens, seq, card_figs, nums=()):
+def _tip_gap(nets, greens, seq, card_figs, nums=(), same_shot=False):
     """Tier 3 when the gap between the two halves is a tip, else None.
 
     A tip has no ceiling: a passenger can add ฿50 to a ฿32 fare, so the rule that keeps a
@@ -588,7 +626,17 @@ def _tip_gap(nets, greens, seq, card_figs, nums=()):
     for net in nets:
         for green in greens:
             gap = net - green
-            if gap <= 0 or any(abs(gap - c) < 0.01 for c in card_figs):
+            if gap <= 0:
+                continue
+            if any(abs(gap - c) < 0.01 for c in card_figs) and not same_shot:
+                # The gap is a figure of the fee card, which usually means the top's net is not
+                # the driver's take at all but the passenger fare printed at the head of that
+                # card — the wrong pair Test 9 caught, a ฿500 top on a bottom earning 426 whose
+                # passenger paid 500. Nothing ON THE PAGE tells that apart from 2W-NUI=117's 97,
+                # where the ฿10 tip and Grab's ฿10 cut are the same figure and ฿66 = 56 + 10
+                # really is what the rider got: both read as 'net = income + cut'. What settles
+                # it is off the page — the clock. Two halves shot in the same minute are one
+                # trip, so the coincidence has no room left to hide in, and the gap is the tip.
                 continue
             if _printed_twice(seq, gap):
                 return 3
@@ -607,7 +655,7 @@ def _tip_gap(nets, greens, seq, card_figs, nums=()):
     return None
 
 
-def match_tier(top, bottom, neighbours=False):
+def match_tier(top, bottom, neighbours=False, same_shot=False):
     """How strongly a top half and a bottom half agree, or None. Evidence is ranked and the
     strongest kind available DECIDES — weaker kinds are never consulted behind it:
       A. the bottom's own green figure ('คุณได้รับ' / 'รวมรายได้จากรอบขับ') is readable:
@@ -622,7 +670,12 @@ def match_tier(top, bottom, neighbours=False):
     neighbours=True adds one verdict on top of B: NEIGHBOUR_ONLY, where the net is merely a few
     percent above the card's income and nothing explains the difference. It is off by default
     because it cannot stand on its own — pass it only from a caller that knows the two pictures
-    are touching, which is pair_album() and, once a pair is already settled, agreed_amount()."""
+    are touching, which is pair_album() and, once a pair is already settled, agreed_amount().
+
+    same_shot=True says the phone's clock reads the same minute on both halves, so they are two
+    shots of ONE trip. Only one rule asks for it: a gap that equals a figure of the fee card is
+    normally Grab's cut posing as a tip, and is only a tip when the two halves are known to be
+    the same trip. Never pass it on the strength of the figures themselves."""
     nets = [n for n in [top.get("amount")] + list(top.get("alts") or []) if n is not None and n > 0]
     if not nets:
         return None
@@ -646,7 +699,7 @@ def match_tier(top, bottom, neighbours=False):
                 if t in (0, 1) and (best is None or t < best):
                     best = t
         if best is None:
-            best = _tip_gap(nets, greens, bottom.get("seq") or [], card_figs, nums)
+            best = _tip_gap(nets, greens, bottom.get("seq") or [], card_figs, nums, same_shot)
         # A green figure that agrees with nothing is not the last word. When the bottom is cut
         # above the round-income card, the only green left on the page is the extra-income
         # total: 4W-Home Sirinapa's ฿308 top sits on a bottom whose green reads ฿15, the turbo,
@@ -700,7 +753,18 @@ def pair_album(items):
             # light bottom are two different people's screens, whatever their figures say.
             if info[t].get("theme") != info[b].get("theme"):
                 continue
-            tier = match_tier(info[t], info[b], neighbours=True)
+            # The phone's clock is on both halves. A rider shoots the top and the bottom of a
+            # trip seconds apart, so a pair's clocks agree to the minute; halves minutes apart
+            # were shot at different times and are two trips, however well their figures agree.
+            # And two halves that DO share the minute may stand a few pictures apart in the
+            # album — 2W-NUI=117 sends them three apart as a habit — and still be as good as
+            # neighbours: the clock says so, where the album order alone could not.
+            gap = clock_gap(info[t], info[b])
+            if gap is not None and gap >= CLOCK_APART:
+                continue
+            dist = abs(order[t] - order[b])
+            near = dist <= 1 or (gap is not None and gap <= 1)
+            tier = match_tier(info[t], info[b], neighbours=True, same_shot=gap == 0)
             if tier is not None:
                 if tier == NEIGHBOUR_ONLY:
                     # Nothing on either page confirms this one — only touching does, and even
@@ -719,8 +783,7 @@ def pair_album(items):
                 # cost nothing on the 878 pictures of a real week (every pair there is adjacent)
                 # and stopped an exact ฿161 at distance 15 from stealing a bottom off the pair
                 # beside it, which orphaned BOTH correct pairs.
-                dist = abs(order[t] - order[b])
-                if dist > 1 and tier != 0:
+                if not near and tier != 0:
                     # Distance is not evidence, it is exposure: the further two halves stand
                     # apart, the more figures lie between them for one to agree with by
                     # accident. So a pair that is not touching has to bring the one kind of
@@ -736,9 +799,12 @@ def pair_album(items):
                     # so almost every one of its pairs is far — and nothing anywhere else.
                     # Those six are not lost, they stay in the pool where Ops can see them.
                     # Touching pairs are untouched, and 90 of them rest on weaker evidence
-                    # than this, the seventeen of 4W Home Nun = 91 among them.
+                    # than this, the seventeen of 4W Home Nun = 91 among them. Two halves
+                    # whose clocks agree count as touching here: 2W-NUI=117 lost ฿66 = 56 + a
+                    # ฿10 tip and ฿78 = 38 + a ฿40 tip to this rule, both three pictures
+                    # apart, both shot within the same minute.
                     continue
-                cands.append(((0 if dist <= 1 else 1, tier, dist), t, b))
+                cands.append(((0 if near else 1, tier, dist), t, b))
     cands.sort()
 
     def greedy(ranked):
