@@ -33,6 +33,11 @@ def check(name, cond):
 
 D_FROM, D_TO = "2026-08-31", "2026-09-06"
 N_FROM, N_TO = "2026-09-07", "2026-09-13"
+check("ชื่อโฟลเดอร์สัปดาห์หน้าสะกดแบบ Ops: เดือนเดียวเขียนครั้งเดียว",
+      ce.next_week_folder("Week 31 Aug-6 Sep", "2026-08-31", "2026-09-06") == "Week 7-13 Sep")
+check("ข้ามเดือนเขียนสองครั้ง",
+      ce.next_week_folder("Week 21-27 Sep", "2026-09-21", "2026-09-27") == "Week 28 Sep-4 Oct")
+check("ไม่พึ่ง pool (runner ของ Carry ไม่มี OCR)", "from pool" not in open("backend/carry_excess.py", encoding="utf-8").read())
 check("สัปดาห์ถัดไปคำนวณจากวันที่", ce.next_week(D_FROM, D_TO) == (N_FROM, N_TO))
 
 ROOT = os.path.join(WORK, "drive")

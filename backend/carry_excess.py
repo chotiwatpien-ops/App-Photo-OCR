@@ -35,6 +35,24 @@ REPLACED_DIR = "_แทนที่แล้ว"
 GROUPS = ("2 W Saver", "2 W Standard", "4 W Standard")
 
 
+MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+RANGE_RE = re.compile(r"(\d{1,2})(?:\s*([A-Za-z]{3}))?\s*-\s*(\d{1,2})\s*([A-Za-z]{3})", re.IGNORECASE)
+
+
+def next_week_folder(week_name, d_from, d_to):
+    """'Week 31 Aug-6 Sep' -> 'Week 7-13 Sep', spelled the way Ops spells it: the month once
+    when both days share it, twice when they do not, whatever came before the dates kept.
+
+    pool.next_week_name does the same, but importing pool pulls in the OCR stack, which the
+    carry runner does not install — run #1 died on that import in thirty seconds."""
+    n_from, n_to = (date.fromisoformat(d) + timedelta(days=7) for d in (d_from, d_to))
+    m = RANGE_RE.search(week_name or "")
+    head = week_name[:m.start()].rstrip() if m else "Week"
+    span = (f"{n_from.day}-{n_to.day} {MONTH_ABBR[n_to.month - 1]}" if n_from.month == n_to.month
+            else f"{n_from.day} {MONTH_ABBR[n_from.month - 1]}-{n_to.day} {MONTH_ABBR[n_to.month - 1]}")
+    return f"{head} {span}".strip()
+
+
 def next_week(d_from, d_to):
     a, b = (date.fromisoformat(d) + timedelta(days=7) for d in (d_from, d_to))
     return a.isoformat(), b.isoformat()
@@ -164,7 +182,6 @@ def main(argv=None):
     import config
     import roster
     from ingest import week_label
-    from pool import next_week_name
     drive = roster._drive()
 
     excess, counts, _jobs = excess_rows(a.d_from, a.d_to, a.target)
@@ -182,7 +199,7 @@ def main(argv=None):
         print("\n(รายงานอย่างเดียว — ใส่ --apply เพื่อยกจริง)")
         return 0
 
-    nxt = a.next_week or (next_week_name(a.week) or [None])[0]
+    nxt = a.next_week or next_week_folder(a.week, a.d_from, a.d_to)
     if not nxt:
         print("✗ ตั้งชื่อโฟลเดอร์สัปดาห์หน้าจากชื่อสัปดาห์นี้ไม่ได้ — ใส่ --next-week")
         return 1
