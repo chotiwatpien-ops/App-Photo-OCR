@@ -30,6 +30,11 @@ on:
         description: "โควตาต่อคนเฉพาะงาน 2 W Saver สำหรับรอบนี้เท่านั้น (ว่าง = 21; Standard และ 4W ยัง 21 เสมอ) — Ops สั่ง 2026-09-08 ให้ 2 W Saver วีคนี้ครบก่อน"
         type: string
         default: ""
+      exports_week:
+        description: "คู่กับ exports_only: ทำรูปเฉพาะสัปดาห์นี้ (เช่น 2026-W37 หรือวันในสัปดาห์ 2026-09-07) · เว้นว่าง = ทุกสัปดาห์"
+        type: string
+        required: false
+        default: ""
       exports_only:
         description: "Regenerate Excel + customer images only (no Gemini cost)"
         type: boolean
@@ -142,6 +147,7 @@ jobs:
           if [ "${{ github.event.inputs.exports_only }}" = "true" ]; then ARGS="$ARGS --exports-only"; fi
           if [ "${{ github.event.inputs.xlsx_only }}" = "true" ]; then ARGS="$ARGS --xlsx-only"; fi
           if [ -n "${{ github.event.inputs.exports_jobs }}" ]; then ARGS="$ARGS --exports-jobs ${{ github.event.inputs.exports_jobs }}"; fi
+          if [ -n "${{ github.event.inputs.exports_week }}" ]; then ARGS="$ARGS --exports-week ${{ github.event.inputs.exports_week }}"; fi
           if [ -n "${{ github.event.inputs.redo_model }}" ]; then ARGS="$ARGS --redo-model ${{ github.event.inputs.redo_model }}"; fi
           if [ -n "${{ github.event.inputs.delete_jobs }}" ]; then ARGS="$ARGS --delete-jobs ${{ github.event.inputs.delete_jobs }}"; fi
           if [ -n "${{ github.event.inputs.delete_trips }}" ]; then ARGS="$ARGS --delete-trips ${{ github.event.inputs.delete_trips }}"; fi

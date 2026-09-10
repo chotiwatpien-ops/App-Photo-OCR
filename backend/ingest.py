@@ -78,6 +78,23 @@ def week_label(d_from: str) -> str:
     return f"{y}-W{w:02d}"
 
 
+def parse_weeks(arg):
+    """'2026-W37, 2026-09-07' -> {'2026-W37'}; None or empty -> None (meaning every week).
+
+    A date is accepted because that is what every other tool here is given, and asking for the
+    ISO week number by hand is how the wrong week gets swept."""
+    out = set()
+    for part in (arg or "").replace(" ", "").split(","):
+        if not part:
+            continue
+        if re.fullmatch(r"\d{4}-W\d{1,2}", part, re.IGNORECASE):
+            y, w = part.upper().split("-W")
+            out.add(f"{y}-W{int(w):02d}")
+        else:
+            out.add(week_label(part))          # a date inside the week; ValueError if it is not one
+    return out or None
+
+
 def clean_name(s):
     s = re.sub(r"[\u200b\u200c\u200d\ufeff]", "", s or "")  # zero-width chars from LINE copy-paste
     return re.sub(r"\s+", " ", s).strip()
@@ -413,15 +430,24 @@ def collect_batches(drive, exports_id=None):
     return done_trips, errors, touched_jobs, issues
 
 
-def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True, force=False):
+def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True, force=False, weeks=None):
     """Regenerate Excel + customer images for jobs already in the database (no reading).
     only_job_ids limits the sweep; force=True rebuilds pictures that already exist (for a job
-    whose upload failed). Returns (error_count, failed_job_ids)."""
+    whose upload failed). Returns (error_count, failed_job_ids).
+
+    weeks limits the PICTURE sweep to those week labels ('2026-W37'); the workbooks are whole
+    files and are always written from every row. Without it the sweep visits every job of every
+    week, and a row whose name no longer matches what its rider would be given today is remade
+    under a new one: run #171 was asked to repair W36 and rebuilt 1,139 pictures across
+    W33-W35, which nobody had asked for and which changed the name column of rows already
+    delivered. It also costs the time — run #183 took 29 minutes to make two pictures."""
     errors = 0
     failed = []
     todo = []
     for (d_from, d_to), js in sorted(db.jobs_by_week().items()):
         wk = week_label(d_from)
+        if weeks is not None and wk not in weeks:
+            continue
         for j in js:
             if only_job_ids is not None and j["id"] not in only_job_ids:
                 continue
@@ -1033,6 +1059,10 @@ def main():
                          "For a column-rule change: the workbook holds every week, so one pass fixes all")
     ap.add_argument("--exports-jobs", metavar="IDS",
                     help="regenerate customer images for these job ids only (comma-separated)")
+    ap.add_argument("--exports-week", metavar="WEEK",
+                    help="with --exports-only: make pictures for these weeks only — '2026-W37', or any "
+                         "date inside the week ('2026-09-07'); comma-separated for several. "
+                         "The workbooks are still written from every row.")
     ap.add_argument("--fix-hidden-turbo", action="store_true",
                     help="DB-only maintenance: fill small net-base gaps (collapsed sections) into Turbo")
     ap.add_argument("--delete-jobs", metavar="IDS", help="comma-separated job ids to delete")
@@ -1099,7 +1129,10 @@ def main():
         # only_job_ids=set() matches no job, so the picture sweep is skipped entirely
         errors, _ = export_only(drive, exports, only_job_ids=set(), with_xlsx=True)
     elif a.exports_only:
-        errors, _ = export_only(drive, exports)
+        weeks = parse_weeks(a.exports_week)
+        if weeks:
+            log(f"🖼 สร้างรูปส่งลูกค้าเฉพาะสัปดาห์ {', '.join(sorted(weeks))} (ไฟล์ Excel ยังเขียนครบทุกสัปดาห์)")
+        errors, _ = export_only(drive, exports, weeks=weeks)
     else:
         errors = run(drive, inbox, exports, dry_run=a.dry_run, limit=a.limit, only=a.only)
     sys.exit(1 if errors else 0)
