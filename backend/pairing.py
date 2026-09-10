@@ -211,6 +211,14 @@ READER = "r9"
 # would otherwise read as 02:27.
 CLOCK = re.compile(r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)")
 CLOCK_APART = 3     # minutes; two shots of one trip are seconds apart, not this
+# How far apart in the album a shared minute may vouch for. A rider screenshotting their history
+# in one sitting puts the same minute on a whole burst — 8 of 2W-NUI=117's pictures share one
+# minute, and 31 of its 62 minutes carry four or more. Without a ceiling the clock hands 'these
+# two are touching' to every pair in that burst, which is the far-pair rule switched off exactly
+# where albums are hardest. Three is the habit the clock was added for (NUI sends its halves
+# three apart) and costs nothing: with the ceiling at 3 that album still makes all 116 of its
+# pairs, and the pairs it holds at distance 4 and 5 are tier 0, which never needed the clock.
+CLOCK_NEAR_MAX = 3
 
 
 def read_clock(im):
@@ -233,9 +241,16 @@ def read_clock(im):
 
 
 def clock_gap(a, b):
-    """Minutes between two halves' clocks, or None when either is unread."""
+    """Minutes between two halves' clocks, or None when either is unread.
+
+    Round the clock: 23:59 and 00:00 are one minute apart, not 1,439. Riders work past midnight,
+    and read the other way the whole burst around 00:00 was vetoed — an exact ฿77 match on two
+    touching halves came back as 'two different trips'."""
     ca, cb = a.get("clock"), b.get("clock")
-    return None if ca is None or cb is None else abs(ca - cb)
+    if ca is None or cb is None:
+        return None
+    d = abs(ca - cb)
+    return min(d, 1440 - d)
 
 
 def cache_key(md5_hex: str) -> str:
@@ -763,8 +778,10 @@ def pair_album(items):
             if gap is not None and gap >= CLOCK_APART:
                 continue
             dist = abs(order[t] - order[b])
-            near = dist <= 1 or (gap is not None and gap <= 1)
-            tier = match_tier(info[t], info[b], neighbours=True, same_shot=gap == 0)
+            vouched = gap is not None and gap <= 1 and dist <= CLOCK_NEAR_MAX
+            near = dist <= 1 or vouched
+            tier = match_tier(info[t], info[b], neighbours=True,
+                              same_shot=gap == 0 and dist <= CLOCK_NEAR_MAX)
             if tier is not None:
                 if tier == NEIGHBOUR_ONLY:
                     # Nothing on either page confirms this one — only touching does, and even
@@ -772,8 +789,8 @@ def pair_album(items):
                     # here, so a weak neighbour would beat an exact figure 33 pictures away and
                     # Ploy145 (whose pairs really are that far apart) lost 37 correct pairs to
                     # them. It gets its own pass, over the halves nothing else could place.
-                    if abs(order[t] - order[b]) <= 1:
-                        weak.append(((0, tier, abs(order[t] - order[b])), t, b))
+                    if near:
+                        weak.append(((0, tier, dist), t, b))
                     continue
                 # Sitting next to each other is evidence in its own right, and until now it
                 # counted for nothing until the tiers tied. A rider takes the two shots back to

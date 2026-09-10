@@ -624,6 +624,29 @@ check("ยอดตรงเป๊ะและติดกัน แต่นา
 check("นาฬิกาห่าง 2 นาทียังยอมให้ (ถ่ายช้าไปหน่อย)",
       len(pairing.pair_album([("t", dict(_top66, clock=20 * 60)), ("b", dict(_apart[1][1], clock=20 * 60 + 2))])[0]) == 1)
 check("รูปยาวไม่มีนาฬิกา", pairing.clock_gap({"clock": None}, {"clock": 5}) is None)
+# นาฬิกาเดินรอบวัน 23:59 กับ 00:00 ห่างกันนาทีเดียว ไม่ใช่ 1,439
+check("ข้ามเที่ยงคืน ห่างกัน 1 นาที", pairing.clock_gap({"clock": 23 * 60 + 59}, {"clock": 0}) == 1)
+check("ข้ามเที่ยงคืน 23:58 → 00:01 = 3 นาที", pairing.clock_gap({"clock": 23 * 60 + 58}, {"clock": 1}) == 3)
+_mid_t = {"role": "top", "amount": 77.0, "alts": [], "theme": "สว่าง", "clock": 23 * 60 + 59}
+_mid_b = {"role": "bottom", "amount": 77.0, "alts": [], "theme": "สว่าง", "clock": 0,
+          "numbers": [11, 77, 88], "seq": [77, 77, 88, 11]}
+check("คู่ที่ยอดตรงเป๊ะและคร่อมเที่ยงคืน ยังจับได้",
+      len(pairing.pair_album([("t", _mid_t), ("b", _mid_b)])[0]) == 1)
+
+# นาฬิกาค้ำได้แค่ระยะใกล้ ไม่งั้นรูปทั้งชุดที่ถ่ายรวดเดียวจะปิดกฎระยะห่างทั้งอัลบั้ม
+def _burst(dist):
+    items = [("t", dict(_top66, clock=20 * 60 + 34))]
+    items += [_pad(f"p{i}", 20 * 60 + 34) for i in range(dist - 1)]
+    return items + [("b", dict(_tip56, clock=20 * 60 + 34))]
+
+
+check(f"นาฬิกาค้ำได้ถึงระยะ {pairing.CLOCK_NEAR_MAX}", len(pairing.pair_album(_burst(pairing.CLOCK_NEAR_MAX))[0]) == 1)
+check("เกินเพดานแล้วไม่ค้ำ แม้นาฬิกาตรงนาทีเดียวกัน", pairing.pair_album(_burst(pairing.CLOCK_NEAR_MAX + 1))[0] == [])
+check("ยิงยาว 31 ใบก็ไม่ค้ำ", pairing.pair_album(_burst(31))[0] == [])
+check("คู่ผิดของ Test 9 ไกลเกินเพดาน แม้นาฬิกาตรงกัน ก็ยังไม่จับ",
+      pairing.pair_album([("t", {"role": "top", "amount": 500.0, "alts": [], "theme": "สว่าง", "clock": 600})]
+                         + [_pad(f"q{i}", 600) for i in range(4)]
+                         + [("b", dict(_b426_cut, role="bottom", alts=[], theme="สว่าง", clock=600))])[0] == [])
 _nui = os.path.join(_SAMPLES, "nui6")
 if os.path.isdir(_nui):
     import re as _re
