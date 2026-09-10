@@ -1379,11 +1379,21 @@ def walk_cache_save(mapping: dict) -> None:
 
 def committed_fingerprint() -> str:
     """One cheap line that changes whenever the workbook would come out different: a row added,
-    a row approved, or a figure edited. Three numbers instead of 13,000 rows."""
+    a row approved, a figure edited, a row handed to another job, or its service changed.
+    Five numbers instead of 13,000 rows.
+
+    The last two were missing on 2026-09-10. The chip audit rewrote Service Type on 603 rows
+    and the rehome and carry moved 1,236 rows to other jobs, and the round after them said
+    'ไม่มีอะไรเปลี่ยนตั้งแต่รอบก่อน' and left the wrong workbook on Drive: not one of the three
+    numbers had moved. The sum of job ids moves when any row changes owner; the Saver count
+    moves when any tier flips (a symmetric swap is the one shape it misses, and nothing here
+    produces one)."""
     with engine.begin() as c:
-        r = c.execute(select(func.count(), func.max(trips.c.id), func.sum(trips.c.net_earnings))
+        r = c.execute(select(func.count(), func.max(trips.c.id), func.sum(trips.c.net_earnings),
+                             func.sum(trips.c.job_id),
+                             func.sum(case((trips.c.service_type.like("Saver%"), 1), else_=0)))
                       .where(trips.c.committed == 1)).first()
-    return f"{r[0] or 0}|{r[1] or 0}|{round(float(r[2] or 0), 2)}"
+    return f"{r[0] or 0}|{r[1] or 0}|{round(float(r[2] or 0), 2)}|{r[3] or 0}|{r[4] or 0}"
 
 
 def review_queue():

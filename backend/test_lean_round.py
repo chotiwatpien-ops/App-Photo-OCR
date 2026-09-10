@@ -76,6 +76,17 @@ db.approve_trip(t2)
 check("อนุมัติแถวใหม่แล้วลายนิ้วมือเปลี่ยน", db.committed_fingerprint() != after_edit)
 
 # แถวที่ยังไม่อนุมัติต้องไม่ขยับลายนิ้วมือ — workbook เขียนเฉพาะแถวที่อนุมัติแล้ว
+# A row handed to another job, or whose service changes, must change the workbook — and on
+# 2026-09-10 neither did: 603 service flips and 1,236 job moves left all three numbers as they
+# were, and the wrong workbook stayed on Drive.
+_fp0 = db.committed_fingerprint()
+_other = db.create_job("อีกคน Win", "Trips", "2026-08-31", "2026-09-06", category="2 W Saver")
+_row = db.query_trips(committed_only=True)[0]
+db.move_trips_to_job([_row["id"]], _other)
+check("ย้ายแถวไป job อื่นแล้วลายนิ้วมือเปลี่ยน", db.committed_fingerprint() != _fp0)
+_fp1 = db.committed_fingerprint()
+db.update_trip(_row["id"], {"service_type": "Saver Bike" if not str(_row.get("service_type") or "").startswith("Saver") else "Standard Bike"})
+check("เปลี่ยน Saver/Standard แล้วลายนิ้วมือเปลี่ยน", db.committed_fingerprint() != _fp1)
 before_waiting = db.committed_fingerprint()
 t3 = db.create_trip(job, "c.jpg", None, "image/jpeg")
 db.update_trip(t3, {"status": "done", "trip_date": "2026-08-27", "net_earnings": 70, "base_fare": 70})
