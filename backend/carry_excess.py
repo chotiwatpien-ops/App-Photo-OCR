@@ -120,7 +120,16 @@ class Weeks:
         return fid, True
 
     def find_in(self, folder_id, file_name):
-        return next((i["id"] for i in self.drive.list_images(folder_id) if i["name"] == file_name), None)
+        """A picture by name in a folder, from a listing taken once per folder.
+
+        Listing the folder again for every row is what timed run #3 out at sixty minutes:
+        the week's Export Pic group holds ~2,000 pictures and was read from Drive once per row,
+        six hundred times over. A folder only ever loses pictures here, so one listing serves."""
+        if not hasattr(self, "_listing"):
+            self._listing = {}
+        if folder_id not in self._listing:
+            self._listing[folder_id] = {i["name"]: i["id"] for i in self.drive.list_images(folder_id)}
+        return self._listing[folder_id].get(file_name)
 
     def replaced_dir(self):
         if not self.exports_week_id:
@@ -166,6 +175,8 @@ def apply(drive, wk, d_from, d_to, excess, log=print):
                 db.update_trip(r["id"], {"customer_image": None,
                                          "note": f"{note} | {r['note']}" if r.get("note") else note})
                 done["ย้ายแถว"] += 1
+                if done["ย้ายแถว"] % 50 == 0:
+                    log(f"    ย้ายแล้ว {done['ย้ายแถว']} แถว")
     return done
 
 
