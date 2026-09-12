@@ -406,8 +406,13 @@ def collect_batches(drive, exports_id=None):
                     log(f"  ⚠ job #{jid}: ไม่รู้ช่วงสัปดาห์ ข้ามการกระจายวันที่")
                 st = db.auto_approve_job(jid, fresh_ids=fresh_by_job.get(jid, []))
                 kept = keep_images_for_waiting(jid, drive=drive)
+                # ทิ้งเป็นซ้ำต้องอยู่ในบรรทัดนี้ด้วย: รอบ W37 อ่านมา 992 แถว อนุมัติ 806 รอคน 6
+                # ที่เหลือ 177 แถวหายไปเงียบ ๆ เพราะบรรทัดนี้ไม่เคยพูดถึงมันเลย (เส้นทางปกติ
+                # ที่บรรทัด 996 พิมพ์อยู่แล้ว ขาดแต่เส้นทาง batch ซึ่งเป็นเส้นทางหลักตอนนี้)
                 log(f"  ✓ job #{jid}: จับคู่ {pairs_n} · อนุมัติอัตโนมัติ {st['approved']} · "
-                    f"รอคน {st['flagged']}" + (f" · เก็บรูปให้แถวที่รอคน {kept}" if kept else ""))
+                    f"รอคน {st['flagged']}"
+                    + (f" · ทิ้งเป็นซ้ำ {st['discarded']}" if st.get("discarded") else "")
+                    + (f" · เก็บรูปให้แถวที่รอคน {kept}" if kept else ""))
             except Exception as e:  # noqa: BLE001
                 errors += 1
                 log(f"  ✗ job #{jid}: จัดการหลังอ่านไม่สำเร็จ — {str(e)[:150]}")

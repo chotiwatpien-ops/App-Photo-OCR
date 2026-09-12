@@ -1,0 +1,46 @@
+name: รายงานรูปซ้ำ — ให้ลูกค้าตีกลับไรเดอร์
+
+# อ่านอย่างเดียว ไม่แตะฐานข้อมูลและไม่แตะ Drive: ประกอบเคสรูปซ้ำของสัปดาห์ที่เลือก แล้วแนบไฟล์
+# Excel ไว้ที่หน้า run ให้ดาวน์โหลด (Artifacts) — สามชีต: สรุปรายผู้ส่ง · รายใบ · ค้างตัดสิน
+
+on:
+  workflow_dispatch:
+    inputs:
+      date_from:
+        description: "วันแรกของสัปดาห์ (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-09-07"
+      date_to:
+        description: "วันสุดท้ายของสัปดาห์ (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-09-13"
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: ประกอบเคสรูปซ้ำ
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TZ: Asia/Bangkok
+        run: |
+          python duplicate_report.py \
+            --from "${{ github.event.inputs.date_from }}" \
+            --to "${{ github.event.inputs.date_to }}" \
+            --xlsx "รูปซ้ำ_${{ github.event.inputs.date_from }}.xlsx"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: duplicate-report-${{ github.event.inputs.date_from }}
+          path: backend/*.xlsx
+          if-no-files-found: warn
+          retention-days: 30
