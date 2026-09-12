@@ -102,6 +102,19 @@ trips = Table(
 # sender off the file name therefore worked for some rows and quietly fell back to the destination
 # folder for the rest — and the duplicate report then compared an album on one side with a folder
 # on the other and called them different people (2026-09-13: 391 of 475 rows, most of them wrong).
+# A week Ops has declared finished: the file is with the customer and nothing automatic may touch
+# that week again. Closing is a decision, not a date — work on a week carries on for days after
+# its last trip, and a week can sit half-finished for longer. Round #210 walked into W36, already
+# delivered, and found 165 repeats it wanted to move out of rider folders; the ceiling stopped it,
+# but the right answer was not to look. Reopening is allowed and leaves the note behind.
+week_locks = Table(
+    "week_locks", meta,
+    Column("date_from", String(10), primary_key=True),
+    Column("date_to", String(10)),
+    Column("closed_at", String(19), nullable=False),
+    Column("closed_by", String(64)),
+)
+
 pool_sources = Table(
     "pool_sources", meta,
     Column("drive_id", String(128), primary_key=True),
@@ -396,6 +409,37 @@ def record_pool_sources(rows) -> int:
             c.execute(insert(pool_sources), fresh)
             n = len(fresh)
     return n
+
+
+def close_week(date_from, date_to=None, by=None) -> bool:
+    """ประกาศว่าสัปดาห์นี้จบแล้ว — งานอัตโนมัติทุกตัวจะไม่แตะสัปดาห์นี้อีก"""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with engine.begin() as c:
+        if c.execute(select(week_locks.c.date_from)
+                     .where(week_locks.c.date_from == date_from)).first():
+            return False
+        c.execute(insert(week_locks).values(date_from=date_from, date_to=date_to,
+                                            closed_at=now, closed_by=by))
+        return True
+
+
+def reopen_week(date_from) -> bool:
+    with engine.begin() as c:
+        return c.execute(delete(week_locks)
+                         .where(week_locks.c.date_from == date_from)).rowcount > 0
+
+
+def closed_weeks():
+    """{วันแรกของสัปดาห์: {closed_at, closed_by}} — สัปดาห์ที่ถูกปิดแล้วทั้งหมด"""
+    with engine.begin() as c:
+        return {r["date_from"]: dict(r) for r in
+                c.execute(select(week_locks)).mappings().all()}
+
+
+def week_closed(date_from) -> bool:
+    with engine.begin() as c:
+        return bool(c.execute(select(week_locks.c.date_from)
+                              .where(week_locks.c.date_from == date_from)).first())
 
 
 def pool_albums(drive_ids):

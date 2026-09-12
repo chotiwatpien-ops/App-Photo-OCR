@@ -85,14 +85,34 @@ def seats_freed(plan):
 SWEEP_CAP = 150
 
 
-def week_is_open(d_to, today=None) -> bool:
-    """สัปดาห์นี้ยังทำอยู่หรือปิดไปแล้ว — วันสุดท้ายของสัปดาห์ผ่านไปแล้ว = ปิด
+STALE_DAYS = 21     # ตาข่ายกันพลาด ไม่ใช่กฎหลัก — ดู week_is_open
 
-    รอบอัตโนมัติเก็บกวาดเฉพาะสัปดาห์ที่ยังทำอยู่ ของที่ส่งลูกค้าไปแล้วไม่ต้องไปขยับ: ที่นั่งของ
-    สัปดาห์ที่ปิดแล้วไม่มีใครใช้ต่อ และการย้ายไฟล์ทีหลังทำให้สิ่งที่ลูกค้าเปิดดูไปแล้วเปลี่ยน
-    (2026-09-13 รอบ #210 เจอรูปซ้ำ 165 ใบของ W36 ซึ่งส่งไปแล้ว) สั่งเองยังกวาดสัปดาห์ไหนก็ได้"""
-    from datetime import date
-    return str(d_to or "") >= (today or date.today().isoformat())
+
+def week_is_open(date_from, d_to=None, closed=None, today=None) -> bool:
+    """สัปดาห์นี้ยังทำอยู่หรือจบแล้ว — งานอัตโนมัติทุกตัวถามตัวนี้ก่อนจะแตะอะไรของสัปดาห์นั้น
+
+    คนเป็นคนตัดสิน ไม่ใช่ปฏิทิน: กดปุ่ม 'ปิดสัปดาห์' ในหน้าเว็บเมื่อส่งไฟล์ให้ลูกค้าแล้ว เพราะงาน
+    ของสัปดาห์หนึ่งทำต่ออีกหลายวันหลังวันสุดท้ายของสัปดาห์ และบางสัปดาห์ก็ค้างนานกว่านั้น
+    (2026-09-13 รอบ #210 เจอรูปซ้ำ 165 ใบของ W36 ที่ส่งไปแล้ว — ปฏิทินบอกไม่ได้ว่าอันไหนจบ)
+
+    ตาข่ายกันพลาดข้อเดียว: สัปดาห์ที่วันสุดท้ายผ่านมาเกิน STALE_DAYS ถือว่าจบ แม้ไม่มีใครกดปิด
+    ไม่งั้นสัปดาห์เก่าที่ไม่มีใครกดจะถูกงานอัตโนมัติแตะไปเรื่อย ๆ ตลอดกาล
+
+    closed: ส่ง set ของวันแรกของสัปดาห์ที่ปิดแล้วเข้ามาได้ เพื่อไม่ต้องถามฐานข้อมูลซ้ำทุกสัปดาห์
+    สั่งเอง (free_dup_seats.py --apply) ไม่ถูกกฎนี้จำกัด — คนที่พิมพ์คำสั่งคือคนที่ตัดสินใจแล้ว"""
+    from datetime import date, timedelta
+    if closed is None:
+        closed = set(db.closed_weeks())
+    if date_from in closed:
+        return False
+    if d_to:
+        stale = (date.fromisoformat(today) if today else date.today()) - timedelta(days=STALE_DAYS)
+        try:
+            if date.fromisoformat(str(d_to)[:10]) < stale:
+                return False
+        except ValueError:
+            return False
+    return True
 
 
 def sweep(drive, jobs, d_from, d_to, apply=False, cap=SWEEP_CAP, log=print):

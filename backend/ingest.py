@@ -449,9 +449,14 @@ def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True, force=Fals
     errors = 0
     failed = []
     todo = []
+    # สัปดาห์ที่ปิดแล้วคือไฟล์ที่ลูกค้าถืออยู่ในมือ — สร้างรูปทับใหม่ทีหลังคือเปลี่ยนของที่เขาได้ไป
+    # แล้ว ยกเว้นสั่ง force หรือระบุ job มาตรง ๆ ซึ่งแปลว่ามีคนตั้งใจซ่อมสัปดาห์นั้นจริง ๆ
+    shut = set() if (force or only_job_ids is not None) else set(db.closed_weeks())
     for (d_from, d_to), js in sorted(db.jobs_by_week().items()):
         wk = week_label(d_from)
         if weeks is not None and wk not in weeks:
+            continue
+        if d_from in shut:
             continue
         for j in js:
             if only_job_ids is not None and j["id"] not in only_job_ids:
@@ -1052,11 +1057,13 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         # as full, so new work had nowhere to land. Only the weeks this round touched are swept.
         import free_dup_seats
         by_week = db.jobs_by_week()
-        closed = [f for f, t in sorted(touched_weeks) if not free_dup_seats.week_is_open(t)]
-        if closed:
-            log(f"🪑 ข้ามสัปดาห์ที่ปิดไปแล้ว {' · '.join(closed)} — ส่งลูกค้าไปแล้ว ไม่ขยับอะไร")
+        shut = set(db.closed_weeks())
+        skipped = [f for f, t in sorted(touched_weeks)
+                   if not free_dup_seats.week_is_open(f, t, closed=shut)]
+        if skipped:
+            log(f"🪑 ข้ามสัปดาห์ที่ปิดแล้ว {' · '.join(skipped)} — จบแล้ว ไม่ขยับอะไร")
         for wk_from, wk_to in sorted(touched_weeks):
-            if not free_dup_seats.week_is_open(wk_to):
+            if not free_dup_seats.week_is_open(wk_from, wk_to, closed=shut):
                 continue
             try:
                 res = free_dup_seats.sweep(drive, by_week.get((wk_from, wk_to)) or [],

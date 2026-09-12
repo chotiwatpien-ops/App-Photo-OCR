@@ -41,6 +41,11 @@ export const api = {
   patchTrip: (id, fields) => fetch(`/api/trips/${id}`, json('PATCH', fields)).then(handle),
   deleteTrip: (id) => fetch(`/api/trips/${id}`, { method: 'DELETE' }).then(handle),
   weeks: () => fetch('/api/weeks').then(handle),
+  // ปิดสัปดาห์ = ส่งไฟล์ให้ลูกค้าแล้ว งานอัตโนมัติจะไม่แตะสัปดาห์นั้นอีก (เก็บกวาดรูปซ้ำ,
+  // สร้างรูปส่งลูกค้าทับของเดิม) เปิดใหม่ได้ถ้ายังต้องแก้ต่อ
+  closeWeek: (dateFrom, dateTo) =>
+    fetch(`/api/weeks/${dateFrom}/close?date_to=${dateTo || ''}`, { method: 'POST' }).then(handle),
+  reopenWeek: (dateFrom) => fetch(`/api/weeks/${dateFrom}/reopen`, { method: 'POST' }).then(handle),
   batches: () => fetch('/api/batches').then(handle),
   collectBatches: () => fetch('/api/batches/collect', { method: 'POST' }).then(handle),
   renameJobRider: (jobId, name) => fetch(`/api/jobs/${jobId}/rider`, json('PATCH', { name })).then(handle),

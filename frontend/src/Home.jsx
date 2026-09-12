@@ -274,7 +274,11 @@ export default function Home({ onOpenJob, onJobCreated }) {
           <button onClick={() => setOpenWeeks({ ...openWeeks, [W.week]: !isOpen(W.week, i) })}
             className="w-full flex flex-wrap items-center gap-x-6 gap-y-2 px-5 py-4 text-left">
             <div className="min-w-40">
-              <div className="font-semibold text-lg">{W.week}</div>
+              <div className="font-semibold text-lg flex items-center gap-2">
+                {W.week}
+                {W.closed && <span title={`ปิดเมื่อ ${W.closed_at || ''}`}
+                  className="text-[11px] font-normal bg-slate-200 text-slate-600 rounded-full px-2 py-0.5">ปิดแล้ว</span>}
+              </div>
               <div className="text-xs text-slate-500">{W.date_from} → {W.date_to}</div>
             </div>
             <div className="flex gap-6 text-sm">
@@ -290,6 +294,25 @@ export default function Home({ onOpenJob, onJobCreated }) {
                 ? <a href={driveFile(W.xlsx)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-1.5">📄 Excel บน Drive ↗</a>
                 : <a href={exportUrl({ dateFrom: W.date_from, dateTo: W.date_to, committedOnly: true })} onClick={(e) => e.stopPropagation()} className="border border-emerald-600 text-emerald-700 rounded-lg px-3 py-1.5">⬇ Excel</a>}
               {W.folder && <a href={driveFolder(W.folder)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-slate-600 hover:underline">🖼 รูปส่งลูกค้า ↗</a>}
+              {/* ปิดสัปดาห์เมื่อส่งไฟล์ให้ลูกค้าแล้ว — หลังจากนี้ไม่มีงานอัตโนมัติตัวไหนแตะสัปดาห์นี้
+                  อีก ทั้งการเก็บกวาดรูปซ้ำออกจากโฟลเดอร์ไรเดอร์ และการสร้างรูปส่งลูกค้าทับของเดิม */}
+              {/* span ไม่ใช่ button: แถบหัวสัปดาห์ทั้งแถบเป็น <button> อยู่แล้ว และ button ซ้อน
+                  button เป็น HTML ที่เบราว์เซอร์ไม่รับ — คลิกแล้วไม่ถึง handler นี้เลย */}
+              <span role="button" tabIndex={0}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.currentTarget.click() }}
+                onClick={(e) => {
+                e.stopPropagation()
+                const ask = W.closed
+                  ? `เปิดสัปดาห์ ${W.week} อีกครั้ง? งานอัตโนมัติจะกลับมาแตะสัปดาห์นี้ได้`
+                  : `ปิดสัปดาห์ ${W.week}? ส่งไฟล์ให้ลูกค้าแล้วใช่ไหม — หลังจากนี้งานอัตโนมัติจะไม่แตะสัปดาห์นี้อีก`
+                if (!window.confirm(ask)) return
+                const p = W.closed ? api.reopenWeek(W.date_from) : api.closeWeek(W.date_from, W.date_to)
+                p.then(load).catch((e2) => setErr(e2.message))
+              }}
+                className={`cursor-pointer select-none rounded-lg px-3 py-1.5 hover:bg-slate-50 border ${
+                  W.closed ? 'border-slate-300 text-slate-600' : 'border-slate-400 text-slate-700'}`}>
+                {W.closed ? '🔓 เปิดอีกครั้ง' : '🔒 ปิดสัปดาห์'}
+              </span>
               <span className="text-slate-400">{isOpen(W.week, i) ? '▾' : '▸'}</span>
             </div>
           </button>

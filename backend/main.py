@@ -300,10 +300,32 @@ def job_images_zip(job_id: int):
                              "X-File-Count": str(n)})
 
 
+@app.post("/api/weeks/{date_from}/close")
+def close_week(date_from: str, date_to: str = None):
+    """ประกาศว่าสัปดาห์นี้จบ — ส่งไฟล์ให้ลูกค้าแล้ว งานอัตโนมัติจะไม่แตะสัปดาห์นี้อีก
+
+    ที่หยุดคือ: การเก็บกวาดรูปซ้ำออกจากโฟลเดอร์ไรเดอร์ และการสร้างรูปส่งลูกค้าใหม่ทับของเดิม
+    ที่ยังทำได้: ทุกอย่างที่คนสั่งเอง — ปุ่มบน GitHub, การกดอนุมัติในคิว, การขอไฟล์ Excel"""
+    if not db.close_week(date_from, date_to, by="app"):
+        return {"ok": True, "already": True}
+    return {"ok": True}
+
+
+@app.post("/api/weeks/{date_from}/reopen")
+def reopen_week(date_from: str):
+    """เปิดสัปดาห์อีกครั้ง — ใช้เมื่อยังต้องแก้ต่อหลังกดปิดไปแล้ว"""
+    return {"ok": db.reopen_week(date_from)}
+
+
 @app.get("/api/weeks")
 def weeks():
     open_b = db.open_batches()
-    return {"weeks": db.weeks_overview(), "last_run": db.latest_ingest_run(),
+    shut = db.closed_weeks()
+    rows = db.weeks_overview()
+    for w in rows:                       # หน้าเว็บต้องรู้ว่าสัปดาห์ไหนปิดแล้ว เพื่อสลับปุ่ม
+        w["closed"] = w.get("date_from") in shut
+        w["closed_at"] = (shut.get(w.get("date_from")) or {}).get("closed_at")
+    return {"weeks": rows, "last_run": db.latest_ingest_run(),
             "runs": db.list_ingest_runs(10), "issues": db.list_ingest_issues(50),
             "batch_waiting": sum(b.get("n_trips") or 0 for b in open_b),
             "batch_since": (open_b[0]["created_at"] if open_b else None),
