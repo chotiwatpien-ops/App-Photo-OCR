@@ -164,6 +164,13 @@ INGEST_PARALLEL = int(_setting("INGEST_PARALLEL", "ingest_parallel", 12))       
 # for Gemini (30 min of GitHub runner per round became ~3). Results arrive the FOLLOWING round.
 # The web app's manual upload always reads live — Ops is standing there waiting for it.
 INGEST_BATCH = str(_setting("INGEST_BATCH", "ingest_batch", "1")).lower() in ("1", "true", "yes")
+
+# ท้ายรอบ: เอารูปของแถวที่ถูกพักเป็นซ้ำออกจากโฟลเดอร์ไรเดอร์ แล้วที่นั่งกลับมาให้รอบจัดกองถัดไป
+# ก่อนหน้านี้เป็นปุ่มแยกที่ต้องมีคนนึกขึ้นได้ว่าต้องกด — W37 สะสมไว้ 475 ใบใน 52 โฟลเดอร์กว่าจะมี
+# คนกด ไรเดอร์ที่ถือรูปซ้ำ 21 ใบโดยมีงานจริงใบเดียวก็ยังนับว่าเต็ม งานใหม่จึงไม่มีที่ลง
+CLEAN_DUP_SEATS = str(_setting("CLEAN_DUP_SEATS", "clean_dup_seats", "1")).lower() in ("1", "true", "yes")
+# เพดานต่อรอบ: เกินเท่านี้ให้รายงานแล้วไม่ย้าย ปล่อยให้คนดูก่อน (ดู free_dup_seats.SWEEP_CAP)
+CLEAN_DUP_SEATS_MAX = int(_setting("CLEAN_DUP_SEATS_MAX", "clean_dup_seats_max", 150))
 # Images wait in the DB (blob and all) while a batch reads them, so one round must not park
 # more than the free Neon tier can hold: ~131 KB a slip, 500 MB the ceiling. 1,500 keeps a
 # round near 200 MB, and six rounds a day still clear 9,000 images — more than a full week's.

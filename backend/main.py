@@ -826,7 +826,11 @@ def clear_discarded():
 def restore_trip(trip_id: int):
     if not db.restore_discarded(trip_id):
         raise HTTPException(404, "ไม่พบแถวที่ถูกทิ้ง (หรือถูกกู้คืนไปแล้ว)")
-    return {"ok": True}
+    # ท้ายรอบ ingest ย้ายรูปของแถวที่ถูกพักไปไว้ที่ <สัปดาห์>/_ซ้ำ/ ตั้งแต่ 2026-09-13 กู้คืนแถว
+    # อย่างเดียวจึงไม่พอแล้ว: ถ้ารูปไม่กลับเข้าโฟลเดอร์ไรเดอร์ แถวจะกลับเข้าคิวโดยไม่มีรูปให้ส่ง
+    # ลูกค้า และตัวจัดโควตาก็ยังไม่นับที่นั่งนี้ ย้ายไม่สำเร็จไม่ล้มการกู้คืน — แถวกลับมาแล้ว
+    import free_dup_seats
+    return {"ok": True, "picture_returned": free_dup_seats.return_picture(trip_id)}
 
 
 @app.get("/api/diag/batches")

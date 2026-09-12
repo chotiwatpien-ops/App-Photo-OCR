@@ -79,6 +79,85 @@ def seats_freed(plan):
     return total
 
 
+# กันชนของรอบอัตโนมัติ: เก็บกวาดได้มากสุดกี่ใบต่อรอบก่อนจะขอให้คนมาดูก่อน
+# 2026-09-12 กวาดมือครั้งแรกของ W37 ได้ 475 ใบ — ตัวเลขนั้นถูกต้องแต่ไม่มีใครคาดมาก่อน ถ้าวันหนึ่ง
+# ตัวจับซ้ำพลาดแล้วพักแถวดี ๆ ไว้ รอบอัตโนมัติต้องไม่กวาดโฟลเดอร์ไรเดอร์เกลี้ยงโดยไม่มีใครเห็น
+SWEEP_CAP = 150
+
+
+def sweep(drive, jobs, d_from, d_to, apply=False, cap=SWEEP_CAP, log=print):
+    """เอารูปของแถวที่ตายแล้วออกจากโฟลเดอร์ไรเดอร์ · คืนสรุปเป็น dict
+
+    ใช้ได้ทั้งจากคำสั่งมือ (main ข้างล่าง) และจากท้ายรอบ ingest ผลลัพธ์เหมือนกันทุกอย่าง
+    ยกเว้นรอบอัตโนมัติมีเพดาน: เกิน cap เมื่อไหร่จะรายงานแล้วไม่ย้าย"""
+    dead_by_job = dead_trips(jobs)
+    out = {"jobs": len(jobs), "with_dead": len(dead_by_job), "files": 0, "seats": 0,
+           "moved": 0, "failed": 0, "over_cap": False, "plan": []}
+    if not dead_by_job:
+        return out
+    plan = plan_for(drive, jobs, dead_by_job)
+    broken = [p for p in plan if p.get("error")]
+    plan = [p for p in plan if p.get("files")]
+    out["plan"] = plan
+    for p in broken:
+        log(f"  ⚠ อ่านโฟลเดอร์ {p['job'].get('folder_name')} ไม่ได้: {p['error']}")
+    if not plan:
+        return out
+    out["files"] = sum(len(p["files"]) for p in plan)
+    out["seats"] = seats_freed(plan)
+    if not apply:
+        return out
+    if cap and out["files"] > cap:
+        out["over_cap"] = True
+        log(f"  ⚠ รูปซ้ำ {out['files']} ใบ เกินเพดาน {cap} ใบต่อรอบ — ไม่ย้ายอะไรทั้งสิ้น "
+            f"ให้คนดูก่อนแล้วสั่ง free_dup_seats.py --apply เอง")
+        return out
+
+    import rebalance_quota as rq
+    wk = rq.week_folder(drive, config.DRIVE_INBOX_FOLDER_ID, d_from, d_to)
+    if wk is None:
+        log(f"  ✗ ไม่พบโฟลเดอร์สัปดาห์ที่ครอบ {d_from}..{d_to} ใน Inbox — ไม่ได้ย้ายอะไร")
+        return out
+    hold_root = drive.ensure_folder(wk["id"], HOLD_DIR)
+    for p in plan:
+        dest = drive.ensure_folder(hold_root, str(p["job"]["driver_name"]))
+        for img in p["files"]:
+            try:
+                drive.move_file(img["id"], dest)
+                out["moved"] += 1
+            except Exception as e:                              # noqa: BLE001
+                out["failed"] += 1
+                log(f"  ⚠ ย้ายไม่สำเร็จ {img['name']}: {str(e)[:70]}")
+    out["week_name"] = wk["name"]
+    return out
+
+
+def return_picture(trip_id, drive=None, log=print) -> bool:
+    """เอารูปกลับเข้าโฟลเดอร์ไรเดอร์ เมื่อแถวที่เคยถูกพักถูกกู้คืน
+
+    ถ้าไม่ทำ แถวจะกลับเข้าคิวโดยไม่มีรูปให้ส่งลูกค้า และที่นั่งจะไม่ถูกนับคืน — รูรั่วนี้ไม่สำคัญ
+    ตอนที่ยังกวาดด้วยมือ (คนกดกู้คืนก่อนกวาด) แต่พอกวาดทุกรอบอัตโนมัติแล้วมันเกิดได้ทุกวัน
+    ย้ายด้วย id ของไฟล์ ซึ่งไม่เปลี่ยนตอนย้ายโฟลเดอร์ พัง = คืน False ไม่ใช่โยน error ทิ้ง
+    เพราะแถวถูกกู้คืนไปแล้ว"""
+    try:
+        trip = db.get_trip(trip_id)
+        if not trip:
+            return False
+        job = db.get_job(trip["job_id"]) or {}
+        dest = job.get("drive_folder_id")
+        fid = db.drive_ids_for_trips([trip_id]).get(trip_id)
+        if not dest or not fid:
+            return False
+        if drive is None:
+            import roster
+            drive = roster._drive()
+        drive.move_file(fid, dest)
+        return True
+    except Exception as e:                                      # noqa: BLE001
+        log(f"⚠ กู้คืนแถว {trip_id} แล้ว แต่ย้ายรูปกลับเข้าโฟลเดอร์ไม่สำเร็จ: {str(e)[:80]}")
+        return False
+
+
 def plan_for(drive, jobs, dead_by_job):
     """[{job, folder, on_drive, live, files}] — what would leave each rider folder.
 
@@ -94,13 +173,16 @@ def plan_for(drive, jobs, dead_by_job):
         want = db.drive_ids_for_trips([t["id"] for t in dead])
         ids = {v for v in want.values() if v}
         try:
-            here = [im for im in drive.list_images(fid) if im["id"] in ids]
+            # หนึ่งครั้งต่อโฟลเดอร์ ไม่ใช่สองครั้ง — เดิมถามรายการเดิมซ้ำเพื่อนับจำนวนรูป ซึ่งเป็น
+            # ครึ่งหนึ่งของ 12 นาทีที่รอบกวาด W37 ใช้ไป และตอนนี้มันรันท้ายทุกรอบ
+            on_drive = drive.list_images(fid)
         except Exception as e:                                  # noqa: BLE001
             plan.append({"job": j, "error": str(e)[:70], "files": []})
             continue
+        here = [im for im in on_drive if im["id"] in ids]
         if here:
             plan.append({"job": j, "files": here, "live": live_count(j["id"]),
-                         "on_drive": len(drive.list_images(fid))})
+                         "on_drive": len(on_drive)})
     return plan
 
 
@@ -117,15 +199,14 @@ def main(argv=None):
     drive = roster._drive()
     jobs = [j for (f, t), js in db.jobs_by_week().items()
             if f == a.d_from and t == a.d_to for j in js]
-    dead_by_job = dead_trips(jobs)
-    print(f"{a.d_from}..{a.d_to} · {len(jobs)} job · job ที่มีแถวซ้ำ/ถูกพัก {len(dead_by_job)}")
-    if not dead_by_job:
+    # สั่งเองไม่มีเพดาน — คนสั่งคือคนที่ดูรายงานมาแล้ว เพดานมีไว้กันรอบอัตโนมัติเท่านั้น
+    res = sweep(drive, jobs, a.d_from, a.d_to, apply=a.apply, cap=None)
+    print(f"{a.d_from}..{a.d_to} · {res['jobs']} job · job ที่มีแถวซ้ำ/ถูกพัก {res['with_dead']}")
+    if not res["with_dead"]:
         print("ไม่มีอะไรต้องคืน ✔")
         return 0
 
-    plan = plan_for(drive, jobs, dead_by_job)
-    broken = [p for p in plan if p.get("error")]
-    plan = [p for p in plan if p.get("files")]
+    plan = res["plan"]
     if not plan:
         print("แถวซ้ำมีอยู่ แต่รูปไม่ได้อยู่ในโฟลเดอร์ไรเดอร์แล้ว — ไม่มีที่นั่งให้คืน")
         return 0
@@ -144,35 +225,16 @@ def main(argv=None):
         by_wheel[wheel_of(p["job"].get("category")) or "?"].append(p)
     for wheel, ps in sorted(by_wheel.items()):
         print(f"    {wheel}: คืน {seats_freed(ps)} เที่ยว จาก {len(ps)} โฟลเดอร์")
-    for p in broken:
-        print(f"  ⚠ อ่านโฟลเดอร์ {p['job'].get('folder_name')} ไม่ได้: {p['error']}")
-
     if not a.apply:
         print("\n(รายงานอย่างเดียว — ยังไม่ได้แตะอะไร · ใส่ --apply เพื่อทำจริง)")
         return 0
 
-    wk = None
-    import rebalance_quota as rq
-    wk = rq.week_folder(drive, config.DRIVE_INBOX_FOLDER_ID, a.d_from, a.d_to)
-    if wk is None:
-        print(f"✗ ไม่พบโฟลเดอร์สัปดาห์ที่ครอบ {a.d_from}..{a.d_to} ใน Inbox")
+    if not res["moved"] and not res["failed"]:
+        print("\n✗ ไม่ได้ย้ายอะไรเลย — ดูบรรทัดเตือนข้างบน")
         return 1
-    hold_root = drive.ensure_folder(wk["id"], HOLD_DIR)
-    moved, failed = 0, 0
-    by_folder = defaultdict(int)
-    for p in plan:
-        j = p["job"]
-        dest = drive.ensure_folder(hold_root, str(j["driver_name"]))
-        for img in p["files"]:
-            try:
-                drive.move_file(img["id"], dest)
-                moved += 1
-                by_folder[j["driver_name"]] += 1
-            except Exception as e:                              # noqa: BLE001
-                failed += 1
-                print(f"  ⚠ ย้ายไม่สำเร็จ {img['name']}: {str(e)[:70]}")
-    print(f"\nย้ายรูปซ้ำไปพักที่ {wk['name']}/{HOLD_DIR}/ {moved} ใบ (ไม่ได้ลบ · ไม่ได้แตะแถวใดเลย)"
-          + (f" · ย้ายไม่สำเร็จ {failed}" if failed else ""))
+    print(f"\nย้ายรูปซ้ำไปพักที่ {res.get('week_name', '')}/{HOLD_DIR}/ {res['moved']} ใบ "
+          f"(ไม่ได้ลบ · ไม่ได้แตะแถวใดเลย)"
+          + (f" · ย้ายไม่สำเร็จ {res['failed']}" if res["failed"] else ""))
     print("ที่นั่งคืนแล้ว — รอบจัดกองรอบหน้าจะเห็นคนพวกนี้ว่างและลงงานที่ค้างอยู่ได้")
     return 0
 

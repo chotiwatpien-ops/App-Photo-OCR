@@ -1038,6 +1038,28 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             issues.append(("xlsx", "xlsx", f"อัพโหลด {name} ขึ้น Drive ไม่สำเร็จ: {e}"))
             errors += 1
 
+    if config.CLEAN_DUP_SEATS and not dry_run and not only and touched_weeks:
+        # A picture is only known to be a repeat after Gemini has read it and the booking-code
+        # check has parked its row, which is exactly here — so this is the earliest the folders
+        # can be tidied, and the pool round that follows sees the seats free. It used to be a
+        # button somebody had to remember: W37 had 475 repeats sitting in 52 rider folders by the
+        # time anyone pressed it, and a rider holding 21 repeats and one real trip still counts
+        # as full, so new work had nowhere to land. Only the weeks this round touched are swept.
+        import free_dup_seats
+        by_week = db.jobs_by_week()
+        for wk_from, wk_to in sorted(touched_weeks):
+            try:
+                res = free_dup_seats.sweep(drive, by_week.get((wk_from, wk_to)) or [],
+                                           wk_from, wk_to, apply=True,
+                                           cap=config.CLEAN_DUP_SEATS_MAX, log=log)
+            except Exception as e:  # noqa: BLE001 — tidying must never take a round down
+                log(f"  ⚠ เก็บกวาดรูปซ้ำของสัปดาห์ {wk_from} ไม่สำเร็จ: {str(e)[:120]}")
+                continue
+            if res["files"]:
+                log(f"🪑 {wk_from}: รูปซ้ำในโฟลเดอร์ไรเดอร์ {res['files']} ใบ · "
+                    f"ย้ายออก {res['moved']} · ที่นั่งคืน {res['seats']} เที่ยว"
+                    + (" · ⚠ เกินเพดาน จึงไม่ย้าย รอคนดู" if res["over_cap"] else ""))
+
     if not quiet and not only:
         # the next round asks Drive for anything touched since here. The margin covers a photo
         # uploaded while this round was walking, which the walk would have missed.
