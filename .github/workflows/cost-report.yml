@@ -1,0 +1,38 @@
+name: ค่าอ่านสลิป — ต่อสัปดาห์ ตั้งแต่เริ่มโปรเจกต์
+
+# อ่านอย่างเดียว ไม่แตะฐานข้อมูลและไม่แตะ Drive: รวม token ที่ทุกแถวเก็บไว้ คูณราคาของโมเดลที่
+# อ่านแถวนั้นจริง แล้วหารครึ่งให้งานที่เปิดตั้งแต่วันที่เริ่มส่งผ่าน Batch API
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_from:
+        description: "งานที่เปิดตั้งแต่วันนี้คิดราคา batch (ครึ่งราคา)"
+        type: string
+        required: false
+        default: "2026-08-27"
+      by_model:
+        description: "แยกตามโมเดลด้วย"
+        type: boolean
+        default: false
+
+jobs:
+  cost:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: ค่าอ่านต่อสัปดาห์
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TZ: Asia/Bangkok
+        run: |
+          ARGS="--batch-from ${{ github.event.inputs.batch_from }}"
+          if [ "${{ github.event.inputs.by_model }}" = "true" ]; then ARGS="$ARGS --by-model"; fi
+          python cost_report.py $ARGS
