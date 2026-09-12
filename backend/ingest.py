@@ -1052,7 +1052,12 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
         # as full, so new work had nowhere to land. Only the weeks this round touched are swept.
         import free_dup_seats
         by_week = db.jobs_by_week()
+        closed = [f for f, t in sorted(touched_weeks) if not free_dup_seats.week_is_open(t)]
+        if closed:
+            log(f"🪑 ข้ามสัปดาห์ที่ปิดไปแล้ว {' · '.join(closed)} — ส่งลูกค้าไปแล้ว ไม่ขยับอะไร")
         for wk_from, wk_to in sorted(touched_weeks):
+            if not free_dup_seats.week_is_open(wk_to):
+                continue
             try:
                 res = free_dup_seats.sweep(drive, by_week.get((wk_from, wk_to)) or [],
                                            wk_from, wk_to, apply=True,
