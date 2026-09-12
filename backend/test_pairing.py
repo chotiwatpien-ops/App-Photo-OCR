@@ -656,10 +656,52 @@ if os.path.isdir(_nui):
     check("NUI: 94+97 (฿66 = 56 + ทิป 10) และ 115+117 (฿78 = 38 + ทิป 40) จับได้ด้วยนาฬิกา",
           all(x in _got for x in [(94, 97), (115, 117)]))
     check("NUI: อ่านนาฬิกาได้ทั้ง 6 ใบ (ระยะทางทับนาฬิกาบนครึ่งบน)", all(v["clock"] is not None for v in _i.values()))
-    check("NUI: 46+49 ฿99 ยังพลาด — ตัวอ่านอ่านครึ่งบนเป็น ฿66 (คนละเรื่องกับกฎจับคู่)",
-          (46, 49) not in _got and _i[[k for k in _i if k.endswith("_46.jpg")][0]]["amount"] == 66.0)
+    check("NUI: 46 อ่านได้ ฿99 (เคยกลับหัวเป็น ฿66) และจับคู่กับ 49 ได้",
+          _i[[k for k in _i if k.endswith("_46.jpg")][0]]["amount"] == 99.0 and (46, 49) in _got)
 else:
     skip("เทสต์ NUI นาฬิกา", "ไม่มีรูปตัวอย่างในเครื่องนี้ (test-images/ ไม่ถูก push — เป็นรูปผู้โดยสาร)")
+
+
+# --- nothing is turned upside down before it is read (2026-09-11) ----------------------------
+# RapidOCR's angle classifier turned the '฿ 99' line over and read '66 串'; '฿ 97' came back 26.
+# CI has no pictures, so the guard that runs everywhere is on the call itself.
+class _Spy:
+    def __init__(self):
+        self.kw = []
+
+    def __call__(self, img, **kw):
+        self.kw.append(kw)
+        return [], 0.0
+
+
+_was = getattr(pairing._local, "ocr", None)
+pairing._local.ocr = _spy = _Spy()
+pairing._read_text(_Img.new("RGB", (40, 20), "white"))
+pairing._all_numbers(_Img.new("RGB", (40, 400), "white"))
+pairing._local.ocr = _was
+check("ทุกการอ่านปิดการกลับหัว (use_cls=False) — ทั้งตัวเลขเขียว นาฬิกา และตัวเลขทั้งหน้า",
+      len(_spy.kw) == 2 and all(k.get("use_cls") is False for k in _spy.kw))
+check("เวอร์ชันตัวอ่านขยับแล้ว — cache ของ r9 ที่จำ ฿99 เป็น 66 ไม่ถูกหยิบกลับมาใช้", pairing.READER != "r9")
+
+_flip = os.path.join(_SAMPLES, "flip5")
+if os.path.isdir(_flip) and os.path.isdir(_nui):
+    _P1, _P2 = "LINE_ALBUM_2wปาริชาติ_วีค_5_(1-13)=128_260907_", "LINE_ALBUM_2Wปาริชาติ_วีค5(14-26)=137_260907_"
+    _N = os.path.join(_nui, "LINE_ALBUM_2W-NUI=117 STANDARD_260910_")
+    _cases = [(_N + "46.jpg", _N + "49.jpg", 99.0),                 # top, its bottom, the true figure
+              (_P1 + "30.jpg", _P1 + "29.jpg", 99.0),
+              (_P2 + "240.jpg", _P2 + "239.jpg", 99.0),
+              ("S__97435676_0.jpg", "S__97435677_0.jpg", 99.0),
+              ("S__97419329_0.jpg", "S__97419330_0.jpg", 97.0)]      # ฿97 = 92 + turbo 5, read as 26
+    _made = 0
+    for _tf, _bf, _v in _cases:
+        _t = pairing.inspect(os.path.join(_flip, _tf))
+        _b = pairing.inspect(os.path.join(_flip, _bf))
+        check(f"{os.path.basename(_tf)[-18:]}: ครึ่งบนอ่านได้ ฿{_v:.0f} ไม่กลับหัว",
+              _t["role"] == "top" and _t["amount"] == _v)
+        _made += len(pairing.pair_album([("t", _t), ("b", _b)])[0])
+    check("ทั้ง 5 คู่ที่เคยค้างเพราะกลับหัว จับคู่ได้หมด", _made == 5)
+else:
+    skip("เทสต์ตัวเลขกลับหัว", "ไม่มีรูปตัวอย่างในเครื่องนี้ (test-images/ ไม่ถูก push — เป็นรูปผู้โดยสาร)")
 
 
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")

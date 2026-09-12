@@ -43,8 +43,17 @@ def _engine():
     return e
 
 
+# The OCR's angle classifier guesses, line by line, whether text is upside down and turns it
+# over if it thinks so. A screenshot is never upside down, so the only thing it can ever do here is
+# be wrong — and it was, on the one line that matters: the big '฿ 99' under 'คุณได้รับ' came back
+# as '66 串', which is '฿ 99' turned over (and '฿ 97' as '26'). Five tops across NUI, Parichat and
+# วิน were filed at ฿66/฿26, found no bottom that agreed, and sat in the pool with their true
+# partners one picture away. Every read here goes in the right way up, so the guess is off.
+NO_FLIP = {"use_cls": False}
+
+
 def _read_text(img):
-    res, _ = _engine()(np.asarray(img))
+    res, _ = _engine()(np.asarray(img), **NO_FLIP)
     return " ".join(t for _, t, _ in (res or []))
 
 
@@ -142,7 +151,7 @@ def _all_numbers(im):
     im = im.crop((0, int(im.height * 0.04), im.width, im.height))
     im2 = im.resize((w, int(im.height * w / im.width)), Image.LANCZOS)
     try:
-        res, _ = _engine()(np.asarray(im2))
+        res, _ = _engine()(np.asarray(im2), **NO_FLIP)
     except Exception:  # noqa: BLE001 — a page we cannot read has no numbers on it, and one
         return [], []  # picture the OCR refuses must not take the round down with it
     seq = []
@@ -203,7 +212,8 @@ def ensure_theme(info, source):
 # being read instead, and Keang's 13421 was filed as a bottom half with no amount at all.
 # r9: every half also carries the phone's clock (info['clock']), read off the status bar, so a
 # cached verdict from r8 has no clock and would pair as if the rule below did not exist.
-READER = "r9"
+# r10: nothing is turned upside down before it is read (NO_FLIP) — r9 holds '฿99' as 66.
+READER = "r10"
 
 # The status-bar clock: '19:56 น.' — hour and minute, a colon between, no digit touching it on
 # the left (the app writes '3.41 km' straight over the clock on a top half, and '314:56' is

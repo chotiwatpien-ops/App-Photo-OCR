@@ -1,1 +1,1 @@
-rapidocr_onnxruntime   # free local OCR, used only by pairing.py (pool pairing before Gemini)
+rapidocr_onnxruntime==1.4.4   # free local OCR, used only by pairing.py (pool pairing before Gemini); pinned — pairing.READER assumes one reader
