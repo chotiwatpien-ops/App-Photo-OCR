@@ -911,6 +911,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             downloads = list(ex.map(_dl, group))
         trip_ids = []
         seen_hashes = db.seen_image_hashes(rider, d_from, d_to)
+        albums = db.pool_albums([i["file"]["id"] for i in group])   # ใครส่งรูปนี้มา (ถ้ามาจากกอง)
         n_same = 0
         for i, data, err in downloads:
             f = i["file"]
@@ -931,7 +932,11 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
             # the photo stays on Drive; only its bytes travel through this round in memory
             tid = db.create_trip(job_id, f["name"],
                                  data if config.STORE_DRIVE_IMAGES else None,
-                                 f["mime"], source_url=f.get("url"), image_hash=digest)
+                                 f["mime"], source_url=f.get("url"), image_hash=digest,
+                                 # ไรเดอร์ที่ส่งรูปนี้มา ไม่ใช่ไรเดอร์ที่โฟลเดอร์นี้เป็นของเขา:
+                                 # pool วางงานไว้กับใครก็ได้ที่ยังมีที่ว่าง ว่างไว้ = Ops อัปเข้า
+                                 # โฟลเดอร์ไรเดอร์เอง ซึ่งชื่อโฟลเดอร์ก็คือคนส่งอยู่แล้ว
+                                 source_album=albums.get(f["id"]))
             images[tid] = (data, f["mime"])
             if i["trip_date"]:
                 db.update_trip(tid, {"trip_date": i["trip_date"]})

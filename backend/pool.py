@@ -552,6 +552,7 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
                 f"{next_week_name(entry['week'])[0]}")
         used_dir = (drive.ensure_folder(drive.ensure_folder(pool_id, USED_DIR), entry["album"])
                     if any(p.get("dest") for p in entry["pairs"]) else None)
+        sent_from = []          # ไฟล์ที่ออกจากอัลบั้มนี้ · เขียนลงฐานข้อมูลทีเดียวท้ายอัลบั้ม
 
         def do_pair(p):
             if not p["target"]:
@@ -566,7 +567,9 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
                 img.save(buf, "JPEG", quality=88)
                 tn, bn = (half_tag(x) for x in (p["top"], p["bottom"]))
                 name = f"{entry['album']}_{tn}+{bn}_฿{p['amount']:g}.jpg"
-                drive.create_file(p["dest"], name, buf.getvalue(), "image/jpeg")
+                # ที่นี่คือที่เดียวที่ระบบรู้แน่ว่ารูปนี้มาจากอัลบั้มไหน — ปลายทางคือโฟลเดอร์ของ
+                # ไรเดอร์คนไหนก็ได้ที่ยังมีที่ว่าง ชื่อโฟลเดอร์จึงไม่ใช่ชื่อคนส่ง
+                sent_from.append(drive.create_file(p["dest"], name, buf.getvalue(), "image/jpeg"))
                 drive.move_file(p["top_id"], used_dir)
                 drive.move_file(p["bottom_id"], used_dir)
                 p["moved"] = f"{p['target']}/{name}"
@@ -584,6 +587,8 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
                 return 0
             try:
                 drive.move_file(l["id"], l["dest"])
+                # รูปยาวเก็บชื่อเดิมที่มือถือตั้งไว้ ไม่มีชื่ออัลบั้มติดมาเหมือนคู่ที่ต่อแล้ว
+                sent_from.append(l["id"])
                 l["moved"] = f"{l['target']}/{l['file']}"
                 return 1
             except Exception as e:  # noqa: BLE001
@@ -607,6 +612,14 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
         with ThreadPoolExecutor(max_workers=max(1, config.DRIVE_PARALLEL)) as ex:
             n = sum(ex.map(do_pair, entry["pairs"])) + sum(ex.map(do_long, entry["long"]))
             c = sum(ex.map(do_carry, carry)) if carry_dir else 0
+        if sent_from:
+            # ทีเดียวต่ออัลบั้ม ไม่ใช่ทีละไฟล์ — ฐานข้อมูลอยู่คนละทวีปกับ runner
+            try:
+                import db as _db
+                _db.record_pool_sources([(fid, entry["album"], entry.get("week"))
+                                         for fid in sent_from])
+            except Exception as e:  # noqa: BLE001 — จดต้นทางไม่ได้ ต้องไม่ทำให้รอบล้ม
+                report["errors"].append(f"จดต้นทางของ {entry['album']} ไม่ได้: {str(e)[:100]}")
         moved += n
         carried += c
         log(f"  ↳ {entry['album']}: ย้ายแล้ว {n} รายการ" + (f" · ยกไปสัปดาห์หน้า {c}" if c else ""))

@@ -90,6 +90,24 @@ trips = Table(
     Column("merged_into", Integer),       # bottom half folded into this trip id (status becomes 'merged')
     Column("image_hash", String(40), index=True),    # sha1 of the image — catches re-uploaded duplicates
     Column("batch_name", String(200), index=True),   # set while a batch holds this image
+    # Which album this picture was sent in — the rider who handed it over, which is NOT the rider
+    # whose folder it ended up in: the pool files a trip under whoever still has a seat, so ป๋อง's
+    # album came back under สรธร one round and ธีรพงศ์ the next. Filled from pool_sources below.
+    Column("source_album", Text),
+)
+
+# What the pool knows and nothing downstream can work out again: which album a file came out of.
+# A stitched pair carries the album in its name, but a long screenshot keeps the name the phone
+# gave it, and a picture Ops drops straight into a rider folder has no album at all. Reading the
+# sender off the file name therefore worked for some rows and quietly fell back to the destination
+# folder for the rest — and the duplicate report then compared an album on one side with a folder
+# on the other and called them different people (2026-09-13: 391 of 475 rows, most of them wrong).
+pool_sources = Table(
+    "pool_sources", meta,
+    Column("drive_id", String(128), primary_key=True),
+    Column("album", Text, nullable=False),
+    Column("week", Text),
+    Column("recorded_at", String(19), nullable=False),
 )
 
 # Drive files already pulled in — makes every ingest run idempotent
@@ -263,6 +281,7 @@ def init_db():
             c.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS batch_name VARCHAR(200)"))
             c.execute(text("ALTER TABLE batch_jobs ADD COLUMN IF NOT EXISTS job_ids TEXT"))
             c.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS drive_folder_id VARCHAR(64)"))
+            c.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS source_album TEXT"))
 
 
 # ---------- jobs ----------
@@ -346,13 +365,48 @@ def mark_committed(job_id):
 # ---------- trips ----------
 
 def create_trip(job_id, file_name, image_bytes: bytes, mime: str, source_url: str = None,
-                image_hash: str = None) -> int:
+                image_hash: str = None, source_album: str = None) -> int:
     with engine.begin() as c:
         r = c.execute(insert(trips).values(
             job_id=job_id, file_name=file_name, image_blob=image_bytes, image_mime=mime,
             status="pending", committed=0, auto_approved=0, source_url=source_url,
-            image_hash=image_hash))
+            image_hash=image_hash, source_album=source_album))
         return r.inserted_primary_key[0]
+
+
+# ---------- where a picture came from ----------
+
+def record_pool_sources(rows) -> int:
+    """[(drive_id, album, week), ...] — written by pool the moment it files a picture.
+
+    Idempotent by drive id: the pool can be re-run over the same album without the rows piling up,
+    and a file that is moved again keeps its first album, which is the one that sent it."""
+    rows = [(fid, alb, wk) for fid, alb, wk in rows if fid and alb]
+    if not rows:
+        return 0
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    n = 0
+    with engine.begin() as c:
+        have = {r[0] for r in c.execute(
+            select(pool_sources.c.drive_id)
+            .where(pool_sources.c.drive_id.in_([r[0] for r in rows]))).all()}
+        fresh = [{"drive_id": fid, "album": alb, "week": wk, "recorded_at": now}
+                 for fid, alb, wk in rows if fid not in have]
+        if fresh:
+            c.execute(insert(pool_sources), fresh)
+            n = len(fresh)
+    return n
+
+
+def pool_albums(drive_ids):
+    """drive_id -> ชื่ออัลบั้มที่ส่งมา (เท่าที่ pool บันทึกไว้)"""
+    ids = [i for i in drive_ids if i]
+    if not ids:
+        return {}
+    with engine.begin() as c:
+        return {r[0]: r[1] for r in c.execute(
+            select(pool_sources.c.drive_id, pool_sources.c.album)
+            .where(pool_sources.c.drive_id.in_(ids))).all()}
 
 
 # ---------- ingest support ----------

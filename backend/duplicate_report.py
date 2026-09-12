@@ -34,12 +34,18 @@ KIND_SAME_FILE = "ไฟล์เดิมส่งซ้ำ"
 KINDS = (KIND_SAME_FILE, KIND_SAME_WEEK, KIND_OTHER_WEEK, KIND_BOTTOM)
 
 
-def album_of(file_name, folder_name=None, driver_name=None):
+def album_of(file_name, folder_name=None, driver_name=None, source_album=None):
     """ไรเดอร์เจ้าของอัลบั้มที่ส่งรูปใบนี้มา
 
-    รูปที่ pool ต่อให้พกชื่ออัลบั้มไว้ในชื่อไฟล์ ซึ่งคือ 'คนส่ง' ตัวจริง — ต่างจากโฟลเดอร์ที่ระบบ
-    เอารูปไปวาง เพราะระบบกระจายงานให้ไรเดอร์คนไหนก็ได้ที่ยังมีที่ว่าง (รอบ W37 อัลบั้มของ ป๋อง
-    ไปโผล่ในโฟลเดอร์ของสรธรและธีรพงศ์) รูปเดี่ยวไม่มีชื่ออัลบั้มติดมา จึงได้แค่โฟลเดอร์ต้นทาง"""
+    สามชั้น ตามความน่าเชื่อจากมากไปน้อย:
+      1. source_album ที่ pool จดไว้ตอนวางไฟล์ — รู้แน่ ไม่ต้องเดา (ตั้งแต่ 2026-09-13)
+      2. ชื่ออัลบั้มที่ติดมาในชื่อไฟล์ของคู่ที่ต่อแล้ว — ใช้กับแถวเก่าก่อนหน้านั้น
+      3. โฟลเดอร์ต้นทาง — ถูกต้องเมื่อ Ops อัปเข้าโฟลเดอร์ไรเดอร์เอง
+
+    ต่างจากโฟลเดอร์ที่ระบบเอารูปไปวาง เพราะระบบกระจายงานให้ไรเดอร์คนไหนก็ได้ที่ยังมีที่ว่าง
+    (รอบ W37 อัลบั้มของ ป๋อง ไปโผล่ในโฟลเดอร์ของสรธรและธีรพงศ์)"""
+    if (source_album or "").strip():
+        return source_album.strip()
     m = ALBUM.match(file_name or "")
     if m:
         return m.group(1).strip()
@@ -71,7 +77,11 @@ def build(rows, twins):
         case = {
             "id": r["id"],
             "ไฟล์ที่ซ้ำ": r["file_name"],
-            "ไรเดอร์ผู้ส่ง": album_of(r["file_name"], r.get("folder_name"), r.get("driver_name")),
+            "ไรเดอร์ผู้ส่ง": album_of(r["file_name"], r.get("folder_name"), r.get("driver_name"),
+                                      r.get("source_album")),
+            # ชี้ตัวคนส่งได้แน่ หรือได้แค่ชื่อโฟลเดอร์ปลายทาง — ต้องบอกให้ชัด ไม่งั้นการเทียบ
+            # "ส่งใต้ชื่อคนอื่น" จะเอาอัลบั้มฝั่งหนึ่งไปชนกับโฟลเดอร์อีกฝั่งแล้วนับผิด
+            "ผู้ส่งแน่ชัด": bool((r.get("source_album") or "").strip() or ALBUM.match(r["file_name"] or "")),
             "โฟลเดอร์ที่ระบบวาง": r.get("driver_name"),
             "กลุ่ม": r.get("category"),
             "สัปดาห์": r.get("date_from"),
@@ -80,7 +90,10 @@ def build(rows, twins):
             "ยอดของต้นฉบับ": t.get("net_earnings"),
             "วันที่งาน": r.get("trip_date"),
             "ซ้ำกับไฟล์": t.get("file_name"),
-            "ของไรเดอร์": album_of(t.get("file_name"), None, t.get("driver_name")) if twin else None,
+            "ของไรเดอร์": album_of(t.get("file_name"), None, t.get("driver_name"),
+                                   t.get("source_album")) if twin else None,
+            "ต้นฉบับแน่ชัด": bool(twin and ((t.get("source_album") or "").strip()
+                                            or ALBUM.match(t.get("file_name") or ""))),
             "สัปดาห์ของต้นฉบับ": t.get("date_from"),
             "รูปที่ส่งลูกค้า": t.get("customer_image"),
             "ประเภทการซ้ำ": kind_of(r, twin),
@@ -92,6 +105,15 @@ def build(rows, twins):
     return cases, undecided
 
 
+def sent_by_someone_else(case) -> bool:
+    """สลิปใบนี้ถูกส่งใต้ชื่อไรเดอร์คนละคนกับต้นฉบับ — ตอบเฉพาะเมื่อรู้ตัวคนส่งทั้งสองฝั่ง
+
+    2026-09-13 เคยตอบ 391 จาก 475 เพราะเทียบ 'อัลบั้ม' ฝั่งหนึ่งกับ 'โฟลเดอร์ปลายทาง' อีกฝั่ง
+    ซึ่งเป็นคนละสิ่งกัน ตัวเลขนั้นเกือบทั้งหมดไม่จริง และเป็นตัวเลขที่จะถูกส่งให้ลูกค้าไปตีกลับคน"""
+    return bool(case.get("ผู้ส่งแน่ชัด") and case.get("ต้นฉบับแน่ชัด")
+                and case.get("ของไรเดอร์") and case["ของไรเดอร์"] != case["ไรเดอร์ผู้ส่ง"])
+
+
 def summary(cases):
     """สรุปรายไรเดอร์ผู้ส่ง — แถวที่ลูกค้าใช้คุยกับคนส่ง"""
     by = collections.defaultdict(collections.Counter)
@@ -100,7 +122,7 @@ def summary(cases):
         s["ใบซ้ำ"] += 1
         s["ยอดรวม"] += c["ยอด"] or 0
         s[c["ประเภทการซ้ำ"]] += 1
-        if c["ของไรเดอร์"] and c["ของไรเดอร์"] != c["ไรเดอร์ผู้ส่ง"]:
+        if sent_by_someone_else(c):
             s["ซ้ำใต้ชื่อคนอื่น"] += 1
     return by
 
@@ -110,7 +132,7 @@ def load(d_from, d_to):
     t, j = db.trips.c, db.jobs.c
     cols = [t.id, t.file_name, t.status, t.committed, t.booking_code, t.duplicate_of,
             t.net_earnings, t.trip_date, t.note, t.customer_image, t.source_url, t.image_hash,
-            j.driver_name, j.category, j.folder_name, j.date_from]
+            t.source_album, j.driver_name, j.category, j.folder_name, j.date_from]
     src = db.trips.join(db.jobs, j.id == t.job_id)
     with db.engine.begin() as c:
         week = [dict(r) for r in c.execute(
@@ -187,7 +209,12 @@ def main(argv=None):
         for k, v in sorted(summary(cases).items(), key=lambda kv: -kv[1]["ใบซ้ำ"]):
             kinds = " · ".join(f"{n} {name}" for name in KINDS for n in [v[name]] if n)
             print(f"{k[:25]:<26}{v['ใบซ้ำ']:>7}{v['ยอดรวม']:>10,.0f}  {kinds}")
-    shared = [c for c in cases if c["ของไรเดอร์"] and c["ของไรเดอร์"] != c["ไรเดอร์ผู้ส่ง"]]
+    shared = [c for c in cases if sent_by_someone_else(c)]
+    unsure = sum(1 for c in cases if not (c.get("ผู้ส่งแน่ชัด") and c.get("ต้นฉบับแน่ชัด")))
+    if unsure:
+        print(f"\n{unsure} ใบยังชี้ตัวคนส่งไม่ได้แน่ — รูปเข้ามาก่อนที่ระบบจะเริ่มจดต้นทาง "
+              f"(2026-09-13) ช่อง 'ไรเดอร์ผู้ส่ง' ของแถวพวกนี้คือโฟลเดอร์ที่ระบบเอารูปไปวาง "
+              f"ใช้ตีกลับไม่ได้")
     if shared:
         print(f"\nในนั้น {len(shared)} ใบเป็นสลิปที่ถูกส่งใต้ชื่อไรเดอร์คนละคน:")
         for c in shared[:15]:
