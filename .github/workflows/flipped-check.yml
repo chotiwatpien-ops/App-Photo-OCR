@@ -1,0 +1,34 @@
+name: ตรวจคู่ที่อาจจับมาตอนอ่านเลขกลับหัว (฿99 → ฿66)
+
+# อ่านอย่างเดียว ไม่แตะฐานข้อมูลและไม่แตะ Drive
+on:
+  workflow_dispatch:
+    inputs:
+      date_from:
+        description: "วันแรกของสัปดาห์ (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-09-07"
+      date_to:
+        description: "วันสุดท้ายของสัปดาห์ (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-09-13"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: ตรวจยอดที่อาจมาจากเลขกลับหัว
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TZ: Asia/Bangkok
+        run: python check_flipped_amounts.py --from "${{ github.event.inputs.date_from }}" --to "${{ github.event.inputs.date_to }}"
