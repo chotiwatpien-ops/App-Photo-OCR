@@ -19,6 +19,14 @@ on:
         description: "ตรวจไฟล์ที่ต่อแล้วในโฟลเดอร์ไรเดอร์ของสัปดาห์นี้ จากชื่อไฟล์ (เช่น Week 31 Aug-6 Sep)"
         type: string
         default: ""
+      files:
+        description: "เอาออกเฉพาะไฟล์ที่ต่อแล้วตามชื่อนี้ คั่นด้วย | (ใส่สัปดาห์ช่องบนด้วย · ไม่ใช้เกณฑ์ระยะห่าง)"
+        type: string
+        default: ""
+      why:
+        description: "เหตุผลที่บันทึกลงแถว (ใช้กับช่องชื่อไฟล์)"
+        type: string
+        default: "คู่ผิด (เปิดดูรูปแล้ว)"
       release_only:
         description: "ไม่พักแถวใหม่ — แค่ปลดธงซ้ำของแถวที่ชี้ไปหาแถวที่พักไปแล้ว (ทำได้เลย ปลอดภัย)"
         type: boolean
@@ -60,7 +68,19 @@ jobs:
           DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.DRIVE_OAUTH_TOKEN_JSON }}
           DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
           TZ: Asia/Bangkok
+          WEEK: ${{ github.event.inputs.scan_week }}
+          FILES: ${{ github.event.inputs.files }}
+          WHY: ${{ github.event.inputs.why }}
         run: |
+          if [ -n "$FILES" ]; then
+            # names carry spaces, '=' and '฿' — passed through the environment, never re-parsed
+            if [ "${{ github.event.inputs.apply }}" = "true" ]; then
+              python void_pool_pairs.py --scan-week "$WEEK" --files "$FILES" --why "$WHY" --apply
+            else
+              python void_pool_pairs.py --scan-week "$WEEK" --files "$FILES" --why "$WHY"
+            fi
+            exit 0
+          fi
           if [ "${{ github.event.inputs.release_only }}" = "true" ]; then
             python void_pool_pairs.py --release-only
             exit 0

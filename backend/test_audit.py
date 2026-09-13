@@ -284,5 +284,34 @@ with redirect_stdout(io.StringIO()):
 check("ตั้งเกณฑ์กว้างขึ้น ก็ไม่มีอะไรต้องย้าย", not fake.moved)
 
 
+# --- เอาออกรายไฟล์: ระยะห่างแยกคู่ผิดไม่ได้ (W37: ผิดที่ 52 และ 50 แต่ ฿90 ที่ห่าง 75 ถูก) --------
+fake.tree["inbox"]["Week 31 Aug-6 Sep"] = "wk"
+fake.imgs["r1"] += [{"id": "g1", "name": "B_50+100_฿55.jpg"}, {"id": "g2", "name": "B_10+85_฿90.jpg"}]
+jf = db.create_job("ศุภรัตน์", "Trips", "2026-08-31", "2026-09-06", category="2 W Saver")
+jold = db.create_job("ศุภรัตน์", "Trips", "2026-08-24", "2026-08-30", category="2 W Saver")
+with db.engine.begin() as c:
+    ids = {}
+    for key, job, fn in [("wrong", jf, "B_50+100_฿55.jpg"), ("right", jf, "B_10+85_฿90.jpg"),
+                         ("other_week", jold, "B_50+100_฿55.jpg")]:
+        ids[key] = c.execute(db.trips.insert().values(job_id=job, file_name=fn, status="done",
+                                                      committed=1)).inserted_primary_key[0]
+fake.moved.clear()
+buf6 = io.StringIO()
+with redirect_stdout(buf6):
+    rc6 = void.main(["--scan-week", "Week 31 Aug-6 Sep", "--files", "B_50+100_฿55.jpg"])
+check("รายไฟล์: รายงานอย่างเดียวไม่ย้าย ไม่พัก", rc6 == 0 and not fake.moved and "ลงไฟล์แล้ว" in buf6.getvalue())
+with redirect_stdout(io.StringIO()):
+    void.main(["--scan-week", "Week 31 Aug-6 Sep", "--files", "B_50+100_฿55.jpg | ", "--why", "ทดสอบ",
+               "--apply"])
+with db.engine.begin() as c:
+    st = {k: c.execute(_sel(db.trips.c.status, db.trips.c.committed, db.trips.c.note)
+                       .where(db.trips.c.id == v)).mappings().one() for k, v in ids.items()}
+check("รายไฟล์: ย้ายเฉพาะรูปที่ระบุ", [m[0] for m in fake.moved] == ["g1"])
+check("รายไฟล์: แถวที่ระบุถูกพัก ออกจากไฟล์ส่งงาน พร้อมเหตุผล",
+      (st["wrong"]["status"], st["wrong"]["committed"]) == ("voided", 0) and "ทดสอบ" in st["wrong"]["note"])
+check("รายไฟล์: ไม่แตะคู่ที่ถูก แม้อยู่ห่างกว่า", st["right"]["status"] == "done")
+check("รายไฟล์: ชื่อเดียวกันในสัปดาห์อื่นไม่ถูกแตะ", st["other_week"]["status"] == "done")
+
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

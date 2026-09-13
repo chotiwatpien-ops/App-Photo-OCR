@@ -16,6 +16,7 @@ is parked as 'voided' with its note saying why — db.restore_voided() puts one 
 
     python void_pool_pairs.py --run 7                 # report only
     python void_pool_pairs.py --run 7 --apply         # do it
+    python void_pool_pairs.py --scan-week 'Week 7-13 Sep' --files 'a.jpg|b.jpg' --apply
 """
 import argparse
 import re
@@ -93,6 +94,70 @@ def scan_week(week_name, min_distance, apply_it):
     return 0
 
 
+def void_files(week_name, names, why, apply_it):
+    """Take back exactly the stitched pictures named, and nothing a rule would add to them.
+
+    A distance cannot pick a wrong pair out on its own. W37 held three wrong pairs at 29 million,
+    52 and 50 pictures apart, and a correct ฿90 pair at 75, both halves shot at 21:51 — any line
+    drawn through the distance voids a real trip or keeps a wrong one. Someone opened the pictures
+    and knows which ones; this takes those names, and only inside the week they belong to, because
+    a stitched name can come round again in another week's album."""
+    import ingest
+    import roster
+    from sqlalchemy import select
+    names = [n.strip() for n in names if n and n.strip()]
+    rng = ingest.parse_range(week_name)
+    if not names or not rng:
+        print(f"✗ ต้องมีชื่อไฟล์ และชื่อสัปดาห์ที่อ่านวันที่ได้ (ได้ {week_name!r})")
+        return 1
+    d1, d2 = (d.isoformat() for d in rng)
+    drive = roster._drive()
+    week = next((f for f in drive.list_folders(config.DRIVE_INBOX_FOLDER_ID)
+                 if f["name"].strip() == week_name.strip()), None)
+    if week is None:
+        print(f"✗ ไม่พบสัปดาห์ {week_name!r} ใน Inbox")
+        return 1
+    pictures = []
+    for cat in drive.list_folders(week["id"]):
+        if cat["name"].strip().lower() in ("pool", "กอง") or cat["name"].lstrip().startswith("_"):
+            continue
+        for rider in drive.list_folders(cat["id"]):
+            pictures += [(cat["name"], rider["name"], img) for img in drive.list_images(rider["id"])
+                         if img["name"] in names]
+    with db.engine.begin() as c:
+        rows = [dict(r) for r in c.execute(
+            select(db.trips.c.id, db.trips.c.file_name, db.trips.c.status, db.trips.c.committed,
+                   db.jobs.c.driver_name)
+            .select_from(db.trips.join(db.jobs, db.trips.c.job_id == db.jobs.c.id))
+            .where(db.trips.c.file_name.in_(names), db.trips.c.status != "voided",
+                   db.jobs.c.date_from == d1, db.jobs.c.date_to == d2)).mappings().all()]
+    print(f"{week_name}: สั่งเอาออก {len(names)} ไฟล์ · เหตุผล: {why}")
+    for n in names:
+        here = [p for p in pictures if p[2]["name"] == n]
+        mine = [r for r in rows if r["file_name"] == n]
+        print(f"  {n}")
+        print("    รูป: " + (", ".join(f"{cat}/{rider}" for cat, rider, _ in here) or "ไม่เจอในโฟลเดอร์ไรเดอร์"))
+        print("    แถว: " + (", ".join(f"#{r['id']} {r['driver_name']} {r['status']}"
+                                     + (" ลงไฟล์แล้ว" if r["committed"] else "") for r in mine)
+                            or "ไม่เจอแถวที่ยังไม่ถูกพักในสัปดาห์นี้"))
+    if not apply_it:
+        print("\n(รายงานอย่างเดียว — ยังไม่ได้แตะอะไร · ติ๊กทำจริงเพื่อย้ายรูปและพักแถว)")
+        return 0
+    moved = 0
+    if pictures:
+        hold = drive.ensure_folder(week["id"], HOLD_DIR)
+        for _cat, _rider, img in pictures:
+            try:
+                drive.move_file(img["id"], hold)
+                moved += 1
+            except Exception as e:                                # noqa: BLE001
+                print(f"  ⚠ ย้ายไม่สำเร็จ {img['name']}: {str(e)[:80]}")
+    n = db.void_trips([r["id"] for r in rows], f"ทิ้ง: สั่งเอาออกรายไฟล์ — {why}")
+    print(f"\nย้ายรูปไป {week_name}/{HOLD_DIR}/ แล้ว {moved} ใบ (ไม่ได้ลบ) · พักแถว {n} แถว "
+          f"— ไฟล์ส่งงานเขียนใหม่เองรอบหน้า · กู้คืนได้ด้วย db.restore_voided(id)")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="เอาแถวที่เกิดจากคู่ผิดของ pool run ออก (ไม่ลบ)")
     ap.add_argument("--run", type=int, help="เลข pool run (ไม่ต้องใส่ถ้า --release-only)")
@@ -104,8 +169,14 @@ def main(argv=None):
                     help="ไม่พักแถวใหม่ แค่ปลดธงซ้ำของแถวที่ชี้ไปหาแถวที่พักไปแล้ว")
     ap.add_argument("--scan-week", default="",
                     help="ตรวจไฟล์ที่ต่อแล้วในโฟลเดอร์ไรเดอร์ของสัปดาห์นี้ จากชื่อไฟล์ (ยังไม่ต้องอ่าน)")
+    ap.add_argument("--files", default="",
+                    help="ชื่อไฟล์ที่ต่อแล้วที่จะเอาออก คั่นด้วย | (ต้องใส่ --scan-week ด้วย)")
+    ap.add_argument("--why", default="คู่ผิด (เปิดดูรูปแล้ว)", help="เหตุผลที่บันทึกลงโน้ตของแถว")
     a = ap.parse_args(argv)
     db.init_db()
+
+    if a.files:
+        return void_files(a.scan_week, a.files.split("|"), a.why, a.apply)
 
     if a.release_only:
         n = db.release_dup_flags_pointing_at_voided()
