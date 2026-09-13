@@ -169,6 +169,9 @@ INGEST_BATCH = str(_setting("INGEST_BATCH", "ingest_batch", "1")).lower() in ("1
 # ก่อนหน้านี้เป็นปุ่มแยกที่ต้องมีคนนึกขึ้นได้ว่าต้องกด — W37 สะสมไว้ 475 ใบใน 52 โฟลเดอร์กว่าจะมี
 # คนกด ไรเดอร์ที่ถือรูปซ้ำ 21 ใบโดยมีงานจริงใบเดียวก็ยังนับว่าเต็ม งานใหม่จึงไม่มีที่ลง
 CLEAN_DUP_SEATS = str(_setting("CLEAN_DUP_SEATS", "clean_dup_seats", "1")).lower() in ("1", "true", "yes")
+# ท้ายรอบ: ประกอบรายงานรูปซ้ำของสัปดาห์ที่รอบนี้แตะ แล้ววางทับใน Drive ที่ Exports/_รายงานรูปซ้ำ/
+# ปิดได้ด้วย DUP_REPORT_IN_ROUND=0 โดยไม่ต้องแก้โค้ด ปุ่มรายงานบน GitHub ยังใช้ได้เหมือนเดิม
+DUP_REPORT_IN_ROUND = str(_setting("DUP_REPORT_IN_ROUND", "dup_report_in_round", "1")).lower() in ("1", "true", "yes")
 # เพดานต่อรอบ: เกินเท่านี้ให้รายงานแล้วไม่ย้าย ปล่อยให้คนดูก่อน (ดู free_dup_seats.SWEEP_CAP)
 CLEAN_DUP_SEATS_MAX = int(_setting("CLEAN_DUP_SEATS_MAX", "clean_dup_seats_max", 150))
 # Images wait in the DB (blob and all) while a batch reads them, so one round must not park

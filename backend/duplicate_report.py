@@ -180,6 +180,23 @@ def upload_to_drive(drive, exports_id, d_from, data: bytes):
     return folder, drive.upload_xlsx(folder, report_name(d_from), data)
 
 
+def refresh_week(drive, exports_id, d_from, d_to, log=print):
+    """ท้ายรอบ ingest: ประกอบรายงานของสัปดาห์นั้นใหม่แล้ววางทับใน Drive → dict หรือ None
+
+    ใบซ้ำถูกพักตอนอนุมัติในรอบ ถ้ารายงานยังเป็นปุ่มแยก คนที่เปิดดูใน Drive จะเห็นฉบับที่ช้ากว่า
+    ความจริงไปจนกว่าจะมีคนนึกได้ว่าต้องกด — เหมือนที่นั่ง 475 ที่เคยค้างรอคนกดคืน
+    สัปดาห์ที่ไม่มีใบซ้ำเลยไม่สร้างไฟล์เปล่า ๆ ขึ้นมา"""
+    rows, twins = load(d_from, d_to)
+    cases, undecided = build(rows, twins)
+    if not cases and not undecided:
+        return None
+    folder, fid = upload_to_drive(drive, exports_id, d_from, build_xlsx(cases, undecided))
+    sure = sum(1 for c in cases if c.get("ผู้ส่งแน่ชัด") and c.get("ต้นฉบับแน่ชัด"))
+    log(f"📋 รายงานรูปซ้ำ {report_name(d_from)}: ใบซ้ำ {len(cases)} · รอคนตัดสิน {len(undecided)}"
+        f" · ระบุตัวคนส่งได้ {sure} → https://drive.google.com/file/d/{fid}/view")
+    return {"cases": len(cases), "undecided": len(undecided), "sure": sure, "file_id": fid}
+
+
 def build_xlsx(cases, undecided) -> bytes:
     import io
     buf = io.BytesIO()

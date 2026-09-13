@@ -131,6 +131,18 @@ check("ไฟล์ที่วางคือ Excel ที่เปิดได
 rep.upload_to_drive(_d, "EXPORTS", "2026-09-07", _data)
 check("รันซ้ำแล้วทับฉบับเดิม ไม่สร้างไฟล์ชื่อซ้ำเพิ่ม", len(_d.files) == 1)
 
+# ท้ายรอบ ingest เรียก refresh_week — ต้องได้ผลเหมือนกดปุ่มเอง
+_d2, _said = _FakeDrive(), []
+_res = rep.refresh_week(_d2, "EXPORTS", "2026-09-07", "2026-09-13", log=_said.append)
+check("ท้ายรอบประกอบรายงานแล้ววางลง Drive", _res and _res["cases"] == 1 and len(_d2.files) == 1)
+check("บอกใน log ว่าวางไว้ที่ไหน", any("รูปซ้ำ_2026-W37.xlsx" in s and "drive.google.com" in s for s in _said))
+_d3 = _FakeDrive()
+check("สัปดาห์ที่ไม่มีใบซ้ำ ไม่สร้างไฟล์เปล่า",
+      rep.refresh_week(_d3, "EXPORTS", "2026-08-10", "2026-08-16", log=lambda *a: None) is None
+      and not _d3.files)
+import config as _cfg                                           # noqa: E402
+check("ท้ายรอบเปิดใช้เป็นค่าเริ่มต้น", _cfg.DUP_REPORT_IN_ROUND is True)
+
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)
