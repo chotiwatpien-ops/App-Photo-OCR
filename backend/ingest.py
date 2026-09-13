@@ -1077,16 +1077,23 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
                     f"ย้ายออก {res['moved']} · ที่นั่งคืน {res['seats']} เที่ยว"
                     + (" · ⚠ เกินเพดาน จึงไม่ย้าย รอคนดู" if res["over_cap"] else ""))
 
-    if config.DUP_REPORT_IN_ROUND and not dry_run and not only and touched_weeks and exports_id:
+    if config.DUP_REPORT_IN_ROUND and not dry_run and not only and exports_id:
         # After the tidying above, so the report shows this round's final state: repeats are
         # parked during approval, and a report that waits for someone to press its button is a
         # report that is out of date in Drive — the way 475 seats sat taken until somebody
-        # remembered to free them. Same scope as the tidying: weeks this round touched and nobody
-        # has closed. A report that fails must never take the round down with it.
+        # remembered to free them.
+        #
+        # Every week nobody has closed, not just the weeks this round touched. Round #215 read
+        # nothing new and so touched nothing, and the report was skipped — which is right for that
+        # round but wrong in general: a row approved or restored by hand in the app changes the
+        # report without any round touching its week, and the copy in Drive would stay stale until
+        # new pictures happened to arrive. Open weeks are few (closed ones are skipped, and the
+        # 21-day net catches the rest), so this costs seconds. A report that fails must never take
+        # the round down with it.
         import duplicate_report
         import free_dup_seats
         shut = set(db.closed_weeks())
-        for wk_from, wk_to in sorted(touched_weeks):
+        for wk_from, wk_to in sorted(db.jobs_by_week()):
             if not free_dup_seats.week_is_open(wk_from, wk_to, closed=shut):
                 continue
             try:
