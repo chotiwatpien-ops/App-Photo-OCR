@@ -159,6 +159,34 @@ def load(d_from, d_to):
     return week, twin_by_id
 
 
+# แยกจากไฟล์หลักที่ส่งลูกค้า (Rider Trips*.xlsx และโฟลเดอร์รูปของแต่ละสัปดาห์) — Ops 2026-09-13
+# ขีดล่างนำหน้าให้เรียงแยกจากโฟลเดอร์สัปดาห์ และบอกด้วยตาว่านี่ไม่ใช่ของส่งมอบประจำสัปดาห์
+DRIVE_DIR = "_รายงานรูปซ้ำ"
+
+
+def report_name(d_from) -> str:
+    """'2026-09-07' → 'รูปซ้ำ_2026-W37.xlsx' — หนึ่งไฟล์ต่อสัปดาห์ รันซ้ำแล้วทับของเดิม"""
+    from datetime import date
+    y, w, _ = date.fromisoformat(d_from).isocalendar()
+    return f"รูปซ้ำ_{y}-W{w:02d}.xlsx"
+
+
+def upload_to_drive(drive, exports_id, d_from, data: bytes):
+    """วางรายงานลง Drive ใต้ Exports/_รายงานรูปซ้ำ/ → (folder_id, file_id)
+
+    ทับไฟล์ชื่อเดิมของสัปดาห์เดียวกัน: รายงานเปลี่ยนทุกรอบที่มีใบซ้ำเพิ่ม และสิ่งที่คนเปิดดูควรเป็น
+    ฉบับล่าสุดเสมอ ไม่ใช่ไล่เลือกจากสิบฉบับที่ชื่อเหมือนกัน"""
+    folder = drive.ensure_folder(exports_id, DRIVE_DIR)
+    return folder, drive.upload_xlsx(folder, report_name(d_from), data)
+
+
+def build_xlsx(cases, undecided) -> bytes:
+    import io
+    buf = io.BytesIO()
+    write_xlsx(buf, cases, undecided)
+    return buf.getvalue()
+
+
 def write_xlsx(path, cases, undecided):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
@@ -194,6 +222,8 @@ def main(argv=None):
     ap.add_argument("--from", dest="d_from", required=True)
     ap.add_argument("--to", dest="d_to", required=True)
     ap.add_argument("--xlsx", help="เขียนไฟล์ Excel ไว้ที่นี่")
+    ap.add_argument("--to-drive", action="store_true",
+                    help=f"วางไฟล์ลง Drive ที่ Exports/{DRIVE_DIR}/ (แยกจากไฟล์หลักที่ส่งลูกค้า)")
     a = ap.parse_args(argv)
 
     db.init_db()
@@ -235,6 +265,14 @@ def main(argv=None):
                   f" · รูปที่ส่งลูกค้า {c['รูปที่ส่งลูกค้า'] or '—'}")
     if a.xlsx:
         print(f"\nเขียนไฟล์แล้ว: {write_xlsx(a.xlsx, cases, undecided)}")
+    if a.to_drive:
+        import config
+        import roster
+        folder, fid = upload_to_drive(roster._drive(), config.DRIVE_EXPORTS_FOLDER_ID, a.d_from,
+                                      build_xlsx(cases, undecided))
+        print(f"\nวางลง Drive แล้ว: Exports/{DRIVE_DIR}/{report_name(a.d_from)}")
+        print(f"  เปิดไฟล์: https://drive.google.com/file/d/{fid}/view")
+        print(f"  โฟลเดอร์: https://drive.google.com/drive/folders/{folder}")
     return 0
 
 

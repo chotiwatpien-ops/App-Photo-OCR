@@ -1,7 +1,11 @@
 name: รายงานรูปซ้ำ — ให้ลูกค้าตีกลับไรเดอร์
 
-# อ่านอย่างเดียว ไม่แตะฐานข้อมูลและไม่แตะ Drive: ประกอบเคสรูปซ้ำของสัปดาห์ที่เลือก แล้วแนบไฟล์
-# Excel ไว้ที่หน้า run ให้ดาวน์โหลด (Artifacts) — สามชีต: สรุปรายผู้ส่ง · รายใบ · ค้างตัดสิน
+# ไม่แตะฐานข้อมูล: ประกอบเคสรูปซ้ำของสัปดาห์ที่เลือก เป็น Excel สามชีต (สรุปรายผู้ส่ง · รายใบ ·
+# ค้างตัดสิน) แล้ววางลง Drive ที่ Exports/_รายงานรูปซ้ำ/รูปซ้ำ_<สัปดาห์>.xlsx แยกจากไฟล์หลักที่ส่งลูกค้า
+# ทับฉบับเดิมของสัปดาห์เดียวกันทุกครั้ง ยังแนบไว้ที่หน้า run (Artifacts) ด้วยเผื่อ Drive มีปัญหา
+#
+# ไม่อยู่ในคิว drive-write: เขียนไฟล์ของตัวเองในโฟลเดอร์ของตัวเองเท่านั้น ไม่มีรอบไหนแตะไฟล์นี้
+# ถ้าเข้าคิวจะต้องรอหลังรอบ ingest 25 นาทีเพื่อเขียนไฟล์ที่ไม่มีใครแย่งเลย
 
 on:
   workflow_dispatch:
@@ -32,12 +36,16 @@ jobs:
         working-directory: backend
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.DRIVE_OAUTH_TOKEN_JSON }}
+          DRIVE_EXPORTS_FOLDER_ID: ${{ secrets.DRIVE_EXPORTS_FOLDER_ID }}
           TZ: Asia/Bangkok
         run: |
           python duplicate_report.py \
             --from "${{ github.event.inputs.date_from }}" \
             --to "${{ github.event.inputs.date_to }}" \
-            --xlsx "รูปซ้ำ_${{ github.event.inputs.date_from }}.xlsx"
+            --xlsx "รูปซ้ำ_${{ github.event.inputs.date_from }}.xlsx" \
+            --to-drive
       - uses: actions/upload-artifact@v4
         with:
           name: duplicate-report-${{ github.event.inputs.date_from }}

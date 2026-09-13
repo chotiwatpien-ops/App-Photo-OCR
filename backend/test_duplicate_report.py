@@ -104,6 +104,33 @@ check("ชีตรายใบมีช่องไว้กรอกผลก�
       {"สถานะเคส", "ผู้ตีกลับ", "คำตอบผู้ส่ง"} <= {c.value for c in _wb["รายใบ"][1]})
 check("รันทั้งสคริปต์แล้วไม่ error", rep.main(["--from", "2026-09-07", "--to", "2026-09-13"]) == 0)
 
+# วางลง Drive แยกจากไฟล์หลักที่ส่งลูกค้า — Ops 2026-09-13
+check("ชื่อไฟล์บอกสัปดาห์ ไม่ใช่วันที่", rep.report_name("2026-09-07") == "รูปซ้ำ_2026-W37.xlsx")
+
+
+class _FakeDrive:
+    def __init__(self):
+        self.folders, self.files = {}, {}
+
+    def ensure_folder(self, parent, name):
+        return self.folders.setdefault((parent, name), f"{parent}/{name}")
+
+    def upload_xlsx(self, parent, name, data):
+        self.files[(parent, name)] = data            # ชื่อเดิมในโฟลเดอร์เดิม = ทับ
+        return f"id:{name}"
+
+
+_d = _FakeDrive()
+_data = rep.build_xlsx(_cases, _undecided)
+_folder, _fid = rep.upload_to_drive(_d, "EXPORTS", "2026-09-07", _data)
+check("วางไว้ในโฟลเดอร์ของตัวเองใต้ Exports ไม่ใช่ปนกับไฟล์หลัก",
+      _folder == f"EXPORTS/{rep.DRIVE_DIR}" and ("EXPORTS", "Rider Trips.xlsx") not in _d.files)
+check("ไฟล์ที่วางคือ Excel ที่เปิดได้จริง",
+      load_workbook(__import__("io").BytesIO(_d.files[(_folder, "รูปซ้ำ_2026-W37.xlsx")])).sheetnames
+      == ["สรุปรายผู้ส่ง", "รายใบ", "ค้างตัดสิน"])
+rep.upload_to_drive(_d, "EXPORTS", "2026-09-07", _data)
+check("รันซ้ำแล้วทับฉบับเดิม ไม่สร้างไฟล์ชื่อซ้ำเพิ่ม", len(_d.files) == 1)
+
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)
