@@ -704,6 +704,83 @@ else:
     skip("เทสต์ตัวเลขกลับหัว", "ไม่มีรูปตัวอย่างในเครื่องนี้ (test-images/ ไม่ถูก push — เป็นรูปผู้โดยสาร)")
 
 
+# --- the black-figure screen (Grab on iPhone, 4W-Taxi Narumol=195, W37) ----------------------------
+# The OCR's words are canned, as it read them off the real pictures, so this runs on CI too.
+class _Canned:
+    """An engine that 'reads' the given (y px, x px, text) rows off a 720-wide screen."""
+    def __init__(self, rows):
+        self.rows = rows
+
+    def __call__(self, img, **kw):
+        return [([[x, y], [x + 50, y], [x + 50, y + 20], [x, y + 20]], t, 0.9) for y, x, t in self.rows], 0.0
+
+
+_W, _H = 870, 1882                         # the phone's picture; 720 wide it is 1557 tall
+_black_top = [(25, 80, "20:15"), (33, 521, "5G 23"), (664, 57, "① GraoMaps"), (851, 118, "31.84 km"),
+              (982, 23, "B326"), (1243, 610, "326"), (1329, 568, "B 326"), (1331, 57, "Total")]
+_black_bottom = [(26, 81, "20:15"), (225, 23, "邮326"), (486, 610, "326"), (571, 568, "β 326"),
+                 (572, 55, "Total"), (799, 610, "426"), (1309, 56, "Total"), (1309, 570, "B 436")]
+_black_scrolled = [(26, 81, "20:15"), (200, 124, "25.68 km"), (225, 23, "邮229"),
+                   (571, 568, "B 229"), (572, 55, "Total")]
+_green_old = [(26, 81, "20:15"), (300, 60, "รายได้จากรอบขับ"), (320, 600, "136")]
+
+
+def _black(rows, size=(_W, _H)):
+    was = getattr(pairing._local, "ocr", None)
+    pairing._local.ocr = _Canned(rows)
+    try:
+        return pairing.read_black_layout(_Img.new("RGB", size, "white"))
+    finally:
+        pairing._local.ocr = was
+
+
+_bt, _bb = _black(_black_top), _black(_black_bottom)
+check("ยอดดำ: ครึ่งบนอ่านได้ ฿326 จากแถว Total (GraoMaps สะกดเพี้ยนก็ยังรู้ว่าเป็นครึ่งบน)",
+      _bt and _bt["role"] == "top" and _bt["amount"] == 326.0)
+check("ยอดดำ: ครึ่งล่างเอา Total แถวแรก (฿326) ไม่ใช่ยอดผู้โดยสาร ฿436 — ฿ ที่อ่านเป็น β ก็ได้",
+      _bb and _bb["role"] == "bottom" and _bb["amount"] == 326.0)
+check("ยอดดำ: นาฬิกาสีขาวบนป้ายสีฟ้าอ่านได้ 20:15", _bt["clock"] == 20 * 60 + 15 == _bb["clock"])
+_bs = _black(_black_scrolled)
+check("ยอดดำ: ครึ่งล่างที่เลื่อนจนเห็นระยะทางด้านบน ยังเป็นครึ่งล่าง", _bs and _bs["role"] == "bottom")
+check("ยอดหลักพันที่มีจุลภาค (฿1,432) อ่านเต็ม ไม่เหลือ 432",
+      (_black([(25, 80, "22:51"), (435, 544, "B 1,432"), (436, 56, "Total")]) or {}).get("amount") == 1432.0)
+check("หน้าจอแบบเดิม (ไม่มีแถว Total) — ตัวอ่านยอดดำไม่แตะ", _black(_green_old) is None)
+check("มีคำว่า Total แต่ไม่มียอด ฿ บนแถวเดียวกัน ('4.96 km · Total 23 นาที') — ไม่แตะ",
+      _black([(25, 80, "00:40"), (160, 40, "4.96 km · Total 23 นาที")]) is None)
+_pp, _pl = pairing.pair_album([("S__1", dict(_bt, theme="สว่าง")), ("S__2", dict(_bb, theme="สว่าง"))])
+check("ยอดดำ: สองครึ่งจับคู่กันได้ที่ ฿326", [(t, b) for t, b, _ in _pp] == [("S__1", "S__2")] and not _pl)
+check("เวอร์ชันตัวอ่านขยับแล้ว — cache ของ r10 ที่จำหน้าจอยอดดำเป็นครึ่งล่างไม่มียอด ไม่ถูกหยิบกลับมาใช้",
+      pairing.READER not in ("r9", "r10"))
+
+# One album, two phones with opposite habits (Narumol=195: Android bottom-first, iPhone top-first).
+# Two ฿219 trips a minute apart on the iPhone must not be crossed by the Android's habit.
+def _h(role, amt, clock, w):
+    return {"role": role, "amount": amt, "numbers": [amt], "clock": clock, "theme": "สว่าง",
+            "width": w, "height": 1900}
+
+
+_two = [("a_b1", _h("bottom", 100.0, 600, 858)), ("a_t1", _h("top", 100.0, 600, 858)),
+        ("a_b2", _h("bottom", 150.0, 610, 858)), ("a_t2", _h("top", 150.0, 610, 858)),
+        ("a_b3", _h("bottom", 180.0, 620, 858)), ("a_t3", _h("top", 180.0, 620, 858)),
+        ("i_t0", _h("top", 305.0, 1234, 870)), ("i_b0", _h("bottom", 305.0, 1234, 870)),
+        ("i_t1", _h("top", 219.0, 1234, 870)), ("i_b1", _h("bottom", 219.0, 1234, 870)),
+        ("i_t2", _h("top", 219.0, 1235, 870)), ("i_b2", _h("bottom", 219.0, 1235, 870))]
+_got2 = {(t, b) for t, b, _ in pairing.pair_album(_two)[0]}
+check("สองเครื่องในอัลบั้มเดียว นิสัยตรงข้ามกัน: ฿219 สองเที่ยวของ iPhone ไม่ถูกไขว้ด้วยนิสัยของ Android",
+      {("i_t1", "i_b1"), ("i_t2", "i_b2"), ("a_t1", "a_b1")} <= _got2 and ("i_t1", "i_b2") not in _got2)
+
+_blk = os.path.join(_SAMPLES, "black")
+if os.path.isdir(_blk):
+    _names = sorted(os.listdir(_blk), key=pairing._natural)
+    _bi = [(n, pairing.inspect(os.path.join(_blk, n))) for n in _names]
+    _bp, _bl = pairing.pair_album(_bi)
+    check(f"Narumol ยอดดำของจริง {len(_names)} ใบ: จับคู่ครบ ไม่เหลือค้าง ยอดสองครึ่งตรงกัน",
+          len(_bp) * 2 == len(_names) and not _bl
+          and all(dict(_bi)[t]["amount"] == dict(_bi)[b]["amount"] for t, b, _ in _bp))
+else:
+    skip("เทสต์ยอดดำของจริง", "ไม่มีรูปตัวอย่างในเครื่องนี้ (test-images/ ไม่ถูก push — เป็นรูปผู้โดยสาร)")
+
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 if skipped:
     print(f"⚠ แต่มี {len(skipped)} ชุดที่ไม่ได้รัน — ผลข้างบนไม่ได้ครอบคลุมทั้งหมด:")

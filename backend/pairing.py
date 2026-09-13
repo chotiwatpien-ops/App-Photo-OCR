@@ -213,7 +213,9 @@ def ensure_theme(info, source):
 # r9: every half also carries the phone's clock (info['clock']), read off the status bar, so a
 # cached verdict from r8 has no clock and would pair as if the rule below did not exist.
 # r10: nothing is turned upside down before it is read (NO_FLIP) — r9 holds '฿99' as 66.
-READER = "r10"
+# r11: the black-figure screen (read_black_layout) — r10 holds every one of them as a bottom
+# half with no amount and, usually, no clock.
+READER = "r11"
 
 # The status-bar clock: '19:56 น.' — hour and minute, a colon between, no digit touching it on
 # the left (the app writes '3.41 km' straight over the clock on a top half, and '314:56' is
@@ -318,6 +320,71 @@ def date_bar_cut(im):
     if len(runs) < 2:
         return None                                        # nothing under it to cut above
     return (runs[0][1] + runs[1][0]) // 2
+
+
+# --- the black-figure screen (Grab on iPhone, Sep 2026) -----------------------------------------
+# Grab redrew the trip screen on iPhone: the fare is BLACK, not green, and the clock sits in white
+# on a blue pill. Everything above looks for green, so 4W-Taxi Narumol=195's 120 such pictures
+# came back as 120 bottom halves with no amount, 12 clocks between them, and nothing paired — and
+# one of them was glued to an Android top 345 pictures away because it had no clock to veto it.
+# The OCR cannot read the Thai on that screen, but it reads the English the app mixes in, and that
+# is enough: every figure that matters stands on a row that begins 'Total', written '฿ 326' (the
+# OCR spells the ฿ as B, β or 邮), and only a top half carries the map ('GrabMaps', often 'GraoMaps')
+# or the distance ('25.55 km') low on the screen — a bottom scrolled up far enough to show the
+# distance shows it in the top quarter. On the whole album this pairs all 60 trips and no wrong one.
+BLACK_TOTAL = re.compile(r"^total\b", re.IGNORECASE)
+BLACK_BAHT = re.compile(r"^[B฿邮βß]\s?(\d{1,4}(?:\.\d{1,2})?)$")
+BLACK_MAPS = re.compile(r"gr[a-z]{1,2}\s?maps", re.IGNORECASE)
+BLACK_KM = re.compile(r"\d+\.\d{1,2}\s?km", re.IGNORECASE)
+BLACK_TOP_KM = 0.26      # distance below this share of the height = a top half
+BLACK_ROW = 0.013        # '฿ 326' and 'Total' on one row: centres within this share of the height
+STATUS_BAR = 0.04
+
+
+def _screen_rows(im):
+    """[(y, x, text)] for the whole screen in reading order, y and x as shares of the picture."""
+    w = 720
+    h = int(im.height * w / im.width)
+    try:
+        res, _ = _engine()(np.asarray(im.resize((w, h), Image.LANCZOS)), **NO_FLIP)
+    except Exception:  # noqa: BLE001 — a screen we cannot read is not this layout
+        return []
+    return sorted((box[0][1] / h, box[0][0] / w, t) for box, t, _ in (res or []))
+
+
+def read_black_layout(im, rows=None):
+    """{'role', 'amount', 'clock', 'numbers', 'seq'} for the black-figure screen, None for any other.
+
+    Nothing is claimed without a 'Total' row that carries a ฿ figure: that pair of tokens is what
+    says this is the new screen, and a green screen that failed to read never has them."""
+    rows = _screen_rows(im) if rows is None else rows
+    totals = [y for y, _x, t in rows if BLACK_TOTAL.match(t.strip())]
+    if not totals:
+        return None
+    amount = None
+    for y, _x, t in rows:
+        m = BLACK_BAHT.match(t.strip().replace(",", ""))
+        if m and abs(y - totals[0]) <= BLACK_ROW:
+            amount = float(m.group(1))
+            break
+    if amount is None or amount < MIN_AMOUNT:
+        return None
+    text = " ".join(t for _y, _x, t in rows)
+    top = bool(BLACK_MAPS.search(text)) or any(BLACK_KM.search(t) and y > BLACK_TOP_KM for y, _x, t in rows)
+    clock = None
+    for y, _x, t in rows:
+        if y >= STATUS_BAR:
+            break
+        m = CLOCK.search(t)
+        if m:
+            clock = int(m.group(1)) * 60 + int(m.group(2))
+            break
+    seq = []
+    for y, _x, t in rows:
+        if y >= STATUS_BAR:
+            seq += [float(x) for x in re.findall(r'(?<![\d.:])(\d{1,4}(?:\.\d{1,2})?)(?![\d:])', t.replace(",", ""))]
+    return {"role": "top" if top else "bottom", "amount": amount, "clock": clock,
+            "numbers": sorted(set(seq) | {amount}), "seq": seq}
 
 
 def content_ratio(a, white=245, frac=0.003):
@@ -447,10 +514,24 @@ def inspect(source):
         # ฿4, ฿8 … are never a fare: the OCR dropped digits (or read the bonus line). Treated
         # as unreadable, so two such misreads can never be glued together as a "฿4 trip".
         info["amount"], info["alts"] = None, []
+    black = None
+    if info["role"] == "bottom" and info["amount"] is None and not big:
+        # Only a screen the green reader found nothing on is asked — every screen it CAN read
+        # keeps exactly the answer it had.
+        black = read_black_layout(im)
+    if black:
+        info.update(role=black["role"], amount=black["amount"], alts=[], numbers=black["numbers"],
+                    seq=black["seq"], layout="ดำ")
     # The clock on the status bar: the two shots of one trip are taken seconds apart, so their
     # clocks agree, and two halves whose clocks are minutes apart are two trips whatever their
-    # figures say. A whole trip in one picture has no partner to compare with.
-    info["clock"] = None if info["role"] == "long" else read_clock(im)
+    # figures say. A whole trip in one picture has no partner to compare with. On the black-figure
+    # screen the clock is white on blue and the ink-only read drops it; the plain read has it.
+    if info["role"] == "long":
+        info["clock"] = None
+    elif black and black["clock"] is not None:
+        info["clock"] = black["clock"]
+    else:
+        info["clock"] = read_clock(im)
     return info
 
 
@@ -855,14 +936,36 @@ def pair_album(items):
     sure = greedy([c for c in cands if c[1] not in tie_t and c[2] not in tie_b])
     # 2) the album tells its own habit (bottom after the top, or before); use it to break ties.
     #    With nothing to learn from, a tie stays unpaired rather than guessed.
-    after = sum(1 for t, b, _ in sure if order[b] > order[t])
-    before = len(sure) - after
-    if after == before:
+    #    The habit belongs to the phone, not the album: 4W-Taxi Narumol=195 holds an Android that
+    #    sends the bottom first (125 pairs) and an iPhone that sends the top first (59). Asked of
+    #    the whole album, the Android's habit settled the iPhone's tie between two ฿219 trips shot
+    #    a minute apart and crossed them — each top on the other trip's bottom. One phone makes
+    #    one picture size, so the habit is counted per size and the album's only stands in for a
+    #    size that has none of its own.
+    def lean(ps):
+        a = sum(1 for t, b, _ in ps if order[b] > order[t])
+        return (a > len(ps) - a) - (a < len(ps) - a)
+
+    def size(k):
+        return info[k].get("width"), info[k].get("height")
+
+    album_habit = lean(sure)
+    by_size = {}
+    for p in sure:
+        by_size.setdefault(size(p[0]), []).append(p)
+    habits = {s: lean(ps) or album_habit for s, ps in by_size.items()}
+    if not album_habit and not any(habits.values()):
         pairs = sure
     else:
-        habit = 1 if after > before else -1
-        ranked = sorted(cands, key=lambda c: (c[0], 0 if (order[c[2]] - order[c[1]]) * habit > 0 else 1))
-        pairs = greedy(ranked)
+        settled = {(t, b) for t, b, _ in sure}
+
+        def habit_of(c):
+            return habits.get(size(c[1]), album_habit)
+
+        def rank(c):
+            return c[0], 0 if (order[c[2]] - order[c[1]]) * habit_of(c) > 0 else 1
+        # a phone with no habit to go on keeps its ties unpaired, as the whole album used to
+        pairs = greedy(sorted((c for c in cands if habit_of(c) or (c[1], c[2]) in settled), key=rank))
     pairs = [(t, b, d[2]) for t, b, d in pairs]  # report the file distance, not the rank
     used = {k for t, b, _ in pairs for k in (t, b)}
     if weak:
