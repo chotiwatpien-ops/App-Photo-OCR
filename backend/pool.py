@@ -200,11 +200,31 @@ class Images(dict):
 
 
 # --- 2-3. duplicates + pairing ------------------------------------------------------------
-def analyse(albums, data, workers, cache=None, known_md5=None):
+def parse_forced(text):
+    """'album|top|bottom|฿;…' → {album: [(top, bottom, amount)]} — pairs a person has opened and
+    confirmed. Blank parts and malformed entries are dropped; the report says what was used."""
+    out = {}
+    for part in (text or "").split(";"):
+        bits = [b.strip() for b in part.split("|")]
+        if len(bits) != 4 or not all(bits):
+            continue
+        try:
+            amount = float(bits[3].replace(",", "").lstrip("฿"))
+        except ValueError:
+            continue
+        out.setdefault(bits[0], []).append((bits[1], bits[2], amount))
+    return out
+
+
+def analyse(albums, data, workers, cache=None, known_md5=None, forced=None):
     """cache: optional dict-like {md5: info} of earlier inspect() results — a half left in the
     pool is looked at again every run, and the OCR verdict for the same bytes never changes.
     known_md5: {drive id: md5} remembered from an earlier round, so a picture whose verdict is
-    already known never has to be downloaded to work out which verdict is its own."""
+    already known never has to be downloaded to work out which verdict is its own.
+    forced: {album: [(top, bottom, amount)]} — pairs confirmed by a person (parse_forced). Only
+    two halves that the reader left unpaired in that very album are joined; anything else is
+    reported and left alone, so a name typed wrong can never pull apart a pair the reader made."""
+    forced = forced or {}
     report = {"albums": [], "duplicates": [], "errors": []}
     known_md5 = known_md5 or {}
     new_md5 = {}
@@ -275,6 +295,16 @@ def analyse(albums, data, workers, cache=None, known_md5=None):
         by_name = {img["name"]: img for img in alb["_keep"]}
         pairs, leftovers = pairing.pair_album(items)
         d = dict(items)
+        by_hand = {}
+        order = {n: i for i, (n, _) in enumerate(items)}
+        for top_n, bot_n, amount in forced.get(alb["album"], []):
+            if top_n in leftovers and bot_n in leftovers and top_n != bot_n:
+                pairs.append((top_n, bot_n, abs(order[top_n] - order[bot_n])))
+                leftovers = [n for n in leftovers if n not in (top_n, bot_n)]
+                by_hand[(top_n, bot_n)] = amount
+            else:
+                report["errors"].append(f"สั่งจับคู่เอง {alb['album']}: {top_n} + {bot_n} — "
+                                        f"ไม่ได้ค้างอยู่ทั้งสองใบในอัลบั้มนี้ ไม่ได้แตะ")
         if hasattr(data, "prefetch"):
             # the chip is read off the top half / the long picture, and the pair is joined from
             # both halves — everything that is about to move needs its bytes after all
@@ -291,7 +321,8 @@ def analyse(albums, data, workers, cache=None, known_md5=None):
                       "target": target_for(by_name[n]["id"], alb["album"])}
                      for n, i in items if i["role"] == "long"],
             "pairs": [{"top": t, "bottom": b, "cut_top": d[t].get("cut_top"),
-                       "amount": pairing.agreed_amount(d[t], d[b]), "distance": dist,
+                       "amount": by_hand.get((t, b)) or pairing.agreed_amount(d[t], d[b]), "distance": dist,
+                       **({"by_hand": True} if (t, b) in by_hand else {}),
                        "style": f"ครึ่ง/{d[t].get('theme')}",
                        "top_id": by_name[t]["id"], "bottom_id": by_name[b]["id"],
                        "target": target_for(by_name[t]["id"], alb["album"])} for t, b, dist in pairs],
@@ -339,6 +370,7 @@ def render(report):
         for p in a["pairs"]:
             lines.append(f"    คู่  {p['top']}  +  {p['bottom']}   ฿{p['amount']:g}"
                          + ("" if p["distance"] == 1 else f"  (ห่าง {p['distance']})")
+                         + ("  [สั่งจับคู่เอง]" if p.get("by_hand") else "")
                          + f"  → {p.get('target') or 'ไม่รู้ประเภทรถ'}"
                          + (f"  ✔ {p['moved']}" if "/" in p.get("moved", "") or p.get("carried")
                             else (f"  ⚠ {p['moved']}" if p.get("moved") else "")))
@@ -652,6 +684,8 @@ def main(argv=None):
     ap.add_argument("--move", action="store_true",
                     help="ย้ายจริง: คู่ที่จับได้ → รูปต่อแล้วใน Week/<ประเภทรถ>/ (ต้นฉบับไป Pool/_ใช้แล้ว) · "
                          "รูปยาว → Week/<ประเภทรถ>/ · ที่เหลืออยู่ที่เดิม")
+    ap.add_argument("--pairs", default=os.environ.get("POOL_FORCE_PAIRS", ""),
+                    help="คู่ที่คนเปิดดูแล้วยืนยัน 'อัลบั้ม|ครึ่งบน|ครึ่งล่าง|ยอด;…' — จับเฉพาะสองใบที่ยังค้างในอัลบั้มนั้น")
     args = ap.parse_args(argv)
 
     started = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -678,13 +712,16 @@ def main(argv=None):
             a["images"] = a["images"][:max(0, left)]
             left -= len(a["images"])
         albums = [a for a in albums if a["images"]]
+    forced = parse_forced(args.pairs)
+    if forced:
+        log("สั่งจับคู่เอง: " + " · ".join(f"{a} {len(v)} คู่" for a, v in forced.items()))
     run_pool(drive, albums, move=args.move, preview=not args.no_preview, use_db=not args.no_db,
-             started=started, label=(f"เฉพาะ {args.week}" if args.week else ""))
+             started=started, label=(f"เฉพาะ {args.week}" if args.week else ""), forced=forced)
     return 0
 
 
 def run_pool(drive, albums, move, preview=True, use_db=True, started=None, label="",
-             run_id=None, log=log, issues=None):
+             run_id=None, log=log, issues=None, forced=None):
     """The whole pool step on an already-scanned album list. Used by the CLI and by every ingest
     round (ingest.py, POOL_IN_ROUND). Returns the report dict, or None when the pool is empty."""
     started = started or time.strftime("%Y-%m-%d %H:%M:%S")
@@ -715,7 +752,7 @@ def run_pool(drive, albums, move, preview=True, use_db=True, started=None, label
     log(f"โหลดแล้ว {len(data)} รูป ใน {time.time() - t0:.0f} วิ"
         + (f" · ไม่ต้องโหลด {skipped_dl} รูปที่รู้ผลอยู่แล้ว" if skipped_dl else ""))
     t0 = time.time()
-    report = analyse(albums, data, config.POOL_PARALLEL, cache, known_md5)
+    report = analyse(albums, data, config.POOL_PARALLEL, cache, known_md5, forced=forced)
     fresh = report.pop("ocr_fresh", {})
     fresh_md5 = report.pop("md5_fresh", {})
     if use_db and (fresh or fresh_md5):

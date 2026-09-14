@@ -29,6 +29,10 @@ on:
         description: "จำกัดจำนวนรูป (ทดลอง) — ว่าง = ทั้งหมด"
         type: string
         default: ""
+      pairs:
+        description: "คู่ที่คนเปิดดูแล้วยืนยัน: อัลบั้ม|ครึ่งบน|ครึ่งล่าง|ยอด คั่นคู่ด้วย ; — จับเฉพาะสองใบที่ยังค้างในอัลบั้มนั้น"
+        type: string
+        default: ""
 
 # One group for everything that writes to Drive. Each of these used to hold a group of
 # its own name, which stops a second copy of itself and nothing else — so a quota apply
@@ -61,6 +65,7 @@ jobs:
           DRIVE_POOL_FOLDER_ID: ${{ secrets.DRIVE_POOL_FOLDER_ID }}   # optional: separate-folder layout
           DRIVE_PARALLEL: "12"
           POOL_PARALLEL: "4"
+          POOL_FORCE_PAIRS: ${{ github.event.inputs.pairs }}   # read by pool.py, never re-parsed by the shell
           TZ: Asia/Bangkok
         run: |
           ARGS=""
