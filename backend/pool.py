@@ -221,9 +221,11 @@ def analyse(albums, data, workers, cache=None, known_md5=None, forced=None):
     pool is looked at again every run, and the OCR verdict for the same bytes never changes.
     known_md5: {drive id: md5} remembered from an earlier round, so a picture whose verdict is
     already known never has to be downloaded to work out which verdict is its own.
-    forced: {album: [(top, bottom, amount)]} — pairs confirmed by a person (parse_forced). Only
-    two halves that the reader left unpaired in that very album are joined; anything else is
-    reported and left alone, so a name typed wrong can never pull apart a pair the reader made."""
+    forced: {album: [(top, bottom, amount)]} — pairs confirmed by a person (parse_forced). Both
+    halves must be in that very album's pool; they are set aside before the reader pairs the
+    rest, so a confirmed pair wins over whatever the reader would have made of those halves.
+    A name not found, or a half already claimed by another confirmed pair, is reported and
+    nothing is joined for it."""
     forced = forced or {}
     report = {"albums": [], "duplicates": [], "errors": []}
     known_md5 = known_md5 or {}
@@ -293,18 +295,23 @@ def analyse(albums, data, workers, cache=None, known_md5=None, forced=None):
     for alb in albums:
         items = [(img["name"], info[img["id"]]) for img in alb["_keep"] if info.get(img["id"])]
         by_name = {img["name"]: img for img in alb["_keep"]}
-        pairs, leftovers = pairing.pair_album(items)
         d = dict(items)
-        by_hand = {}
         order = {n: i for i, (n, _) in enumerate(items)}
+        # A pair a person has confirmed is taken out BEFORE the reader pairs the rest. Joining it
+        # afterwards only worked on halves the reader had left alone, and in W37 the reader had
+        # not: Parichat's ฿43 top (23 + a ฿20 tip) sat beside its bottom, whose income line reads
+        # 23 — so the reader gave that bottom to a ฿23 top 8 pictures away, took the ฿43 top for a
+        # bottom 83 away, and four wrong pairs stood where two right ones were confirmed.
+        by_hand, claimed = {}, set()
         for top_n, bot_n, amount in forced.get(alb["album"], []):
-            if top_n in leftovers and bot_n in leftovers and top_n != bot_n:
-                pairs.append((top_n, bot_n, abs(order[top_n] - order[bot_n])))
-                leftovers = [n for n in leftovers if n not in (top_n, bot_n)]
+            if top_n in d and bot_n in d and top_n != bot_n and not {top_n, bot_n} & claimed:
+                claimed.update((top_n, bot_n))
                 by_hand[(top_n, bot_n)] = amount
             else:
                 report["errors"].append(f"สั่งจับคู่เอง {alb['album']}: {top_n} + {bot_n} — "
-                                        f"ไม่ได้ค้างอยู่ทั้งสองใบในอัลบั้มนี้ ไม่ได้แตะ")
+                                        f"ไม่อยู่ในกองของอัลบั้มนี้ทั้งสองใบ หรือถูกสั่งไปแล้วในคู่อื่น ไม่ได้แตะ")
+        pairs, leftovers = pairing.pair_album([(n, i) for n, i in items if n not in claimed])
+        pairs += [(t, b, abs(order[t] - order[b])) for t, b in by_hand]
         if hasattr(data, "prefetch"):
             # the chip is read off the top half / the long picture, and the pair is joined from
             # both halves — everything that is about to move needs its bytes after all

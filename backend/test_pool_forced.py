@@ -51,11 +51,37 @@ check("คู่ที่ตัวอ่านจับได้เองยั�
 check("คู่ที่สั่งเองถูกจับ ใช้ยอดที่คนยืนยัน", pairs.get(("91757_0.jpg", "91756_0.jpg"), {}).get("amount") == 51.0
       and pairs[("91757_0.jpg", "91756_0.jpg")].get("by_hand"))
 check("ไม่มีครึ่งไหนค้างแล้ว", a["leftovers"] == [])
-check("สั่งจับใบที่ตัวอ่านจับไปแล้ว → ไม่แตะ และบอกในปัญหา",
+check("สั่งใบที่ถูกคู่อื่นจองไปแล้ว / ไม่มีไฟล์ → ไม่แตะ และบอกในปัญหา",
       len(a["pairs"]) == 2 and sum("สั่งจับคู่เอง" in e for e in rep["errors"]) == 2)
 check("รายงานบอกว่าคู่ไหนสั่งเอง", "[สั่งจับคู่เอง]" in pool.render({**rep, "totals": {**rep["totals"]}}))
 check("ไม่สั่งอะไร = ผลเหมือนเดิมทุกอย่าง",
       len(pool.analyse(albums, data, 1, cache={})["albums"][0]["pairs"]) == 1)
+
+# คู่ที่คนยืนยันต้องชนะคู่ที่ตัวอ่านจะจับผิด (Parichat = 406, W37): ครึ่งบน ฿43 = 23 + ทิป 20
+# ครึ่งล่างของมันเขียนรายได้ 23 — ตัวอ่านเอาไปจับกับครึ่งบน ฿23 ของอีกเที่ยว
+INFO.update({
+    "75545_0.jpg": {"role": "top", "amount": 23.0, "clock": 391},
+    "51884_0.jpg": {"role": "top", "amount": 43.0, "clock": 391},
+    "51885_0.jpg": {"role": "bottom", "amount": 23.0, "numbers": [3, 23, 26, 48], "seq": [], "clock": 391},
+})
+for k in ("75545_0.jpg", "51884_0.jpg", "51885_0.jpg"):
+    INFO[k].update(theme="สว่าง", width=858, height=1907)
+alb2 = [{"week": "Week 7-13 Sep", "group": "2W", "album": "2W-Win Parichat = 406", "pool_id": "p",
+         "images": [{"id": n, "name": n} for n in ("75545_0.jpg", "51884_0.jpg", "51885_0.jpg")]}]
+data2 = {n: n.encode() for n in ("75545_0.jpg", "51884_0.jpg", "51885_0.jpg")}
+auto = pool.analyse(alb2, data2, 1, cache={})["albums"][0]
+check("(ก่อน) ตัวอ่านจับครึ่งล่างทิปไปให้ ฿23 ผิดเที่ยว",
+      [(p["top"], p["bottom"]) for p in auto["pairs"]] == [("75545_0.jpg", "51885_0.jpg")])
+fixed = pool.analyse(alb2, data2, 1, cache={},
+                     forced={"2W-Win Parichat = 406": [("51884_0.jpg", "51885_0.jpg", 43.0)]})["albums"][0]
+check("สั่งจับเองชนะคู่ผิดของตัวอ่าน: 51884 + 51885 ฿43",
+      [(p["top"], p["bottom"], p["amount"], p.get("by_hand")) for p in fixed["pairs"]]
+      == [("51884_0.jpg", "51885_0.jpg", 43.0, True)])
+check("ครึ่งบน ฿23 ที่ไม่มีคู่จริง กลับไปค้างในกอง", [l["file"] for l in fixed["leftovers"]] == ["75545_0.jpg"])
+_r = pool.analyse(alb2, data2, 1, cache={}, forced={"2W-Win Parichat = 406": [
+    ("51884_0.jpg", "51885_0.jpg", 43.0), ("75545_0.jpg", "51885_0.jpg", 23.0)]})
+check("ใบเดียวถูกสั่งซ้ำสองคู่: คู่แรกได้ คู่หลังไม่แตะและบอกในปัญหา",
+      len(_r["albums"][0]["pairs"]) == 1 and any("75545_0.jpg" in e for e in _r["errors"]))
 
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)
