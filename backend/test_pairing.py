@@ -769,6 +769,27 @@ _got2 = {(t, b) for t, b, _ in pairing.pair_album(_two)[0]}
 check("สองเครื่องในอัลบั้มเดียว นิสัยตรงข้ามกัน: ฿219 สองเที่ยวของ iPhone ไม่ถูกไขว้ด้วยนิสัยของ Android",
       {("i_t1", "i_b1"), ("i_t2", "i_b2"), ("a_t1", "a_b1")} <= _got2 and ("i_t1", "i_b2") not in _got2)
 
+# คู่ที่อยู่ไกลต้องมาจากเครื่องเดียวกัน (Parichat = 406, W37): ครึ่งล่างที่มีทิป 20 เขียนรายได้ 23
+# ตรงกับครึ่งบน ฿23 ของอีกเที่ยวซึ่งถ่ายจากอีกเครื่อง
+def _p(role, amt, w, h, clock=None):
+    return {"role": role, "amount": amt, "numbers": [amt], "clock": clock, "theme": "สว่าง", "width": w, "height": h}
+
+
+# ครึ่งบนยอดอื่นเจ็ดใบคั่นกลาง ให้สองใบนี้อยู่ห่างกัน 8 ใบ
+_far_items = [("75545", _p("top", 23.0, 869, 1883))] + [(f"x{i}", _p("top", 900.0 + i, 869, 1883)) for i in range(7)] \
+             + [("51885", _p("bottom", 23.0, 720, 1608))]
+check("คู่ที่อยู่ไกลจากคนละเครื่อง (869×1883 กับ 720×1608) ไม่ถูกจับ แม้ยอดตรงเป๊ะ",
+      ("75545", "51885") not in {(t, b) for t, b, _ in pairing.pair_album(_far_items)[0]})
+_same = [("75545", _p("top", 23.0, 869, 1883))] + [(f"x{i}", _p("top", 900.0 + i, 869, 1883)) for i in range(7)] \
+        + [("75553", _p("bottom", 23.0, 870, 1882))]
+check("เครื่องเดียวกัน (869×1883 กับ 870×1882 ต่างไม่ถึง 1%) ยังจับได้ตามกฎเดิม",
+      ("75545", "75553") in {(t, b) for t, b, _ in pairing.pair_album(_same)[0]})
+check("ติดกันแม้คนละเครื่องยังจับได้ — กฎนี้ใช้เฉพาะคู่ที่ไกล",
+      pairing.pair_album([("a", _p("top", 23.0, 869, 1883)), ("b", _p("bottom", 23.0, 720, 1608))])[0] != [])
+check("แคปยาว (Natcha 761×2152) ไม่นับเป็นคนละเครื่อง",
+      not pairing.other_phone(_p("top", 1, 858, 1907), _p("bottom", 1, 761, 2152)))
+check("ไม่มีขนาดรูป ไม่ตัดทิ้งเพราะเดา", not pairing.other_phone({"role": "top"}, _p("bottom", 1, 720, 1608)))
+
 _blk = os.path.join(_SAMPLES, "black")
 if os.path.isdir(_blk):
     _names = sorted(os.listdir(_blk), key=pairing._natural)

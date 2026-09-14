@@ -844,6 +844,25 @@ def agreed_amount(top, bottom):
     return best
 
 
+SCREEN_MIN_RATIO = 0.40   # width/height below this is a scrolled long capture, not one screen
+SAME_PHONE_TOLERANCE = 0.01
+
+
+def other_phone(a, b):
+    """Two ordinary screens whose shape differs by more than 1% were taken on different phones.
+
+    A long scrolled capture (Natcha = 32's 761×2152 lower halves) is no screen shape at all and
+    never counts — its partner is an ordinary screen from the same phone. Missing sizes count as
+    the same phone: nothing is refused on a guess."""
+    try:
+        ra, rb = a["width"] / a["height"], b["width"] / b["height"]
+    except (KeyError, TypeError, ZeroDivisionError):
+        return False
+    if ra < SCREEN_MIN_RATIO or rb < SCREEN_MIN_RATIO:
+        return False
+    return abs(ra - rb) / max(ra, rb) > SAME_PHONE_TOLERANCE
+
+
 def pair_album(items):
     """items: list of (key, info) in album order. Returns (pairs, leftovers):
     pairs = [(top_key, bottom_key, distance)], leftovers = unpaired half keys.
@@ -911,6 +930,14 @@ def pair_album(items):
                     # whose clocks agree count as touching here: 2W-NUI=117 lost ฿66 = 56 + a
                     # ฿10 tip and ฿78 = 38 + a ฿40 tip to this rule, both three pictures
                     # apart, both shot within the same minute.
+                    continue
+                if not near and other_phone(info[t], info[b]):
+                    # An exact figure across a distance still has to come off one phone. W37's
+                    # Parichat = 406 held an Android set (720×1608) dropped among iPhone shots
+                    # (870×1882); a ฿20 tip hides from the income line on the bottom, so each
+                    # tipped trip's bottom read like another trip's top, and four pairs were
+                    # made 8 to 83 pictures apart, every one across the two phones. Over the 17
+                    # training albums (1,079 pairs) and Narumol=195 (190) this refuses nothing.
                     continue
                 cands.append(((0 if near else 1, tier, dist), t, b))
     cands.sort()
