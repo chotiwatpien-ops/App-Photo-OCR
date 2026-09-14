@@ -143,6 +143,31 @@ check("สัปดาห์ที่ไม่มีใบซ้ำ ไม่ส
 import config as _cfg                                           # noqa: E402
 check("ท้ายรอบเปิดใช้เป็นค่าเริ่มต้น", _cfg.DUP_REPORT_IN_ROUND is True)
 
+# ลูกค้า 2026-09-14: ซ้ำข้ามสัปดาห์ไม่นับเป็นซ้ำ — ไม่มีอะไรให้ตีกลับ
+j_w36 = job("มารือ", "2026-08-31")
+old = trip(j_w36, "LINE_ALBUM_DL-TAE_260828_289.jpg", committed=1, booking_code="C" * 20,
+           net_earnings=159.0, image_hash="h9")
+j_w37 = job("ฉลองรัฐ", "2026-09-07")
+trip(j_w37, "LINE_ALBUM_2WTAEW6=295_260911_127.jpg", status="duplicate", booking_code="C" * 20,
+     net_earnings=159.0, note="ทิ้งอัตโนมัติ: ซ้ำกับ ... ที่อนุมัติแล้ว")          # รหัสเดียวกัน คนละสัปดาห์
+trip(j_w37, "same-bytes.jpg", status="duplicate", booking_code="D" * 20, net_earnings=40.0,
+     duplicate_of=old, image_hash="h9")                                          # ไฟล์เดิมเป๊ะ คนละสัปดาห์
+_rows2, _twins2 = rep.load("2026-09-07", "2026-09-13")
+_cases2, _und2 = rep.build(_rows2, _twins2)
+check("ซ้ำข้ามสัปดาห์ (รหัสเดียวกัน) ไม่อยู่ในรายการตีกลับ",
+      all(c["ไฟล์ที่ซ้ำ"] != "LINE_ALBUM_2WTAEW6=295_260911_127.jpg" for c in _cases2 + _und2))
+check("ไฟล์เดิมเป๊ะที่ต้นฉบับอยู่สัปดาห์อื่น ก็ไม่อยู่ในรายการตีกลับ",
+      all(c["ไฟล์ที่ซ้ำ"] != "same-bytes.jpg" for c in _cases2 + _und2))
+check("ซ้ำในสัปดาห์เดียวกันยังอยู่ครบเหมือนเดิม", len(_cases2) == 1 and len(_und2) == 1)
+# รหัสเดียวกันทั้งสองสัปดาห์: ต้นฉบับที่ใช้ต้องเป็นของสัปดาห์เดียวกัน ไม่ใช่ใบแรกของโปรเจกต์
+trip(job("ก", "2026-08-31"), "w36-first.jpg", committed=1, booking_code="E" * 20, net_earnings=70.0)
+j_a = job("ข", "2026-09-07")
+trip(j_a, "w37-first.jpg", committed=1, booking_code="E" * 20, net_earnings=70.0)
+trip(job("ค", "2026-09-07"), "w37-repeat.jpg", status="duplicate", booking_code="E" * 20, net_earnings=70.0)
+_c3, _ = rep.build(*rep.load("2026-09-07", "2026-09-13"))
+_rep = [c for c in _c3 if c["ไฟล์ที่ซ้ำ"] == "w37-repeat.jpg"]
+check("มีต้นฉบับทั้ง W36 และ W37 → ชี้ต้นฉบับของ W37", len(_rep) == 1 and _rep[0]["ซ้ำกับไฟล์"] == "w37-first.jpg")
+
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

@@ -232,7 +232,8 @@ def commit(job_id: int, force: bool = False):
         if dup_in_job:
             raise HTTPException(409, f"มีรูปซ้ำกันเองใน job นี้ ({', '.join(dup_in_job[:5])}) — "
                                      f"ลบรูปที่ซ้ำออกก่อน หรือกดยืนยันบันทึกซ้ำ")
-        committed_dups = [d for d in db.find_committed_duplicates([t["booking_code"] for t in done])
+        committed_dups = [d for d in db.find_committed_duplicates([t["booking_code"] for t in done],
+                                                                  week=(j["date_from"], j["date_to"]))
                           if d["job_id"] != job_id]
         if committed_dups:
             names = [f"{d['file_name']} (job #{d['job_id']})" for d in committed_dups[:5]]

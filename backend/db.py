@@ -584,24 +584,32 @@ def _twin_filter(q, code, base_fare, trip_time):
                                                         trips.c.trip_time == trip_time)
 
 
-def _approved_twin(c, row):
-    """The approved trip this row repeats — ANY rider, ANY week.
+def _approved_twin(c, row, week):
+    """The approved trip this row repeats — any rider, the SAME week.
 
-    Until 2026-09-05 only a repeat by the same rider inside the same week counted, because Ops
-    wanted slips to be reusable across weeks. Ops has now asked for repeated work to be taken out
-    instead: the same slip handed in under two rider names is one trip and is counted once. The
-    copy that is already approved is the one that stays, which is 'first in wins' by construction.
+    The rule has moved twice. Until 2026-09-05 only the same rider inside one week counted; Ops
+    then asked for every repeat to come out, any rider, any week. On 2026-09-14 the customer
+    ruled that a slip counted in an earlier week is work again in a later one: only a repeat
+    inside the week it is delivered in is a duplicate. W37 alone held 306 rows (฿16,159) parked
+    against a twin in W33-W36. Whichever rider handed the slip in, inside one week the approved
+    copy stays — 'first in wins' by construction.
 
-    Measured over W33-W35 the widened rule would have caught 1,521 rows (11.6%) — the change is
-    forward-only by Ops' decision, so those delivered rows are left exactly as they are."""
+    week = (date_from, date_to) of the row's own job."""
     code = row["booking_code"]
     if not code:
         return None
     q = (select(trips.c.id, trips.c.file_name, trips.c.committed,
                 trips.c.net_earnings, trips.c.base_fare)
-         .where(trips.c.committed == 1, trips.c.booking_code == code))
+         .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+         .where(trips.c.committed == 1, trips.c.booking_code == code,
+                jobs.c.date_from == week[0], jobs.c.date_to == week[1]))
     q = _twin_filter(q, code, row.get("base_fare"), row.get("trip_time"))
     return c.execute(q.order_by(trips.c.id)).mappings().first()
+
+
+def _job_week(c, job_id):
+    r = c.execute(select(jobs.c.date_from, jobs.c.date_to).where(jobs.c.id == job_id)).first()
+    return (r[0], r[1]) if r else (None, None)
 
 
 def discard_settled_duplicates(job_id) -> int:
@@ -618,6 +626,7 @@ def discard_settled_duplicates(job_id) -> int:
         return r["net_earnings"] if r["net_earnings"] is not None else r["base_fare"]
 
     with engine.begin() as c:
+        week = _job_week(c, job_id)
         rows = c.execute(select(trips.c.id, trips.c.duplicate_of, trips.c.net_earnings,
                                 trips.c.base_fare, trips.c.trip_time, trips.c.note,
                                 trips.c.booking_code)
@@ -633,7 +642,7 @@ def discard_settled_duplicates(job_id) -> int:
             .where(trips.c.id.in_([r["duplicate_of"] for r in rows if r["duplicate_of"]]))).mappings().all()}
         n = 0
         for r in rows:
-            twin = twins.get(r["duplicate_of"]) if r["duplicate_of"] else _approved_twin(c, r)
+            twin = twins.get(r["duplicate_of"]) if r["duplicate_of"] else _approved_twin(c, r, week)
             if not twin or not twin["committed"]:
                 continue                                   # twin not approved — decide together
             a, b = amount(r), amount(twin)
@@ -778,13 +787,17 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
         codes = [r["booking_code"] for r in rows if r["booking_code"]]
         seen, seen_short = set(), set()
         if codes:
-            # Ops 2026-09-05: repeated work comes out. A booking code already approved anywhere
-            # in the project is the same trip, whichever rider handed the slip in and whichever
-            # week it lands in — the approved copy is the one that stays. Short codes may be
+            # Repeated work comes out — inside the week only (customer, 2026-09-14; see
+            # _approved_twin). A booking code approved in this week is the same trip whichever
+            # rider handed the slip in, and the approved copy stays. Short codes may be
             # truncated, so they only count as a repeat when the fare and clock time match too.
+            week = _job_week(c, job_id)
             for t in c.execute(select(trips.c.booking_code, trips.c.base_fare, trips.c.trip_time)
+                               .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
                                .where(trips.c.committed == 1,
-                                      trips.c.booking_code.in_(codes))).mappings().all():
+                                      trips.c.booking_code.in_(codes),
+                                      jobs.c.date_from == week[0],
+                                      jobs.c.date_to == week[1])).mappings().all():
                 if len(t["booking_code"]) >= DUP_FULL_CODE:
                     seen.add(t["booking_code"])
                 else:
@@ -1257,15 +1270,19 @@ def find_job_duplicate(job_id, booking_code, exclude_id):
         return dict(r) if r else None
 
 
-def find_committed_duplicates(codes):
-    """Trips already committed (any job) whose booking codes are in `codes`."""
+def find_committed_duplicates(codes, week=None):
+    """Trips already committed whose booking codes are in `codes` — inside `week`
+    (date_from, date_to) when given, since a repeat across weeks is work (customer, 2026-09-14)."""
     codes = [x for x in codes if x]
     if not codes:
         return []
+    q = (select(trips.c.booking_code, trips.c.job_id, trips.c.file_name)
+         .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+         .where(trips.c.committed == 1, trips.c.booking_code.in_(codes)))
+    if week:
+        q = q.where(jobs.c.date_from == week[0], jobs.c.date_to == week[1])
     with engine.begin() as c:
-        rows = c.execute(select(trips.c.booking_code, trips.c.job_id, trips.c.file_name)
-                         .where(trips.c.committed == 1, trips.c.booking_code.in_(codes))).mappings().all()
-        return [dict(r) for r in rows]
+        return [dict(r) for r in c.execute(q).mappings().all()]
 
 
 def query_trips(date_from=None, date_to=None, driver=None, committed_only=True, job_id=None):

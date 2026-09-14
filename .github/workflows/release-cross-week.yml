@@ -1,0 +1,58 @@
+name: Release cross-week — ปลดงานที่ถูกพักเพราะซ้ำกับสัปดาห์อื่น
+
+# The customer ruled on 2026-09-14 that a slip counted in an earlier week is work again in a
+# later one; only a repeat inside the same week is a duplicate. The guard follows the new rule
+# from now on. This puts back the rows an open week already parked under the old rule: status
+# back to done, picture back into the rider folder, then the job's normal auto-approval.
+# Closed weeks are refused. Report-only unless `apply` is ticked. Afterwards run ingest with
+# exports_only and exports_week set to the same week.
+
+on:
+  workflow_dispatch:
+    inputs:
+      date_from:
+        description: "วันแรกของสัปดาห์ (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-09-07"
+      date_to:
+        description: "วันสุดท้ายของสัปดาห์ (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-09-13"
+      apply:
+        description: "ปลดจริง (ไม่ติ๊ก = รายงานอย่างเดียว)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: drive-write
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: Release cross-week repeats
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.DRIVE_OAUTH_TOKEN_JSON }}
+          DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
+          TZ: Asia/Bangkok
+          D_FROM: ${{ github.event.inputs.date_from }}
+          D_TO: ${{ github.event.inputs.date_to }}
+        run: |
+          if [ "${{ github.event.inputs.apply }}" = "true" ]; then
+            python release_cross_week.py --from "$D_FROM" --to "$D_TO" --apply
+          else
+            python release_cross_week.py --from "$D_FROM" --to "$D_TO"
+          fi

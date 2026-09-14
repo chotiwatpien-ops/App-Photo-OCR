@@ -73,6 +73,11 @@ def build(rows, twins):
     cases, undecided = [], []
     for r in rows:
         twin = twins.get(r.get("duplicate_of")) or twins.get(r.get("twin_id"))
+        if r.get("cross_week") or (twin and twin.get("date_from") and r.get("date_from")
+                                   and twin["date_from"] != r["date_from"]):
+            # ลูกค้า 2026-09-14: สลิปที่นับไปแล้วในสัปดาห์ก่อน กลับมาเป็นงานได้ในสัปดาห์หลัง
+            # ไม่ใช่ของซ้ำ ไม่มีอะไรให้ตีกลับ — รวมถึงไฟล์เดิมเป๊ะที่ต้นฉบับอยู่สัปดาห์อื่น
+            continue
         t = twin or {}
         case = {
             "id": r["id"],
@@ -149,13 +154,17 @@ def load(d_from, d_to):
     twin_by_id = {r["id"]: r for r in twins}
     code_twin = {}
     for r in sorted(by_code, key=lambda r: r["id"]):     # ใบแรกที่อนุมัติคือต้นฉบับ
-        code_twin.setdefault(r["booking_code"], r)
+        code_twin.setdefault((r["booking_code"], r["date_from"]), r)
+    other_week = {r["booking_code"] for r in by_code}
     for r in week:                                      # เติมต้นฉบับให้แถวที่ไม่มี duplicate_of
         if not r["duplicate_of"] and r["booking_code"]:
-            tw = code_twin.get(r["booking_code"])
+            # ต้นฉบับต้องอยู่สัปดาห์เดียวกัน (ลูกค้า 2026-09-14) ถ้ามีแต่ของสัปดาห์อื่น แถวนี้เป็นงาน
+            tw = code_twin.get((r["booking_code"], r["date_from"]))
             if tw and tw["id"] != r["id"]:
                 r["twin_id"] = tw["id"]
                 twin_by_id[tw["id"]] = tw
+            elif r["booking_code"] in other_week:
+                r["cross_week"] = True
     return week, twin_by_id
 
 

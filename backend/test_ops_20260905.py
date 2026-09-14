@@ -59,11 +59,19 @@ check("คนละไรเดอร์ code เดียวกัน: ถู�
 check("บอกไว้ว่าซ้ำกับใบไหน", "ซ้ำกับ" in (r2["note"] or ""))
 check("ใบแรกยังอยู่ครบ (เก็บของคนแรก)", db.get_trip(t1)["committed"] == 1)
 
-# คนเดียวกัน คนละสัปดาห์ — เดิม Ops อนุญาต ตอนนี้ต้องถูกตัด
+# คนละสัปดาห์ — 2026-09-05 Ops ให้ตัด · 2026-09-14 ลูกค้าเปลี่ยนกลับ: ข้ามสัปดาห์เป็นงาน
 c = db.create_job("สมชาย", "Trips", *OTHER)
 t3 = trip(c, "A-9AAAAAAAAAAAAAV", date="2026-09-08")
 db.auto_approve_job(c)
-check("คนเดียวกัน คนละสัปดาห์: ไม่อนุมัติ", db.get_trip(t3)["committed"] == 0)
+check("คนเดียวกัน คนละสัปดาห์: อนุมัติได้ (ลูกค้า 2026-09-14)", db.get_trip(t3)["committed"] == 1)
+c2 = db.create_job("สมหญิง", "Trips", *OTHER)
+t3b = trip(c2, "A-9AAAAAAAAAAAAAV", date="2026-09-09")
+db.auto_approve_job(c2)
+check("แต่ในสัปดาห์หลังนั้นเอง ใบที่สองยังเป็นซ้ำ", db.get_trip(t3b)["status"] == "duplicate")
+check("คนละสัปดาห์ในหน้าอนุมัติเอง: ไม่เตือนว่าเคยอนุมัติ",
+      db.find_committed_duplicates(["A-9AAAAAAAAAAAAAV"], week=("2026-09-14", "2026-09-20")) == [])
+check("สัปดาห์เดียวกันในหน้าอนุมัติเอง: ยังเตือน",
+      len(db.find_committed_duplicates(["A-9AAAAAAAAAAAAAV"], week=WEEK)) == 1)
 
 # code เดียวกันแต่ยอดไม่ตรง = คำถามจริง ต้องให้คนดู ไม่ใช่ทิ้งเงียบ
 d = db.create_job("สมศรี", "Trips", *WEEK)
