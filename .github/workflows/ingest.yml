@@ -67,6 +67,10 @@ on:
         description: "อ่านสดรอบนี้ (ไม่ใช้ batch) — ผลมาทันทีแต่จ่ายเต็มราคา"
         type: boolean
         default: false
+      cancel_batches:
+        description: "ยกเลิก batch ที่ค้าง แล้วอ่านรูปพวกนั้นแบบสดในรอบนี้ (จ่ายเต็มราคาเฉพาะรูปที่ค้าง · รูปใหม่รอบนี้ก็อ่านสด)"
+        type: boolean
+        default: false
       redo_model:
         description: "อ่านใหม่เฉพาะงานที่โมเดลนี้เคยอ่าน เช่น flash-lite (ตั้งช่อง model ข้างบนเป็นตัวที่จะใช้อ่านแทน)"
         type: string
@@ -133,7 +137,9 @@ jobs:
           # Moving files into a folder does not change their modifiedTime, so a delivery can be
           # invisible to the probe; this is the way to make a round look anyway.
           DRIVE_PROBE: ${{ github.event.inputs.force_walk == 'true' && '0' || '1' }}
-          INGEST_BATCH: ${{ github.event.inputs.live_read == 'true' && '0' || '1' }}
+          # cancelling a stalled batch means Google's queue is not to be trusted this round —
+          # new pictures are read live too, not handed to the same queue
+          INGEST_BATCH: ${{ (github.event.inputs.live_read == 'true' || github.event.inputs.cancel_batches == 'true') && '0' || '1' }}
           INGEST_PARALLEL: "24"
           # 8 was the calm-down after a 32-fault network storm on 2026-08-26, before every Drive
           # call had a retry. With batch reading, downloads ARE the round — 19 images a minute
@@ -144,6 +150,7 @@ jobs:
           # a person pressing the button always runs; a scheduled one only runs when due
           if [ "${{ github.event_name }}" = "schedule" ]; then ARGS="$ARGS --min-gap 2.5"; fi
           if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then ARGS="$ARGS --dry-run"; fi
+          if [ "${{ github.event.inputs.cancel_batches }}" = "true" ]; then ARGS="$ARGS --cancel-batches"; fi
           if [ "${{ github.event.inputs.exports_only }}" = "true" ]; then ARGS="$ARGS --exports-only"; fi
           if [ "${{ github.event.inputs.xlsx_only }}" = "true" ]; then ARGS="$ARGS --xlsx-only"; fi
           if [ -n "${{ github.event.inputs.exports_jobs }}" ]; then ARGS="$ARGS --exports-jobs ${{ github.event.inputs.exports_jobs }}"; fi

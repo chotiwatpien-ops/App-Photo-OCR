@@ -342,8 +342,15 @@ def keep_images_for_waiting(job_id, among=None, memory=None, drive=None) -> int:
     return kept
 
 
-def collect_batches(drive, exports_id=None):
+def collect_batches(drive, exports_id=None, cancel_open=False):
     """Pick up whatever the batch queue has finished since the last round.
+
+    cancel_open=True is the way out when Google's batch queue stalls. On 2026-09-15 seven
+    batches (198 pictures) sat RUNNING for over three hours against 40-90 minutes for the 33
+    before them, and other apps on the same API saw jobs stuck for a day or more. A batch still
+    open is cancelled, whatever it had already answered is kept, and the rest of its pictures
+    are handed back as ordinary pending rows — which this same round then reads the live way
+    (see stuck_pending_trips in run()), so they are paid for once and arrive today.
 
     drive=None collects without touching Drive — that is the web app's "เก็บผลตอนนี้" button,
     which can put the readings in front of Ops even when GitHub is not running rounds at all.
@@ -365,6 +372,22 @@ def collect_batches(drive, exports_id=None):
             log(f"  ✗ อ่านสถานะ batch {b['name'][-12:]} ไม่ได้: {str(e)[:120]}")
             errors += 1
             continue
+        if not state.endswith(("SUCCEEDED", "FAILED", "CANCELLED", "EXPIRED")) and cancel_open:
+            try:
+                batch_client.cancel(b["name"])
+                state, data, errs = batch_client.collect(b["name"])
+            except Exception as e:  # noqa: BLE001 — cannot cancel: leave it waiting, as before
+                log(f"  ✗ ยกเลิก batch {b['name'][-12:]} ไม่ได้: {str(e)[:120]}")
+                errors += 1
+            else:
+                if not state.endswith(("SUCCEEDED", "FAILED", "CANCELLED", "EXPIRED")):
+                    # the cancel is asynchronous; the request has gone in and the pictures are
+                    # released now — waiting for Google to confirm is exactly what we cannot do
+                    state = "JOB_STATE_CANCELLED"
+                log(f"  🛑 ยกเลิก batch {b['name'][-12:]} ที่ค้าง (ส่งเมื่อ {b.get('created_at')}) · "
+                    f"ได้คำตอบแล้ว {len(data)} · ที่เหลือจะอ่านสดในรอบนี้")
+                issues.append((f"batch-cancel:{b['name']}", "process",
+                               f"ยกเลิก batch ที่ค้าง ({b['n_trips']} รูป ส่งเมื่อ {b.get('created_at')}) — อ่านสดแทน"))
         if not state.endswith(("SUCCEEDED", "FAILED", "CANCELLED", "EXPIRED")):
             db.touch_batch(b["name"], state)
             waiting += b["n_trips"] or 0
@@ -386,8 +409,9 @@ def collect_batches(drive, exports_id=None):
         left = [t for t in pairs if t not in data and t not in errs]
         note = None
         if left:
-            # no answer for these — hand them back for the ordinary path to read next round
-            note = f"ไม่ได้คำตอบ {len(left)} รูป — จะอ่านแบบปกติในรอบถัดไป"
+            # no answer for these — hand them back for the ordinary path to read
+            note = (f"ยกเลิกเพราะค้าง · ไม่ได้คำตอบ {len(left)} รูป — อ่านสดในรอบนี้" if cancel_open
+                    else f"ไม่ได้คำตอบ {len(left)} รูป — จะอ่านแบบปกติในรอบถัดไป")
             log(f"  ⚠ batch {b['name'][-12:]}: {note}")
         db.close_batch(b["name"], state, note)
         log(f"  📥 เก็บผล batch {b['name'][-12:]} ({state.replace('JOB_STATE_', '')}): "
@@ -626,7 +650,7 @@ BATCH_FLUSH_ITEMS = 240
 BATCH_FLUSH_BYTES = 24 * 1024 * 1024
 
 
-def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
+def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cancel_batches=False):
     run_id = None if dry_run else db.start_ingest_run()
     t0 = time.time()
     issues = []  # (key, kind, message) — synced to ingest_issues at the end (auto-resolve)
@@ -701,7 +725,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None):
     touched_weeks = set()
 
     if config.INGEST_BATCH or db.open_batches():
-        got, errs, jobs_touched, batch_issues = collect_batches(drive, exports_id)
+        got, errs, jobs_touched, batch_issues = collect_batches(drive, exports_id, cancel_open=cancel_batches)
         errors += errs
         issues.extend(batch_issues)
         if got or jobs_touched:
@@ -1120,6 +1144,8 @@ def main():
     ap.add_argument("--source", default="drive", help="'drive' or 'local:<path to Inbox-like folder>'")
     ap.add_argument("--exports", default=None, help="exports folder id (drive) or path (local)")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--cancel-batches", action="store_true",
+                    help="ยกเลิก batch ที่ยังไม่เสร็จ เก็บคำตอบที่ได้แล้ว แล้วอ่านรูปที่เหลือแบบสดในรอบนี้")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--exports-only", action="store_true", help="regenerate Excel + customer images for existing jobs")
     ap.add_argument("--xlsx-only", action="store_true",
@@ -1202,7 +1228,8 @@ def main():
             log(f"🖼 สร้างรูปส่งลูกค้าเฉพาะสัปดาห์ {', '.join(sorted(weeks))} (ไฟล์ Excel ยังเขียนครบทุกสัปดาห์)")
         errors, _ = export_only(drive, exports, weeks=weeks)
     else:
-        errors = run(drive, inbox, exports, dry_run=a.dry_run, limit=a.limit, only=a.only)
+        errors = run(drive, inbox, exports, dry_run=a.dry_run, limit=a.limit, only=a.only,
+                     cancel_batches=a.cancel_batches)
     sys.exit(1 if errors else 0)
 
 

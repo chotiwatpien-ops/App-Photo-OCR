@@ -74,6 +74,12 @@ def submit(items, model=None, display_name="ingest", workers=4) -> list:
         return list(ex.map(one, chunks))
 
 
+def cancel(name) -> None:
+    """Ask Google to stop a batch. Work it has not done is not charged; whatever it finished
+    before the cancel can still be collected (collect() below reads it)."""
+    _client().batches.cancel(name=name)
+
+
 def state(name) -> str:
     """One of JOB_STATE_PENDING / RUNNING / SUCCEEDED / FAILED / CANCELLED / EXPIRED."""
     job = _client().batches.get(name=name)
