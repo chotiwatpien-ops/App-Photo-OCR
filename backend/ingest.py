@@ -829,7 +829,16 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
     if swept_fail:
         log(f"⚠ กวาดย้อนหลังพลาด {swept_fail} job — job อื่นไม่ได้รับผลกระทบ")
 
-    broken = db.retryable_error_trips()
+    shut_now = set(db.closed_weeks())
+    done_for = db.error_trips_in_closed_weeks(shut_now)
+    if done_for:
+        # the week is with the customer; nobody will read these again, so stop showing them as
+        # something to fix. The rows keep their status and their picture stays on Drive.
+        for tid, _jid in done_for:
+            db.resolve_issue(f"batch:{tid}", run_id)
+        log(f"🔕 ปิดรายการปัญหา {len(done_for)} ข้อของสัปดาห์ที่ปิดไปแล้ว — ไม่อ่านซ้ำอีก")
+
+    broken = db.retryable_error_trips(closed=shut_now)
     if broken:
         log(f"♻ อ่านใหม่ {len(broken)} แถวที่รอบก่อนอ่านไม่สำเร็จ (Gemini ตอบ error ชั่วคราว)")
         ids = db.drive_ids_for_trips([t for t, _ in broken])

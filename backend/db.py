@@ -1153,18 +1153,43 @@ def waiting_trip_ids(job_id, among=None):
         return [r[0] for r in c.execute(q).all()]
 
 
-def retryable_error_trips(limit=60):
+def retryable_error_trips(limit=60, closed=None):
     """(trip_id, job_id) rows the reader failed on that still have their original on Drive.
 
     Batch results carry per-request failures — 'service unavailable', 'deadline expired' — which
     are Gemini having a moment, not anything wrong with the slip. Nothing retried those, so the
-    trip sat in 'error' for good and its money never reached the workbook."""
+    trip sat in 'error' for good and its money never reached the workbook.
+
+    Rows of a week somebody has closed are not offered: the file is with the customer and a
+    successful re-read would add a trip to it. W37 was closed at 1,470 a group with 12 of these
+    still sitting in 'error', and every round after would have put them back in."""
+    if closed is None:
+        closed = set(closed_weeks())
     with engine.begin() as c:
-        return [(r[0], r[1]) for r in c.execute(
-            select(trips.c.id, trips.c.job_id)
+        rows = c.execute(
+            select(trips.c.id, trips.c.job_id, jobs.c.date_from)
+            .join(jobs, jobs.c.id == trips.c.job_id)
             .where(trips.c.status == "error",
                    trips.c.id.in_(select(ingested_files.c.trip_id)))
-            .order_by(trips.c.id).limit(limit)).all()]
+            .order_by(trips.c.id)).all()
+    return [(r[0], r[1]) for r in rows if r[2] not in closed][:limit]
+
+
+def error_trips_in_closed_weeks(closed=None):
+    """(trip_id, job_id) rows stuck in 'error' inside a week nobody will read again.
+
+    They are not a fault anybody can act on — the week is delivered — so the round closes their
+    complaint instead of leaving it on the dashboard for good."""
+    if closed is None:
+        closed = set(closed_weeks())
+    if not closed:
+        return []
+    with engine.begin() as c:
+        rows = c.execute(
+            select(trips.c.id, trips.c.job_id, jobs.c.date_from)
+            .join(jobs, jobs.c.id == trips.c.job_id)
+            .where(trips.c.status == "error")).all()
+    return [(r[0], r[1]) for r in rows if r[2] in closed]
 
 
 def waiting_trips_without_image():

@@ -83,6 +83,34 @@ check("บอกไว้ในรายการที่ข้าม ว่า
 items, _ = ingest.discover(drive, ROOT, closed={W36, W37})
 check("ปิดทั้งสองสัปดาห์: ไม่มีอะไรให้อ่าน", items == [])
 
+
+# --- แถวที่อ่านไม่สำเร็จในสัปดาห์ที่ปิดแล้ว: ไม่อ่านซ้ำ และปิดรายการปัญหาให้ (2026-09-16) --------
+# W37 ปิดที่ 1,470 ต่อกลุ่มทั้งที่ยังมี 12 แถวค้างเป็น error — รอบถัดไปจะอ่านใหม่แล้วเติมเข้าไฟล์
+# ที่ลูกค้าถืออยู่ ส่วนการ์ดปัญหาบนแดชบอร์ดก็ค้างตลอดกาลเพราะไม่มีใครแก้ได้แล้ว
+from sqlalchemy import insert, select                            # noqa: E402
+
+j_open = db.create_job("สมชาย Win", "Trips", W37, W37_END, category="2 W Standard")
+j_shut = db.create_job("สมหญิง Win", "Trips", W36, W36_END, category="2 W Standard")
+ids = {}
+with db.engine.begin() as c:
+    for n, jid in ((1, j_open), (2, j_shut)):
+        tid = c.execute(insert(db.trips).values(job_id=jid, file_name=f"e{n}.jpg",
+                                                status="error")).inserted_primary_key[0]
+        ids[f"e{n}.jpg"] = tid
+        c.execute(insert(db.ingested_files).values(drive_id=f"drive-{n}", job_id=jid, trip_id=tid,
+                                                   name=f"e{n}.jpg", ingested_at="2026-09-16"))
+db.close_week(W36, W36_END, by="ทดสอบ")
+
+check("อ่านใหม่เฉพาะแถวของสัปดาห์ที่ยังเปิด",
+      [t for t, _j in db.retryable_error_trips()] == [ids["e1.jpg"]])
+check("แถว error ของสัปดาห์ที่ปิดแล้วถูกชี้ให้ปิดรายการปัญหา",
+      [t for t, _j in db.error_trips_in_closed_weeks()] == [ids["e2.jpg"]])
+db.reopen_week(W36)
+check("เปิดสัปดาห์กลับ: กลับมาอ่านใหม่ได้ตามเดิม",
+      sorted(t for t, _j in db.retryable_error_trips()) == sorted([ids["e1.jpg"], ids["e2.jpg"]])
+      and db.error_trips_in_closed_weeks() == [])
+db.close_week(W36, W36_END, by="ทดสอบ")
+
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)
