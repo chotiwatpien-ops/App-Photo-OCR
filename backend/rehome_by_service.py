@@ -32,10 +32,11 @@ from sqlalchemy import select
 import db
 from distribute import NUM_PREFIX, bare, folder_label
 
-# The four groups and the service each one delivers. A service outside these (a car reading
-# 'Saver Car' where no 4 W Saver group exists) has nowhere to go and is reported, not moved.
+# The three groups the team runs and the service each one delivers. A car is a car: Ops buys one
+# car product, so a row still reading 'Saver Car' (read before 2026-09-16) belongs in
+# 4 W Standard like any other car, not in a '4 W Saver' group that has never existed.
 GROUP_OF = {"Saver Bike": "2 W Saver", "Standard Bike": "2 W Standard",
-            "Standard Car": "4 W Standard", "Saver Car": "4 W Saver"}
+            "Standard Car": "4 W Standard", "Saver Car": "4 W Standard"}
 CUSTOMER_ID_RE = re.compile(r"[-\w]{25,}")
 
 

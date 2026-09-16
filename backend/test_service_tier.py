@@ -35,8 +35,9 @@ check("ชิปบอก Standard, job อยู่กลุ่ม Saver → St
 check("ชิปกับกลุ่มตรงกัน → ไม่มีหมายเหตุ", ns("Saver Bike", "2 W Saver") == ("Saver Bike", None))
 check("ล้อยังมาจากกลุ่ม: ชิป JustGrab ในกลุ่มรถยนต์ → Standard Car",
       ns("Standard (JustGrab)", "4 W Standard") == ("Standard Car", None))
-check("รถผิดล้อยังบันทึกตามรูปเหมือนเดิม",
-      ns("Saver Car", "2 W Saver") == ("Saver Car", "บันทึกตามรูป: Saver Car (โฟลเดอร์อยู่กลุ่ม 2 W Saver)"))
+# Ops 2026-09-16: รถยนต์มีสินค้าเดียว ชิป Saver บนสลิปรถยนต์จึงลงเป็น Standard Car
+check("รถผิดล้อยังบันทึกตามรูป แต่รถยนต์เป็น Standard เสมอ",
+      ns("Saver Car", "2 W Saver") == ("Standard Car", "บันทึกตามรูป: Standard Car (โฟลเดอร์อยู่กลุ่ม 2 W Saver)"))
 check("AI อ่านชิปไม่ได้ → ใช้กลุ่ม", ns(None, "2 W Saver") == ("Saver Bike", None))
 check("ครึ่งล่างไม่มีชิป (trust_tier=False) → ใช้กลุ่ม แม้ AI จะเดามา",
       ns("Standard Bike", "2 W Saver", trust_tier=False) == ("Saver Bike", None))

@@ -95,12 +95,13 @@ check("job ใหม่ชี้ไปโฟลเดอร์ไรเดอร
 again, _ = rh.rows_needing_move(D_FROM, D_TO)
 check("รันซ้ำไม่มีอะไรต้องย้าย", again == [])
 
-# --- a service with no group to go to is reported, never moved ---------------------------------------
+# --- a car is a car: a row still reading 'Saver Car' goes to the one car group (Ops 2026-09-16) -------
 with db.engine.begin() as c:
     c.execute(insert(db.trips).values(job_id=job_std, file_name="pair_9.jpg", status="done",
                                       service_type="Saver Car", customer_image="WK36-มนันตรา Win9.jpg", committed=1))
 m9, _ = rh.rows_needing_move(D_FROM, D_TO)
-check("Saver Car ถูกชี้ว่าต้องไป 4 W Saver ซึ่ง main() จะกันไว้ไม่ย้าย", [w for _r, _j, w in m9] == ["4 W Saver"])
+check("แถวเก่าที่ยังเขียนว่า Saver Car ถูกชี้ไปกลุ่มรถยนต์กลุ่มเดียวที่มี",
+      [w for _r, _j, w in m9] == ["4 W Standard"])
 
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")

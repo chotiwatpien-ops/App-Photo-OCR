@@ -356,6 +356,13 @@ CATEGORY_SERVICE = {
 }
 
 
+# The customer buys one car product. A Saver chip on a car slip is still that product (Ops via
+# Fiat, 2026-09-16: "4W saver ให้ตีเข้า Standard") — W37 delivered 20 rows reading 'Saver Car',
+# a service no group holds and no target counts, which left the car group looking 20 short.
+def car_is_standard(service):
+    return "Standard Car" if (service or "").strip().endswith("Car") else service
+
+
 def normalize_service(ai_value, category, trust_tier=True):
     """Map whatever Grab printed ('Standard (JustGrab)', 'Saver Bike', ...) onto the template's four
     values, using the rider's vehicle group to settle car-vs-bike. Returns (value, conflict_note).
@@ -374,15 +381,17 @@ def normalize_service(ai_value, category, trust_tier=True):
         if wheel and wheel != cat_wheel:
             # team rule 2026-08-25: photos landing in the wrong vehicle folder happen — the
             # PHOTO tells the truth, so log per reality with a trace note (no more holding)
-            svc = f"{tier or cat_tier} {wheel}"
+            svc = car_is_standard(f"{tier or cat_tier} {wheel}")
             return svc, f"บันทึกตามรูป: {svc} (โฟลเดอร์อยู่กลุ่ม {category})"
         if trust_tier and tier and tier != cat_tier:
-            svc = f"{tier} {cat_wheel}"
+            svc = car_is_standard(f"{tier} {cat_wheel}")
+            if svc == cat:
+                return cat, None
             return svc, f"ประเภทตามชิปบนสลิป: {svc} (job อยู่กลุ่ม {category})"
-        return cat, None
+        return car_is_standard(cat), None
     if tier and wheel:
-        return f"{tier} {wheel}", None
-    return ai_value, None
+        return car_is_standard(f"{tier} {wheel}"), None
+    return car_is_standard(ai_value), None
 
 
 def _repair_money(data):

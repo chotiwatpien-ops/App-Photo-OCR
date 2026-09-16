@@ -1,0 +1,51 @@
+name: Relabel car service — แถวที่ยังเขียนว่า Saver Car ให้เป็น Standard Car
+
+# Ops buys one car product (via Fiat, 2026-09-16: "4W saver ให้ตีเข้า Standard"). The reader
+# writes 'Standard Car' for every car from that date; this fixes the rows read before it, which
+# a week's count read as a service of its own — W37 held 20, and its car group looked 20 short
+# while its folder held 1,490. Only the label changes; no picture moves and no row is re-read.
+# Afterwards run Carry excess (the car group may now be over target) and ingest with xlsx_only.
+
+on:
+  workflow_dispatch:
+    inputs:
+      date_from:
+        description: "วันแรกของสัปดาห์ (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-09-07"
+      date_to:
+        description: "วันสุดท้ายของสัปดาห์ (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-09-13"
+      apply:
+        description: "เปลี่ยนจริง (ไม่ติ๊ก = รายงานอย่างเดียว)"
+        type: boolean
+        default: false
+
+# it writes rows the exporter reads, so it queues behind anything else rewriting the week
+concurrency:
+  group: drive-write
+  cancel-in-progress: false
+
+jobs:
+  relabel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: เปลี่ยนป้ายประเภทงานรถยนต์
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TZ: Asia/Bangkok
+        run: |
+          ARGS="--from ${{ github.event.inputs.date_from }} --to ${{ github.event.inputs.date_to }}"
+          if [ "${{ github.event.inputs.apply }}" = "true" ]; then ARGS="$ARGS --apply"; fi
+          python relabel_car_service.py $ARGS
