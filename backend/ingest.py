@@ -262,12 +262,19 @@ def new_walk(clean=None):
     return {"clean": dict(clean or {}), "visited": {}, "skipped": {}}
 
 
-def discover(drive, inbox_id, walk=None):
+def discover(drive, inbox_id, walk=None, closed=None):
     """Walk the Inbox. Two layouts are understood:
       A) Inbox/<YYYY-Www>/<rider>/[YYYY-MM-DD/]*.jpg
       B) Inbox/<4 W Standard|4 W Saver|2 W Standard|2 W Saver>/<NN name D-D Mon>/*.jpg   (the team's)
-    Returns (items, skipped-warnings)."""
+    Returns (items, skipped-warnings).
+
+    A week somebody has closed is not walked at all. Closing it used to stop the tidying and the
+    exports but not the reading, and W37 was closed at 1,470 a group and read its way to 1,494
+    over the next two rounds — the pool had already filed pairs in its rider folders, and every
+    round after the close picked more of them up. The file the customer holds must not grow."""
     import config as _cfg
+    if closed is None:
+        closed = set(db.closed_weeks())
     items, skipped = [], []
     for top in drive.list_folders(inbox_id):
         if top["id"] == (_cfg.DRIVE_EXPORTS_FOLDER_ID or ""):
@@ -279,6 +286,9 @@ def discover(drive, inbox_id, walk=None):
         if rng:  # production: Week D-D Mon / <category> / <Admin X> / <rider>
             d1, d2 = rng
             wk = week_label(d1.isoformat())
+            if d1.isoformat() in closed:
+                skipped.append(f"'{top['name']}' ปิดสัปดาห์แล้ว — ไม่อ่านรูปที่ยังค้างในโฟลเดอร์ไรเดอร์")
+                continue
             for cat in drive.list_folders(top["id"]):
                 if clean_name(cat["name"]).lower() in CATEGORIES:
                     _discover_category(drive, cat, clean_name(cat["name"]), d1.isoformat(), d2.isoformat(), wk, skipped, items, walk)
@@ -294,6 +304,9 @@ def discover(drive, inbox_id, walk=None):
         bounds = week_bounds(top["name"])
         if bounds:  # layout A
             monday, sunday = bounds
+            if monday.isoformat() in closed:
+                skipped.append(f"'{top['name']}' ปิดสัปดาห์แล้ว — ไม่อ่านรูปที่ยังค้างในโฟลเดอร์ไรเดอร์")
+                continue
             for rider in drive.list_folders(top["id"]):
                 parsed = parse_rider_folder(rider["name"])
                 name = parsed[0] if parsed else clean_name(rider["name"])

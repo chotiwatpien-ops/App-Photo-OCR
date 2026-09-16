@@ -57,6 +57,32 @@ check("ไม่รู้วันจบ และไม่มีใครกด
 check("เปิดสัปดาห์ใหม่ได้", db.reopen_week(W36) and fds.week_is_open(W36, W36_END, today="2026-09-13"))
 check("เปิดสัปดาห์ที่ไม่ได้ปิดไว้ ไม่พัง", db.reopen_week("2026-01-01") is False)
 
+
+# --- รอบ ingest ต้องไม่เดินเข้าไปอ่านรูปของสัปดาห์ที่ปิดแล้ว (W37, 2026-09-16) -------------------
+# ปิด W37 ไว้ที่ 1,470 ต่อ Service Type แล้วรอบ #253/#254 อ่านรูปที่ pool วางไว้ในโฟลเดอร์ไรเดอร์
+# ต่ออีก 24 เที่ยว ไฟล์ที่ลูกค้าถืออยู่จึงโตขึ้นเอง
+import ingest                                                   # noqa: E402
+from drive_client import LocalDrive                             # noqa: E402
+
+ROOT = os.path.join(WORK, "inbox")
+for wk, rider in (("Week 31 Aug-6 Sep", "01-สมชาย Win"), ("Week 7-13 Sep", "01-สมชาย Win")):
+    d = os.path.join(ROOT, wk, "2 W Standard", rider)
+    os.makedirs(d)
+    open(os.path.join(d, "a.jpg"), "wb").write(bytes([0xFF, 0xD8]))
+drive = LocalDrive(ROOT)
+
+items, skipped = ingest.discover(drive, ROOT, closed=set())
+check("ไม่มีสัปดาห์ไหนปิด: เห็นรูปทั้งสองสัปดาห์", len(items) == 2)
+
+items, skipped = ingest.discover(drive, ROOT, closed={W37})
+check("ปิด W37 แล้ว: ไม่หยิบรูปของ W37 มาอ่าน",
+      [i["week_from"] if "week_from" in i else i.get("date_from") for i in items] == [W36])
+check("บอกไว้ในรายการที่ข้าม ว่าข้ามเพราะปิดสัปดาห์",
+      any("ปิดสัปดาห์แล้ว" in m and "Week 7-13 Sep" in m for m in skipped))
+
+items, _ = ingest.discover(drive, ROOT, closed={W36, W37})
+check("ปิดทั้งสองสัปดาห์: ไม่มีอะไรให้อ่าน", items == [])
+
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

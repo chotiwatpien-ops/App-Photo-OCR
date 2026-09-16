@@ -23,6 +23,8 @@ import ingest                                                   # noqa: E402
 import pool                                                     # noqa: E402
 from drive_client import LocalDrive                             # noqa: E402
 
+db.init_db()      # discover ถามฐานข้อมูลว่าสัปดาห์ไหนถูกปิดไปแล้ว
+
 ok = True
 
 
