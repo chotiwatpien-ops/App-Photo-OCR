@@ -22,6 +22,7 @@ import db                                                        # noqa: E402
 from drive_client import LocalDrive                              # noqa: E402
 
 db.init_db()
+JPEG = bytes([0xFF, 0xD8])
 ok = True
 
 
@@ -103,9 +104,33 @@ check("โน้ตบอกว่ายกไปทำไม และวัน
       "ยกไปสัปดาห์ 2026-09-07..2026-09-13" in rows["s2.jpg"]["note"]
       and "วันที่บนสลิป 2026-09-06 → ลงเป็น 2026-09-10" in rows["s2.jpg"]["note"])
 
+# --- a service no group buys never makes a group look over target (W37, 2026-09-16) ----------------------
+# 4 W Standard held 1,470 Standard Car trips and 20 Saver Car ones. Counting the FOLDER read 1,490
+# against a target of 1,470, and run #8 carried 20 real car trips out of a week already on target.
+car_rider = os.path.join(ROOT, THIS, "4 W Standard", "01-สมหมาย Taxi")
+os.makedirs(car_rider)
+j_car = db.create_job("สมหมาย Taxi", "Trips", D_FROM, D_TO, category="4 W Standard", drive_folder_id=car_rider)
+with db.engine.begin() as c:
+    for n, svc in ((1, "Standard Car"), (2, "Standard Car"), (3, "Standard Car"), (4, "Saver Car"), (5, "Saver Car")):
+        open(os.path.join(car_rider, f"c{n}.jpg"), "wb").write(JPEG + str(n).encode())
+        c.execute(insert(db.trips).values(job_id=j_car, file_name=f"c{n}.jpg", status="done",
+                                          service_type=svc, trip_date="2026-09-05", committed=1))
+car_excess, car_counts, _ = ce.excess_rows(D_FROM, D_TO, target=3)
+check("นับตาม Service Type: 4 W Standard คือ Standard Car 3 ใบ ไม่ใช่ 5", car_counts["4 W Standard"] == 3)
+check("Saver Car ถูกนับแยก ไม่ถูกยก", car_counts.get("(ไม่มีกลุ่ม) Saver Car") == 2
+      and "4 W Standard" not in car_excess)
+
+# แถวที่อ่าน Service Type ไม่ได้ ยังนับตามโฟลเดอร์เหมือนเดิม
+with db.engine.begin() as c:
+    open(os.path.join(car_rider, "c6.jpg"), "wb").write(JPEG + b"6")
+    c.execute(insert(db.trips).values(job_id=j_car, file_name="c6.jpg", status="done",
+                                      service_type=None, trip_date="2026-09-06", committed=1))
+_e, car_counts2, _ = ce.excess_rows(D_FROM, D_TO, target=3)
+check("แถวที่ไม่มี Service Type นับตามโฟลเดอร์ที่มันอยู่", car_counts2["4 W Standard"] == 4)
+
 # --- now the group is at target: nothing more to carry ---------------------------------------------------
 again, counts2, _ = ce.excess_rows(D_FROM, D_TO, target=3)
-check("รันซ้ำ: Saver เหลือ 3 พอดี ไม่มีอะไรต้องยก", counts2["2 W Saver"] == 3 and again == {})
+check("รันซ้ำ: Saver เหลือ 3 พอดี ไม่มีอะไรต้องยก", counts2["2 W Saver"] == 3 and "2 W Saver" not in again)
 
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")

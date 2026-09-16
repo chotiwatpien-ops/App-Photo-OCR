@@ -39,7 +39,7 @@ LOCATION_FROM_WEEK = str(getattr(config, "LOCATION_FROM_WEEK", "2026-W36"))
 # Uploads are skipped when no row has changed since the last round, which is right for data and
 # wrong for layout: the Phase 2 file would have kept its old columns until the next approval
 # happened to come along. Folding this into that fingerprint forces exactly one rewrite.
-LAYOUT = "2026-09-06"
+LAYOUT = "2026-09-16"
 
 HEADERS = [
     "Driver Name", "Date & Time", "Time", "Service Type", "Payment Method",
@@ -49,6 +49,13 @@ HEADERS = [
     "Passenger Fare (THB)", "Grab Service Fee (THB)", "Image",
 ]
 COL_WIDTHS = [11.4, 9.7, 12.9, 12.5, 13.5, 12.5, 13.4, 10.5, 12.0, 14.1, 11.9, 13.2, 7.8, 16.4, 22.3, 15.9, 17.1, 18]
+
+# Ops 2026-09-16 asked for the zone back, alongside the address: the address answers "where was
+# this trip", the zone answers "how does the week split". They go AFTER the last column of the
+# template, never between: Sheet1's own J and Q are formulas written with fixed letters
+# (=K+M+N, =P-J), and inserting a column in the middle would point them at the wrong cells.
+LOCATION_EXTRA = ["Pick-up Zone", "Drop-off Zone"]
+LOCATION_HEADERS = HEADERS + LOCATION_EXTRA
 
 ANALYSIS_HEADERS = [
     "Driver Name", "Date", "Time", "Booking Code", "Week", "Pick-up Zone", "Drop-off Zone",
@@ -306,13 +313,18 @@ def build_location_workbook(rows: list[dict]) -> bytes | None:
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = LOCATION_SHEET
-    widths = list(COL_WIDTHS)
+    widths = list(COL_WIDTHS) + [14, 14]
     widths[5] = widths[6] = 46                     # an address, not a one-word zone
-    _style_header(ws, HEADERS, widths, medium=True)
+    _style_header(ws, LOCATION_HEADERS, widths, medium=True)
     ws.freeze_panes = "A2"
     for i, t in enumerate(sorted(wanted, key=lambda x: (x.get("trip_date") or "", x["driver_name"])),
                           start=2):
         _write_main_row(ws, i, t["driver_name"], t, locations=True)
+        for col, z in enumerate((zone_for(t.get("pickup_district"), t.get("pickup_code"), t.get("pickup_text")),
+                                 zone_for(t.get("dropoff_district"), t.get("dropoff_code"), t.get("dropoff_text"))),
+                                start=len(HEADERS) + 1):
+            cell = ws.cell(row=i, column=col, value=z)
+            cell.font, cell.border = _BODY_FONT, _BORDER
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

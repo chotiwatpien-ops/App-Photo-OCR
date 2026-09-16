@@ -37,6 +37,12 @@ from distribute import NUM_PREFIX, bare, folder_label
 
 REPLACED_DIR = "_แทนที่แล้ว"
 GROUPS = ("2 W Saver", "2 W Standard", "4 W Standard")
+# What the customer counts, one service per group. The count is the row's Service Type, not the
+# folder its job sits in (Fiat, 2026-09-16: "นับตาม Service Type") — W37 held 20 'Saver Car' rows
+# in 4 W Standard, which the folder count read as 1,490 against a target of 1,470, and run #8
+# carried 20 real Standard Car trips out of a week that was exactly on target. A service nobody
+# buys (Saver Car has no group of its own) is counted apart and never carried.
+SERVICE_OF = {"2 W Saver": "Saver Bike", "2 W Standard": "Standard Bike", "4 W Standard": "Standard Car"}
 
 
 MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
@@ -70,12 +76,23 @@ def excess_rows(d_from, d_to, target, groups=GROUPS):
     t = db.trips.c
     with db.engine.begin() as c:
         rows = [dict(r) for r in c.execute(
-            select(t.id, t.job_id, t.file_name, t.trip_date, t.trip_time, t.customer_image, t.note)
+            select(t.id, t.job_id, t.file_name, t.trip_date, t.trip_time, t.customer_image,
+                   t.note, t.service_type)
             .where(t.job_id.in_(list(jobs)), t.status == "done")).mappings().all()]
-    per = defaultdict(list)
+    per, other = defaultdict(list), Counter()
     for r in rows:
-        per[(jobs[r["job_id"]].get("category") or "").strip()].append(r)
+        want = (r.get("service_type") or "").strip()
+        group = next((g for g in groups if SERVICE_OF.get(g) == want), None)
+        if group is None:
+            # no service on the row (nothing was read) falls back to the folder it is filed in,
+            # which is what the count was before; a service no group buys is only reported
+            group = (jobs[r["job_id"]].get("category") or "").strip() if not want else None
+            if group is None:
+                other[want] += 1
+                continue
+        per[group].append(r)
     counts = {g: len(per.get(g, [])) for g in groups}
+    counts.update({f"(ไม่มีกลุ่ม) {k}": v for k, v in other.items()})
     out = {}
     for g in groups:
         n = counts[g] - target
@@ -206,10 +223,14 @@ def main(argv=None):
     drive = roster._drive()
 
     excess, counts, _jobs = excess_rows(a.d_from, a.d_to, a.target)
-    print(f"{a.d_from}..{a.d_to} · เป้า {a.target}/กลุ่ม")
+    print(f"{a.d_from}..{a.d_to} · เป้า {a.target} ต่อ Service Type")
     for g in GROUPS:
         over = len(excess.get(g, []))
-        print(f"    {g:<14} มี {counts.get(g, 0):>5}   " + (f"เกิน {over} → ยกไปสัปดาห์หน้า" if over else "ไม่เกิน"))
+        print(f"    {SERVICE_OF[g]:<14} มี {counts.get(g, 0):>5}   "
+              + (f"เกิน {over} → ยกไปสัปดาห์หน้า" if over else "ไม่เกิน"))
+    for k, v in sorted(counts.items()):
+        if k.startswith("(ไม่มีกลุ่ม)"):
+            print(f"    {k:<14} มี {v:>5}   ไม่มีเป้า — ไม่ยก ปล่อยไว้ในสัปดาห์นี้")
     if not excess:
         print("ไม่มีกลุ่มไหนเกิน")
         return 0
