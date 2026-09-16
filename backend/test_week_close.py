@@ -77,8 +77,7 @@ check("ไม่มีสัปดาห์ไหนปิด: เห็นร�
 items, skipped = ingest.discover(drive, ROOT, closed={W37})
 check("ปิด W37 แล้ว: ไม่หยิบรูปของ W37 มาอ่าน",
       [i["week_from"] if "week_from" in i else i.get("date_from") for i in items] == [W36])
-check("บอกไว้ในรายการที่ข้าม ว่าข้ามเพราะปิดสัปดาห์",
-      any("ปิดสัปดาห์แล้ว" in m and "Week 7-13 Sep" in m for m in skipped))
+check("ข้ามเงียบ ๆ ไม่ปนกับโฟลเดอร์ที่อ่านชื่อไม่ออก", skipped == [])
 
 items, _ = ingest.discover(drive, ROOT, closed={W36, W37})
 check("ปิดทั้งสองสัปดาห์: ไม่มีอะไรให้อ่าน", items == [])
@@ -115,6 +114,20 @@ with db.engine.begin() as c:
                                                    name=f"p{n}.jpg", ingested_at="2026-09-16"))
 check("แถวค้าง pending: หยิบเฉพาะของสัปดาห์ที่ยังเปิด",
       [t for t, _j in db.stuck_pending_trips()] == [ids["p3.jpg"]])
+
+# การ์ดปัญหาของแถวที่ถูกอ่านสำเร็จไปแล้ว ต้องปิดเอง ไม่ว่าทางไหนจะเป็นคนอ่าน (2026-09-16)
+db.sync_ingest_issues(0, [(f"batch:{ids['e1.jpg']}", "process", "อ่านไม่สำเร็จ"),
+                     (f"batch:{ids['p3.jpg']}", "process", "อ่านไม่สำเร็จ")])
+check("แถวยัง error อยู่: ยังไม่ปิดการ์ด", db.settled_batch_issue_keys() == [f"batch:{ids['p3.jpg']}"])
+db.update_trip(ids["e1.jpg"], {"status": "done"})
+check("อ่านสำเร็จแล้ว: การ์ดถูกชี้ให้ปิดทั้งสองใบ",
+      sorted(db.settled_batch_issue_keys()) == sorted([f"batch:{ids['e1.jpg']}", f"batch:{ids['p3.jpg']}"]))
+db.update_trip(ids["e1.jpg"], {"status": "error"})
+
+# ข้ามสัปดาห์ที่ปิดแล้วเป็นเรื่องปกติ ไม่ใช่ปัญหาที่ต้องขึ้นการ์ดทุกรอบ
+_items, sk = ingest.discover(drive, ROOT, closed={W37})
+check("ข้ามสัปดาห์ที่ปิด ไม่ถูกรายงานเป็นรายการปัญหา",
+      not any("ปิดสัปดาห์" in m for m in sk))
 
 db.reopen_week(W36)
 check("เปิดสัปดาห์กลับ: แถว pending ของสัปดาห์นั้นกลับมาเข้าคิวอ่าน",

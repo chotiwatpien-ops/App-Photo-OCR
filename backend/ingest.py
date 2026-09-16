@@ -276,6 +276,7 @@ def discover(drive, inbox_id, walk=None, closed=None):
     if closed is None:
         closed = set(db.closed_weeks())
     items, skipped = [], []
+    shut_seen = []                   # weeks passed over because somebody closed them — not a fault
     for top in drive.list_folders(inbox_id):
         if top["id"] == (_cfg.DRIVE_EXPORTS_FOLDER_ID or ""):
             continue  # the Exports folder lives inside the Inbox — never read our own outputs
@@ -287,7 +288,7 @@ def discover(drive, inbox_id, walk=None, closed=None):
             d1, d2 = rng
             wk = week_label(d1.isoformat())
             if d1.isoformat() in closed:
-                skipped.append(f"'{top['name']}' ปิดสัปดาห์แล้ว — ไม่อ่านรูปที่ยังค้างในโฟลเดอร์ไรเดอร์")
+                shut_seen.append(top["name"])
                 continue
             for cat in drive.list_folders(top["id"]):
                 if clean_name(cat["name"]).lower() in CATEGORIES:
@@ -305,7 +306,7 @@ def discover(drive, inbox_id, walk=None, closed=None):
         if bounds:  # layout A
             monday, sunday = bounds
             if monday.isoformat() in closed:
-                skipped.append(f"'{top['name']}' ปิดสัปดาห์แล้ว — ไม่อ่านรูปที่ยังค้างในโฟลเดอร์ไรเดอร์")
+                shut_seen.append(top["name"])
                 continue
             for rider in drive.list_folders(top["id"]):
                 parsed = parse_rider_folder(rider["name"])
@@ -317,6 +318,8 @@ def discover(drive, inbox_id, walk=None, closed=None):
             _discover_category(drive, top, clean_name(top["name"]), None, None, None, skipped, items, walk)
             continue
         skipped.append(f"โฟลเดอร์ '{top['name']}' ไม่ใช่สัปดาห์ (2026-W34) หรือกลุ่มรถ (4 W Standard ...) — ข้าม")
+    if shut_seen:
+        print(f"🔒 ข้ามสัปดาห์ที่ปิดแล้ว {len(shut_seen)} สัปดาห์: {' · '.join(sorted(shut_seen))}", flush=True)
     return items, skipped
 
 
@@ -830,6 +833,11 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
         log(f"⚠ กวาดย้อนหลังพลาด {swept_fail} job — job อื่นไม่ได้รับผลกระทบ")
 
     shut_now = set(db.closed_weeks())
+    mended = db.settled_batch_issue_keys()
+    if mended:
+        for key in mended:
+            db.resolve_issue(key, run_id)
+        log(f"🔕 ปิดรายการปัญหา {len(mended)} ข้อที่อ่านสำเร็จไปแล้วในรอบก่อน")
     done_for = db.error_trips_in_closed_weeks(shut_now)
     if done_for:
         # the week is with the customer; nobody will read these again, so stop showing them as

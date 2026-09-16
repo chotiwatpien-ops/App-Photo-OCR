@@ -1182,6 +1182,26 @@ def retryable_error_trips(limit=60, closed=None):
     return [(r[0], r[1]) for r in rows if r[2] not in closed][:limit]
 
 
+def settled_batch_issue_keys():
+    """Open 'batch:<trip>' complaints whose row is no longer in error.
+
+    A row can be mended by any of three paths (the retry, the stuck-pending sweep, a person in
+    the app) and only the first of them closed the complaint, so 12 cards sat on the dashboard
+    naming rows that had been read hours earlier."""
+    with engine.begin() as c:
+        keys = [r[0] for r in c.execute(
+            select(ingest_issues.c.key).where(ingest_issues.c.resolved_run.is_(None),
+                                              ingest_issues.c.key.like("batch:%"))).all()]
+        if not keys:
+            return []
+        ids = {int(k.split(":", 1)[1]) for k in keys if k.split(":", 1)[1].isdigit()}
+        if not ids:
+            return []
+        broken = {r[0] for r in c.execute(
+            select(trips.c.id).where(trips.c.id.in_(ids), trips.c.status == "error")).all()}
+    return [k for k in keys if k.split(":", 1)[1].isdigit() and int(k.split(":", 1)[1]) not in broken]
+
+
 def error_trips_in_closed_weeks(closed=None):
     """(trip_id, job_id) rows stuck in 'error' inside a week nobody will read again.
 
