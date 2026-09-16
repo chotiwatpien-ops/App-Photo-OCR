@@ -969,7 +969,7 @@ def normalize_booking_codes() -> int:
         return r.rowcount or 0
 
 
-def stuck_pending_trips():
+def stuck_pending_trips(closed=None):
     """(trip_id, job_id) rows left in 'pending' by a cancelled run — their files are already
     recorded as ingested so nothing would ever retry them without this.
 
@@ -977,14 +977,21 @@ def stuck_pending_trips():
     answer that has been paid for. Re-reading those live would pay twice.
 
     A row counts as recoverable when its image is either stored here or still on Drive — since
-    photos stopped being kept in the database, the Drive copy is the usual one."""
+    photos stopped being kept in the database, the Drive copy is the usual one.
+
+    A week somebody has closed is left alone here too: this path reads from the database, not
+    from the Drive walk, so skipping the walk of a closed week was not enough — W37 was closed
+    with 16 of these pending, every one of which would have become a trip in a delivered file."""
+    if closed is None:
+        closed = set(closed_weeks())
     with engine.begin() as c:
-        rows = c.execute(select(trips.c.id, trips.c.job_id)
+        rows = c.execute(select(trips.c.id, trips.c.job_id, jobs.c.date_from)
+                         .join(jobs, jobs.c.id == trips.c.job_id)
                          .where(trips.c.status == "pending",
                                 trips.c.batch_name.is_(None))
                          .where(trips.c.image_blob.isnot(None)
                                 | trips.c.id.in_(select(ingested_files.c.trip_id)))).all()
-        return [(r[0], r[1]) for r in rows]
+        return [(r[0], r[1]) for r in rows if r[2] not in closed]
 
 
 def jobs_missing_dates():

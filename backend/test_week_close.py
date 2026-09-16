@@ -105,7 +105,20 @@ check("อ่านใหม่เฉพาะแถวของสัปดา�
       [t for t, _j in db.retryable_error_trips()] == [ids["e1.jpg"]])
 check("แถว error ของสัปดาห์ที่ปิดแล้วถูกชี้ให้ปิดรายการปัญหา",
       [t for t, _j in db.error_trips_in_closed_weeks()] == [ids["e2.jpg"]])
+# แถวที่ค้าง pending ก็มาทางฐานข้อมูลเหมือนกัน ต้องกันด้วย
+with db.engine.begin() as c:
+    for n, jid in ((3, j_open), (4, j_shut)):
+        tid = c.execute(insert(db.trips).values(job_id=jid, file_name=f"p{n}.jpg",
+                                                status="pending")).inserted_primary_key[0]
+        ids[f"p{n}.jpg"] = tid
+        c.execute(insert(db.ingested_files).values(drive_id=f"drive-{n}", job_id=jid, trip_id=tid,
+                                                   name=f"p{n}.jpg", ingested_at="2026-09-16"))
+check("แถวค้าง pending: หยิบเฉพาะของสัปดาห์ที่ยังเปิด",
+      [t for t, _j in db.stuck_pending_trips()] == [ids["p3.jpg"]])
+
 db.reopen_week(W36)
+check("เปิดสัปดาห์กลับ: แถว pending ของสัปดาห์นั้นกลับมาเข้าคิวอ่าน",
+      sorted(t for t, _j in db.stuck_pending_trips()) == sorted([ids["p3.jpg"], ids["p4.jpg"]]))
 check("เปิดสัปดาห์กลับ: กลับมาอ่านใหม่ได้ตามเดิม",
       sorted(t for t, _j in db.retryable_error_trips()) == sorted([ids["e1.jpg"], ids["e2.jpg"]])
       and db.error_trips_in_closed_weeks() == [])

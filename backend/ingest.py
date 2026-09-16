@@ -752,7 +752,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
     # a cancelled run leaves damage in two shapes: rows stuck in 'pending' (reprocess them
     # from the stored blobs — no re-download, no double billing), and jobs stuck in
     # 'running' whose pair/spread/approve steps never happened. Fix both before new work.
-    stuck = db.stuck_pending_trips()
+    stuck = db.stuck_pending_trips(closed=set(db.closed_weeks()))
     if stuck:
         log(f"♻ เก็บตก {len(stuck)} แถวที่ค้างจากรอบก่อนซึ่งถูกตัดกลางทาง")
         stuck_ids = db.drive_ids_for_trips([t for t, _ in stuck])
