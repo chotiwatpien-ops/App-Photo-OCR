@@ -604,6 +604,37 @@ def category_folder(wheels, tier):
 MIN_CUT = 0.10
 
 
+def _extra_income(seq, income):
+    """The figures of the driver's own 'รายได้เพิ่มเติมที่ไม่หักค่าธรรมเนียม' block.
+
+    The slip is read top to bottom and always in this order: the round income (its line, then
+    that block's total), then the extra income a rider keeps whole — turbo, bonus, tip — then the
+    passenger's card, which opens with the biggest figure on the page, what the passenger paid.
+    So the extras are what lies between the income and the first figure larger than it, and the
+    app fee and the discount, which live inside the passenger's card, can never be mistaken for
+    them. ฿155 = 148 + a ฿7 turbo is a pair; ฿52 = 51 + the ฿1 app fee is two different trips
+    (ParichatLot16Sep = 819, 2026-09-17).
+    """
+    if not seq or income is None:
+        return []
+    start = None
+    for i, x in enumerate(seq):
+        if abs(x - income) < 0.01:
+            start = i
+        elif start is not None:
+            break
+    if start is None:
+        return []
+    out = []
+    for x in seq[start + 1:]:
+        if x > income + 0.01:                 # the passenger's card has begun
+            break
+        if abs(x - income) < 0.01 or x <= 0:  # the income printed again, not an extra
+            continue
+        out.append(x)
+    return out
+
+
 def _fee_card(seq):
     """The 'ค่าบริการที่แกร็บได้รับ' card prints, one under the other: passenger fare a,
     driver income b ('รายได้จากรอบขับ'), Grab's cut a − b (rounded, so ±1). Three consecutive
@@ -647,6 +678,11 @@ def _tier_one(net, green, nums):
                 if abs(base + y + z - net) < 0.01 and _extras_ok(base, [y, z]):
                     return weak
     return None
+
+
+def _printed(seq, v):
+    """How many times the slip prints a figure."""
+    return sum(1 for x in seq if abs(x - v) < 0.01)
 
 
 def _printed_twice(seq, v):
@@ -734,6 +770,17 @@ def _tip_gap(nets, greens, seq, card_figs, nums=(), same_shot=False):
             gap = net - green
             if gap <= 0:
                 continue
+            if abs(gap - green) < 0.01:
+                # 'income plus exactly the income again' is not a tip, it is the other half of
+                # somebody else's trip: ฿48 over a bottom earning ฿24, shot in the same minute,
+                # paired in ParichatLot16Sep = 819 and wrong.
+                continue
+            if gap >= green and seq and _printed(seq, gap) < 3:
+                # A tip may be bigger than the fare (฿78 = 38 + a ฿40 tip, 2W-NUI=117), but then
+                # the only thing telling it from a passenger figure is that a tip is printed
+                # three times: the line, its section's total, and the passenger's deduction.
+                # ฿49 over a ฿22 bottom took its ฿27 passenger total as a tip on two printings.
+                continue
             if any(abs(gap - c) < 0.01 for c in card_figs) and not same_shot:
                 # The gap is a figure of the fee card, which usually means the top's net is not
                 # the driver's take at all but the passenger fare printed at the head of that
@@ -786,7 +833,8 @@ def match_tier(top, bottom, neighbours=False, same_shot=False):
     if not nets:
         return None
     nums = bottom.get("numbers") or []
-    cards = _fee_card(bottom.get("seq") or [])
+    seq = bottom.get("seq") or []
+    cards = _fee_card(seq)
     card_figs = {x for card in cards for x in card}
     greens = [g for g in [bottom.get("amount")] + list(bottom.get("alts") or []) if g is not None]
     # A green figure the rest of its own page never repeats is a misreading, not evidence. The
@@ -800,12 +848,24 @@ def match_tier(top, bottom, neighbours=False, same_shot=False):
     if greens:                                                   # A
         for net in nets:
             for green in greens:
-                pool = [n for n in nums if n not in card_figs and 0 < n <= 0.5 * green]
+                # What may be added to the round income is the driver's own extra income and
+                # nothing else — the block _extra_income picks out by its place on the page.
+                # The app fee and the discount sit inside the passenger's card below it, and
+                # taking them let a ฿52 top pair with a ฿51 bottom (51 + the ฿1 app fee) and a
+                # ฿52 with a ฿49 (49 + ฿1 fee + ฿2 discount), both wrong, both in
+                # ParichatLot16Sep = 819. A bottom cut above its income card prints the fee
+                # card first, so position alone would read Grab's ฿74 cut as extra income and
+                # pair a ฿500 top with a ฿426 bottom (Test 9): a figure the fee card names is
+                # never the driver's own, wherever it stands. A bottom with no reading order
+                # at all — an old row, a fixture — is judged as before, on the small figures.
+                extra = [n for n in _extra_income(seq, green) if n not in card_figs]
+                pool = ([n for n in extra if n <= 0.5 * green] if seq
+                        else [n for n in nums if n not in card_figs and 0 < n <= 0.5 * green])
                 t = _tier_one(net, green, pool)
                 if t in (0, 1) and (best is None or t < best):
                     best = t
         if best is None:
-            best = _tip_gap(nets, greens, bottom.get("seq") or [], card_figs, nums, same_shot)
+            best = _tip_gap(nets, greens, seq, card_figs, nums, same_shot)
         # A green figure that agrees with nothing is not the last word. When the bottom is cut
         # above the round-income card, the only green left on the page is the extra-income
         # total: 4W-Home Sirinapa's ฿308 top sits on a bottom whose green reads ฿15, the turbo,

@@ -172,6 +172,39 @@ tie = [("1", {"role": "bottom", "amount": 37.0, "numbers": [37]}), ("2", {"role"
 pairs, left = pairing.pair_album(tie)
 check("ยอดชนกันและห่างเท่ากัน → ไม่เดา ปล่อยค้าง", pairs == [] and len(left) == 3)
 
+# --- what may be added to the bottom's income (ParichatLot16Sep = 819, 2026-09-17) -----------
+# Fiat read the slips and stated the rule: the big green figure on the top half is the bottom's
+# 'รวมรายได้จากรอบขับ', and the only thing that may be added to it is the block below that one,
+# 'รายได้เพิ่มเติมที่ไม่หักค่าธรรมเนียม'. The app fee and the discount sit in the PASSENGER's
+# card further down, and taking them paired trips that merely cost about the same.
+def _bottom(green, nums, seq):
+    return {"role": "bottom", "amount": green, "numbers": nums, "seq": seq}
+
+
+def _tier(net, green, nums, seq):
+    return pairing.match_tier({"role": "top", "amount": net}, _bottom(green, nums, seq),
+                              neighbours=True, same_shot=True)
+
+
+check("฿155 = 148 + อินเซนทีฟเทอร์โบ 7 — คู่จริง",
+      _tier(155, 148, [7, 20, 47, 148, 195, 215], [148, 148, 7, 215, 20, 195, 195, 148, 47]) is not None)
+check("฿73 = 70 + 3 — คู่จริง", _tier(73, 70, [3, 17, 20, 70, 87, 110],
+                                      [70, 70, 3, 3, 110, 20, 3, 87, 87, 70, 17]) is not None)
+check("฿207 = 197 + 10 — คู่จริง", _tier(207, 197, [8, 10, 20, 49, 197, 246, 284],
+                                          [197, 197, 10, 10, 284, 20, 10, 8, 246, 246, 197, 49]) is not None)
+check("฿52 กับครึ่งล่าง ฿51: ค่าธรรมเนียมแอป ฿1 ไม่ใช่รายได้เพิ่ม → ห้ามจับ",
+      _tier(52, 51, [1, 2, 5, 11, 51, 62, 70], [51, 51, 70, 1, 5, 2, 62, 62, 51, 11]) is None)
+check("฿52 กับครึ่งล่าง ฿49: ค่าแอป ฿1 + ส่วนลด ฿2 ก็ไม่ใช่ → ห้ามจับ",
+      _tier(52, 49, [1, 2, 11, 49, 60, 63], [49, 49, 63, 1, 2, 60, 60, 49, 11]) is None)
+check("฿48 กับครึ่งล่าง ฿24: ส่วนต่างเท่ากับรายได้ของมันเอง ไม่ใช่ทิป → ห้ามจับ",
+      _tier(48, 24, [1, 4, 24, 28, 29], [24, 24, 24, 29, 1, 28, 28, 24, 4]) is None)
+check("฿49 กับครึ่งล่าง ฿22: ยอดผู้โดยสาร ฿27 ไม่ใช่ทิป → ห้ามจับ",
+      _tier(49, 22, [1, 5, 22, 27, 28], [22, 22, 22, 28, 1, 27, 27, 22, 5]) is None)
+check("อ่านลำดับหน้าไม่ได้เลย → ตัดสินแบบเดิม ไม่ทิ้งของเก่า",
+      _tier(156, 149, [7, 9, 50, 149, 199], []) is not None)
+check("ก้อนรายได้เพิ่มเติมคือเลขที่อยู่ก่อนยอดผู้โดยสาร",
+      pairing._extra_income([148, 148, 7, 215, 20, 195, 195, 148, 47], 148) == [7])
+
 sample = "Phase2/Test 7"
 if os.path.isdir(sample) and os.environ.get("PAIRING_SAMPLE", "1") == "1":
     try:
