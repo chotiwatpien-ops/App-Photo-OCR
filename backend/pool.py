@@ -114,13 +114,28 @@ def _wanted(week_name, only_week):
     return not config.week_ignored(week_name)
 
 
-def scan_inbox(drive, inbox_id, only_week=None):
-    """Inbox/<Week …>/Pool/<group>/<album>/ — the production layout."""
+def week_starts(week_name):
+    """'Week 7-13 Sep' -> '2026-09-07', or None when the name is not a week."""
+    import ingest
+    rng = ingest.parse_range(week_name)
+    return rng[0].isoformat() if rng else None
+
+
+def scan_inbox(drive, inbox_id, only_week=None, closed=None):
+    """Inbox/<Week …>/Pool/<group>/<album>/ — the production layout.
+
+    A week somebody has closed is passed over: filing a pair into it would put a picture in a
+    rider folder of a delivered week, where the round is no longer allowed to read it — W37 was
+    left holding 28 such pictures. Its albums wait in the pool until the work is carried on."""
     albums = []
+    closed = closed or set()
     for wk in sorted(drive.list_folders(inbox_id), key=lambda f: f["name"]):
         if not _wanted(wk["name"], only_week):
             continue
         if not only_week and not wk["name"].strip().lower().startswith("week"):
+            continue
+        if week_starts(wk["name"]) in closed:
+            log(f"🔒 กอง: ข้าม {wk['name']} — ปิดสัปดาห์แล้ว")
             continue
         for child in drive.list_folders(wk["id"]):
             if child["name"].strip().lower() in POOL_FOLDER_NAMES:
@@ -437,6 +452,27 @@ USED_DIR = "_ใช้แล้ว"
 MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
+def week_room(week_name, log=log):
+    """{group: trips this week can still take} — the customer's target minus what is filed.
+
+    None when the week's name cannot be read as dates (a sandbox week), which means 'do not
+    hold anything back'. Rows already parked as repeats or voided do not count against it."""
+    import ingest
+    rng = ingest.parse_range(week_name)
+    if not rng:
+        return None
+    d_from, d_to = (d.isoformat() for d in rng)
+    import db
+    try:
+        have = db.week_group_counts(d_from, d_to)
+    except Exception as e:  # noqa: BLE001 — a count that fails must not stop the filing
+        log(f"  ⚠ นับงานของสัปดาห์ {d_from} ไม่ได้ ({str(e)[:60]}) — ลงงานตามปกติ")
+        return None
+    target = config.WEEKLY_TARGET_PER_GROUP
+    return {g: target - n for g, n in have.items()} | {
+        g: target - have.get(g, 0) for g in ("2 W Saver", "2 W Standard", "4 W Standard")}
+
+
 def next_week_name(week_name):
     """'Week 31 Aug-6 Sep' -> ('Week 7-13 Sep', '2026-09-07', '2026-09-13'), or None.
 
@@ -563,11 +599,28 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
             alloc = allocators[week_id] = distribute.Allocator(
                 drive, week_id, pool_names, log=log, styles=db.rider_styles(week_id))
         carry = []
+        # What the customer still has room for in this week. A group already at its target does
+        # not take the next trip and hand it on later: carrying a row afterwards moves the row,
+        # the stitched picture, the delivered picture and its name, and W37 spent four such
+        # rounds. The work goes straight into next week's pool instead, where it is only ever
+        # filed once. Counted here, then kept in step as this run files more.
+        room = week_room(entry["week"], log=log)
         for x in entry["pairs"] + entry["long"]:
             x["dest"] = None
             if not x["target"]:
                 continue
+            if room is not None and room.get(x["target"], 1) <= 0:
+                why = (f"{x['target']} ครบ {config.WEEKLY_TARGET_PER_GROUP} งานของสัปดาห์นี้แล้ว "
+                       f"— งานถัดไปลงสัปดาห์หน้าตั้งแต่แรก ไม่ต้องยกทีหลัง")
+                x["moved"] = why
+                carry.append(x)
+                if (f"pool:{x['target']}-full", "folder", why) not in issues:
+                    issues.append((f"pool:{x['target']}-full", "folder", why))
+                    log(f"  ↪ {why}")
+                continue
             fid, err = alloc.folder_for(x["target"], wheel, x.get("style"))
+            if not err and room is not None and x["target"] in room:
+                room[x["target"]] -= 1
             if err:
                 x["moved"] = err
                 carry.append(x)
@@ -802,11 +855,11 @@ def run_pool(drive, albums, move, preview=True, use_db=True, started=None, label
     return report
 
 
-def round_step(drive, inbox_id, run_id=None, dry_run=False, log=log, issues=None):
+def round_step(drive, inbox_id, run_id=None, dry_run=False, log=log, issues=None, closed=None):
     """What an ingest round does first: pair and file whatever the Agent dropped into any
     Week/Pool. Report-only on a dry run. Never raises — a pool problem must not cost the round."""
     try:
-        albums = scan_inbox(drive, inbox_id)
+        albums = scan_inbox(drive, inbox_id, closed=closed)
         if not albums:
             log("กอง: ว่าง")
             return None

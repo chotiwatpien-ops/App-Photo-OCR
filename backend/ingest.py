@@ -674,6 +674,33 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
     quiet = nothing_new(drive) if not only else None
     if quiet:
         log("⏭ ไม่มีรูปใหม่ใน Drive ตั้งแต่รอบก่อน — ข้ามการเดินโฟลเดอร์ (ยังเก็บผล batch/อนุมัติตามปกติ)")
+    if config.CLEAN_DUP_SEATS and not dry_run and not only:
+        # BEFORE the pool files anything: a rider folder holding repeats counts as full, and the
+        # pool reads the folders to decide who has room. Round #243 filed 148 pairs into next
+        # week because every seat looked taken, and the tidying at the END of that same round
+        # then freed 48 of them — work bounced across a week boundary for want of an ordering.
+        # Only weeks nobody has closed, and only jobs that actually hold a parked row.
+        import free_dup_seats
+        shut_before = set(db.closed_weeks())
+        by_week_before = db.jobs_by_week()
+        freed = 0
+        for (wf, wt), js in sorted(by_week_before.items()):
+            if not free_dup_seats.week_is_open(wf, wt, closed=shut_before):
+                continue
+            try:
+                res = free_dup_seats.sweep(drive, js, wf, wt, apply=True,
+                                           cap=config.CLEAN_DUP_SEATS_MAX, log=log)
+            except Exception as e:  # noqa: BLE001 — tidying must never take a round down
+                log(f"  ⚠ คืนที่นั่งก่อนจัดกองของสัปดาห์ {wf} ไม่สำเร็จ: {str(e)[:120]}")
+                continue
+            if res["files"]:
+                freed += res["seats"]
+                log(f"🪑 {wf}: คืนที่นั่งก่อนจัดกอง — รูปซ้ำ {res['files']} ใบ · ย้ายออก {res['moved']}"
+                    f" · ที่นั่งคืน {res['seats']} เที่ยว"
+                    + (" · ⚠ เกินเพดาน จึงไม่ย้าย รอคนดู" if res["over_cap"] else ""))
+        if freed:
+            log(f"🪑 รวมที่นั่งที่คืนก่อนจัดกอง {freed} เที่ยว")
+
     if config.POOL_IN_ROUND and not quiet:
         # Phase 2: whole albums in Week/Pool get paired and filed under Week/<vehicle category>
         # BEFORE the folders are read, so what this round submits already includes them.
@@ -685,7 +712,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
             log(f"⏭ ข้ามขั้นจัดกอง (ไม่มีไลบรารี OCR ฟรีในเครื่องนี้: {e})")
         else:
             pool.round_step(drive, inbox_id, run_id=run_id, dry_run=dry_run, log=log,
-                            issues=issues)
+                            issues=issues, closed=set(db.closed_weeks()))
     # The cache is trusted only on an ordinary round: --only reads a slice, so the folders it
     # leaves out must not be called clean, and force_walk (which turns the probe off) means
     # somebody wants every folder listed whatever Drive says.
@@ -1154,6 +1181,43 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
                 duplicate_report.refresh_week(drive, exports_id, wk_from, wk_to, log=log)
             except Exception as e:  # noqa: BLE001
                 log(f"  ⚠ รายงานรูปซ้ำของสัปดาห์ {wk_from} ไม่สำเร็จ: {str(e)[:120]}")
+
+    if not dry_run:
+        # The round says out loud where each open week stands, so drift is caught the round it
+        # happens. W37 was read straight past 1,470 twice — once to 1,502 and once to 1,482 —
+        # and both times somebody found it hours later by hand.
+        shut_end = set(db.closed_weeks())
+        import free_dup_seats as _fds
+        for (wf, wt) in sorted(db.jobs_by_week()):
+            if not _fds.week_is_open(wf, wt, closed=shut_end):
+                continue
+            try:
+                card = db.week_scorecard(wf, wt)
+            except Exception as e:  # noqa: BLE001 — a check must never take the round down
+                log(f"  ⚠ ใบตรวจของสัปดาห์ {wf} ไม่สำเร็จ: {str(e)[:100]}")
+                continue
+            if not card["rows"]:
+                continue
+            bits = " · ".join(f"{k} {v}" for k, v in sorted(card["by_service"].items()))
+            log(f"🧾 ใบตรวจ {wf}: {bits}")
+            for svc, over in sorted(card["over"].items()):
+                why = f"{svc} ของสัปดาห์ {wf} เกินเป้า {config.WEEKLY_TARGET_PER_GROUP} อยู่ {over} งาน — ยกส่วนเกินไปสัปดาห์หน้า"
+                issues.append((f"target:{wf}:{svc}", "folder", why))
+                log(f"  ⚠ {why}")
+            if card["no_picture"]:
+                why = f"สัปดาห์ {wf}: {card['no_picture']} แถวยังไม่มีรูปส่งลูกค้า"
+                issues.append((f"nopic:{wf}", "images", why))
+                log(f"  ⚠ {why}")
+            if card["shared_picture"]:
+                why = f"สัปดาห์ {wf}: {card['shared_picture']} แถวใช้ชื่อรูปส่งลูกค้าซ้ำกับแถวอื่น"
+                issues.append((f"dupname:{wf}", "images", why))
+                log(f"  ⚠ {why}")
+            if card["halves_disagree"]:
+                ids = ", ".join(f"#{i} ({d:+g})" for i, d in card["halves_disagree"][:8])
+                why = (f"สัปดาห์ {wf}: {len(card['halves_disagree'])} แถวที่ยอด 'คุณได้รับ' ไม่เท่ากับ"
+                       f" ค่าโดยสาร+โบนัส+เทอร์โบ (อาจจับคู่ผิดหรืออ่านเลขคลาด): {ids}")
+                issues.append((f"halves:{wf}", "process", why))
+                log(f"  ⚠ {why}")
 
     if not quiet and not only:
         # the next round asks Drive for anything touched since here. The margin covers a photo

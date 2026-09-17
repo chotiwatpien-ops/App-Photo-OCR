@@ -1899,6 +1899,69 @@ def jobs_overview():
     return out
 
 
+def week_group_counts(date_from, date_to):
+    """{vehicle group: finished rows} for one week — what the week already owes the customer.
+
+    Repeats and voided rows are left out: they are on nobody's bill, so they must not make a
+    group look full to the pool."""
+    with engine.begin() as c:
+        rows = c.execute(
+            select(jobs.c.category, func.count())
+            .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+            .where(jobs.c.date_from == date_from, jobs.c.date_to == date_to,
+                   trips.c.status == "done")
+            .group_by(jobs.c.category)).all()
+    return {(r[0] or "").strip(): r[1] for r in rows}
+
+
+def week_scorecard(date_from, date_to, target=None):
+    """What a week looks like against what the customer bought — one pass, read only.
+
+    Every fault W37 hid until somebody went looking is counted here instead: a group over or
+    under its target, a row with no delivered picture, two rows sharing one picture name (the
+    'cant find match receipt' Norm Asia reported), and a row whose own halves disagree — the
+    big green figure on the top half must equal the fare plus the incentives printed on the
+    bottom one, which held for 4,399 of W37's 4,410 rows and failed on ten mis-paired ones."""
+    import config as _cfg
+    target = _cfg.WEEKLY_TARGET_PER_GROUP if target is None else target
+    t = trips.c
+    with engine.begin() as c:
+        rows = [dict(r) for r in c.execute(
+            select(t.id, t.status, t.service_type, t.customer_image, t.net_earnings,
+                   t.base_fare, t.bonus, t.turbo, t.tolls, jobs.c.category)
+            .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+            .where(jobs.c.date_from == date_from, jobs.c.date_to == date_to)).mappings().all()]
+    out = {"rows": len(rows), "by_service": {}, "over": {}, "under": {}, "no_picture": 0,
+           "shared_picture": 0, "halves_disagree": [], "error": 0, "pending": 0}
+    seen_pic = {}
+    n = lambda v: v or 0                                          # noqa: E731
+    for r in rows:
+        if r["status"] == "error":
+            out["error"] += 1
+        elif r["status"] == "pending":
+            out["pending"] += 1
+        if r["status"] != "done":
+            continue
+        svc = (r["service_type"] or "?").strip()
+        out["by_service"][svc] = out["by_service"].get(svc, 0) + 1
+        pic = r["customer_image"]
+        if not pic:
+            out["no_picture"] += 1
+        else:
+            seen_pic[pic] = seen_pic.get(pic, 0) + 1
+        ride = n(r["base_fare"]) + n(r["bonus"]) + n(r["turbo"])
+        green = n(r["net_earnings"])
+        if abs(green - ride) > 0.01 and abs(green - ride - n(r["tolls"])) > 0.01:
+            out["halves_disagree"].append((r["id"], round(green - ride, 2)))
+    out["shared_picture"] = sum(v - 1 for v in seen_pic.values() if v > 1)
+    for svc, have in out["by_service"].items():
+        if svc in ("Saver Bike", "Standard Bike", "Standard Car"):
+            (out["over"] if have > target else out["under"])[svc] = abs(have - target)
+            if have == target:
+                out["over"].pop(svc, None), out["under"].pop(svc, None)
+    return out
+
+
 def jobs_by_week():
     """{(date_from, date_to): [job meta...]} for every job — used by --exports-only."""
     with engine.begin() as c:
