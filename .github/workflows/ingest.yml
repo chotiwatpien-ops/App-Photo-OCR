@@ -144,9 +144,11 @@ jobs:
           # cancelling a stalled batch means Google's queue is not to be trusted this round —
           # new pictures are read live too, not handed to the same queue
           INGEST_BATCH: ${{ (github.event.inputs.live_read == 'true' || github.event.inputs.cancel_batches == 'true') && '0' || '1' }}
-          # read-then-file, for the round a person ticks it on. Off, the pool chooses the rider
-          # as it always has.
-          POOL_STAGE: ${{ github.event.inputs.stage_pool == 'true' && '1' || '0' }}
+          # read-then-file. The tick box turns it on for one round; otherwise the repository
+          # variable decides, so it can be switched on for good (or off again in one edit)
+          # without touching this file. Tried on W38 on 2026-09-17: 47 car trips were read in the
+          # waiting room and filed into three Taxi riders' folders, pictures moved once.
+          POOL_STAGE: ${{ github.event.inputs.stage_pool == 'true' && '1' || vars.POOL_STAGE || '0' }}
           INGEST_PARALLEL: "24"
           # 8 was the calm-down after a 32-fault network storm on 2026-08-26, before every Drive
           # call had a retry. With batch reading, downloads ARE the round — 19 images a minute
