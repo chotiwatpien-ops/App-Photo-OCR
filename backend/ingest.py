@@ -872,46 +872,6 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
     if swept_fail:
         log(f"⚠ กวาดย้อนหลังพลาด {swept_fail} job — job อื่นไม่ได้รับผลกระทบ")
 
-    if config.POOL_STAGE and not dry_run:
-        # whatever read them — this round's live read, or a batch answered days later — rows in
-        # the waiting room are filed here, once, by what their own slip says
-        import free_dup_seats as _fds_stage
-        shut_stage = set(db.closed_weeks())
-        for (wf, wt), js in sorted(db.jobs_by_week().items()):
-            hold = [j for j in js if (j.get("driver_name") or "") == HOLDING_RIDER]
-            if not hold or not _fds_stage.week_is_open(wf, wt, closed=shut_stage):
-                continue
-            if not file_after_read.staged_rows(wf, wt):
-                continue
-            fid = hold[0].get("drive_folder_id")
-            week_id = (drive.file_meta(fid).get("parents") or [None])[0] if fid else None
-            try:
-                filed = file_after_read.file_rows(drive, week_id, wf, wt, log=log)
-            except Exception as e:  # noqa: BLE001 — filing must not take the round down
-                log(f"  ✗ ลงที่หลังอ่านของสัปดาห์ {wf} ไม่สำเร็จ: {str(e)[:150]}")
-                issues.append((f"file:{wf}", "process", f"ลงที่หลังอ่านของสัปดาห์ {wf} ไม่สำเร็จ: {str(e)[:200]}"))
-                errors += 1
-                continue
-            staged_jobs |= filed["jobs"]
-            if filed["filed"]:
-                touched_weeks.add((wf, wt))
-
-    if staged_jobs:
-        log(f"📥 ปิดงานให้ job ที่เพิ่งรับแถวจากที่พัก {len(staged_jobs)} job")
-        for jid, d1, d2 in db.jobs_dates(staged_jobs):
-            try:
-                pipeline.pair_fragments(jid)
-                if d1 and d2:
-                    pipeline.spread_dates(jid, d1, d2, only_missing=True)
-                st = db.auto_approve_job(jid)
-                approved += st["approved"]
-                flagged += st["flagged"]
-            except Exception as e:  # noqa: BLE001
-                log(f"  ✗ job #{jid}: ปิดงานหลังลงที่ไม่สำเร็จ — {str(e)[:120]}")
-                errors += 1
-        errs_st, _failed = export_only(drive, exports_id, only_job_ids=staged_jobs, with_xlsx=False)
-        errors += errs_st
-
     shut_now = set(db.closed_weeks())
     mended = db.settled_batch_issue_keys()
     if mended:
@@ -1153,6 +1113,46 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
         log(f"  ✓ อนุมัติอัตโนมัติ {stats['approved']} · รอคน {stats['flagged']}{dup_note} · error {results.count('error')}")
 
     flush_batch(force=True)
+
+    if config.POOL_STAGE and not dry_run:
+        # whatever read them — this round's live read, or a batch answered days later — rows in
+        # the waiting room are filed here, once, by what their own slip says
+        import free_dup_seats as _fds_stage
+        shut_stage = set(db.closed_weeks())
+        for (wf, wt), js in sorted(db.jobs_by_week().items()):
+            hold = [j for j in js if (j.get("driver_name") or "") == HOLDING_RIDER]
+            if not hold or not _fds_stage.week_is_open(wf, wt, closed=shut_stage):
+                continue
+            if not file_after_read.staged_rows(wf, wt):
+                continue
+            fid = hold[0].get("drive_folder_id")
+            week_id = (drive.file_meta(fid).get("parents") or [None])[0] if fid else None
+            try:
+                filed = file_after_read.file_rows(drive, week_id, wf, wt, log=log)
+            except Exception as e:  # noqa: BLE001 — filing must not take the round down
+                log(f"  ✗ ลงที่หลังอ่านของสัปดาห์ {wf} ไม่สำเร็จ: {str(e)[:150]}")
+                issues.append((f"file:{wf}", "process", f"ลงที่หลังอ่านของสัปดาห์ {wf} ไม่สำเร็จ: {str(e)[:200]}"))
+                errors += 1
+                continue
+            staged_jobs |= filed["jobs"]
+            if filed["filed"]:
+                touched_weeks.add((wf, wt))
+    if staged_jobs:
+        log(f"📥 ปิดงานให้ job ที่เพิ่งรับแถวจากที่พัก {len(staged_jobs)} job")
+        for jid, d1, d2 in db.jobs_dates(staged_jobs):
+            try:
+                pipeline.pair_fragments(jid)
+                if d1 and d2:
+                    pipeline.spread_dates(jid, d1, d2, only_missing=True)
+                st = db.auto_approve_job(jid)
+                approved += st["approved"]
+                flagged += st["flagged"]
+            except Exception as e:  # noqa: BLE001
+                log(f"  ✗ job #{jid}: ปิดงานหลังลงที่ไม่สำเร็จ — {str(e)[:120]}")
+                errors += 1
+        errs_st, _failed = export_only(drive, exports_id, only_job_ids=staged_jobs, with_xlsx=False)
+        errors += errs_st
+
 
     # ONE continuous workbook for the whole project (all weeks appended). Regenerated EVERY
     # run — not just when new photos arrived — so edits/approvals made in the web app between
