@@ -653,7 +653,18 @@ check("ไม่มีนาฬิกา กฎห่างเกิน 1 ยั
 _apart = [("t", dict(_top66, clock=20 * 60)),
           ("b", {"role": "bottom", "amount": 66.0, "alts": [], "theme": "สว่าง", "clock": 20 * 60 + 30,
                  "numbers": [11, 66, 77], "seq": [66, 66, 77, 11]})]
-check("ยอดตรงเป๊ะและติดกัน แต่นาฬิกาห่าง 30 นาที → คนละงาน ไม่จับ", pairing.pair_album(_apart)[0] == [])
+# 2026-09-18: this used to read 'ยอดตรงเป๊ะและติดกัน แต่นาฬิกาห่าง 30 นาที → คนละงาน ไม่จับ'.
+# The pictures say otherwise. In 2W-Win Porpla=309 four touching pairs show the SAME time on
+# both halves — 12:45, 12:49, 13:36, 16:30 — and the reader returned 02:45, 02:49, 13:56 and
+# 16:36, because the map behind the status bar eats the leading digit and the app writes over
+# it. Across one week's pool the veto cost eleven touching pairs and caught no wrong one. It
+# still guards what it was built for: a fare that matches by accident from somewhere else in
+# the album.
+check("ยอดตรงเป๊ะและติดกัน นาฬิกาอ่านได้ห่าง 30 นาที → ยังจับ (ลำดับในอัลบั้มน่าเชื่อกว่านาฬิกาที่อ่านผิดง่าย)",
+      len(pairing.pair_album(_apart)[0]) == 1)
+_apart_far = [_apart[0], _pad("p1", 20 * 60), _pad("p2", 20 * 60), _apart[1]]
+check("ยอดตรงเป๊ะแต่ไม่ติดกัน และนาฬิกาห่าง 30 นาที → ยังไม่จับเหมือนเดิม",
+      pairing.pair_album(_apart_far)[0] == [])
 check("นาฬิกาห่าง 2 นาทียังยอมให้ (ถ่ายช้าไปหน่อย)",
       len(pairing.pair_album([("t", dict(_top66, clock=20 * 60)), ("b", dict(_apart[1][1], clock=20 * 60 + 2))])[0]) == 1)
 check("รูปยาวไม่มีนาฬิกา", pairing.clock_gap({"clock": None}, {"clock": 5}) is None)

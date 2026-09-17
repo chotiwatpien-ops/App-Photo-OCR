@@ -944,10 +944,19 @@ def pair_album(items):
             # And two halves that DO share the minute may stand a few pictures apart in the
             # album — 2W-NUI=117 sends them three apart as a habit — and still be as good as
             # neighbours: the clock says so, where the album order alone could not.
-            gap = clock_gap(info[t], info[b])
-            if gap is not None and gap >= CLOCK_APART:
-                continue
+            # ...but the clock is only as good as the reading, and on a small or dark screen
+            # it is not good at all: the app draws its own text across the status bar on a top
+            # half, and on a bottom half the map sits behind it and swallows the leading digit.
+            # 2W-Win Porpla=309 sent four pairs whose two halves both show 12:45, 12:49, 13:36
+            # and 16:30 on the screen — read as 02:45, 02:49, 13:56 and 16:36, so every one was
+            # vetoed as 'ten hours apart'. Eleven pairs in one week's pool were lost this way,
+            # all of them touching. So the clock may overrule the figures across a distance,
+            # where a fare matching by accident is the real danger, but not between two halves
+            # that stand next to each other: there the album's own order is the better witness.
             dist = abs(order[t] - order[b])
+            gap = clock_gap(info[t], info[b])
+            if gap is not None and gap >= CLOCK_APART and dist > 1:
+                continue
             vouched = gap is not None and gap <= 1 and dist <= CLOCK_NEAR_MAX
             near = dist <= 1 or vouched
             tier = match_tier(info[t], info[b], neighbours=True,
