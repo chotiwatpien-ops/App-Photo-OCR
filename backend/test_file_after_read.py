@@ -115,6 +115,14 @@ check("รอบหยิบรูปในที่พักมาอ่าน"
 check("รูปในที่พักยังไม่มีกลุ่มรถ (ตัดสินหลังอ่าน)", all(i["category"] is None for i in hold_items))
 check("โฟลเดอร์บ้านเรือนอื่น ๆ ยังถูกข้ามเงียบ ๆ", not any("_ใช้แล้ว" in m for m in skipped))
 
+# --- ห้องพักต้องไม่โผล่ให้คนเห็นว่าเป็นกลุ่มงานหรือคิวตรวจ (2026-09-17) ---------------------------
+staged("q.jpg", "Standard Bike")            # อ่านแล้ว รอลงที่ ไม่ใช่ของที่คนต้องตรวจ
+check("คิวตรวจไม่มีแถวของห้องพัก",
+      all(r["file_name"] != "q.jpg" for r in db.review_queue()))
+weeks = {w["week"]: w for w in db.weeks_overview()}
+groups = [g["category"] for w in weeks.values() for g in w["groups"]]
+check("แดชบอร์ดไม่ขึ้นกลุ่มของห้องพัก", "อัปโหลดมือ" not in groups and None not in groups)
+
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

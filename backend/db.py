@@ -1376,9 +1376,13 @@ def list_drivers():
 # ---------- Phase C: dashboard / data view / review queue ----------
 
 def _trip_join(where_committed=None):
+    # The waiting room of the read-then-file mode is not a rider and its rows are not for a
+    # person to look at: they have been read and are waiting to be filed, which the round does
+    # by itself. Leaving them in put 47 rows in the review queue and drew a group card called
+    # 'อัปโหลดมือ' on the dashboard (2026-09-17).
     q = (select(*TRIP_COLS, jobs.c.driver_name)
          .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
-         .where(trips.c.status == "done"))
+         .where(trips.c.status == "done", jobs.c.driver_name != HOLDING_RIDER))
     if where_committed is not None:
         q = q.where(trips.c.committed == where_committed)
     return q
@@ -2014,6 +2018,8 @@ def weeks_overview():
     net = func.sum(case(((trips.c.status == "done") & (trips.c.committed == 1), trips.c.net_earnings), else_=0)).label("net")
     q = (select(jobs, done, waiting, approved, auto, errors, pending, images, net)
          .select_from(jobs.outerjoin(trips, trips.c.job_id == jobs.c.id))
+         # the waiting room is a step in the round, not a rider and not a group the customer buys
+         .where(jobs.c.driver_name != HOLDING_RIDER)
          .group_by(*jobs.c).order_by(jobs.c.date_from.desc(), jobs.c.category, jobs.c.driver_name))
     with engine.begin() as c:
         rows = [dict(r) for r in c.execute(q).mappings().all()]
