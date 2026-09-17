@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Excel output in the team's template layout ("Template Riders Project 2026.xlsx").
 
-Sheet1  — exactly the team's 17 columns A..Q, same header style, formulas J =K+M+N and Q =P-J
+Sheet1  — exactly the team's 17 columns A..Q, same header style, formulas J =K+M+N and Q =P-K
 Analysis — one row per trip with the extra fields the screenshots give us (booking code,
            districts, full addresses, surge, fees…) so nothing is lost but Sheet1 stays clean
 
@@ -39,7 +39,7 @@ LOCATION_FROM_WEEK = str(getattr(config, "LOCATION_FROM_WEEK", "2026-W36"))
 # Uploads are skipped when no row has changed since the last round, which is right for data and
 # wrong for layout: the Phase 2 file would have kept its old columns until the next approval
 # happened to come along. Folding this into that fingerprint forces exactly one rewrite.
-LAYOUT = "2026-09-16"
+LAYOUT = "2026-09-17"
 
 HEADERS = [
     "Driver Name", "Date & Time", "Time", "Service Type", "Payment Method",
@@ -53,7 +53,7 @@ COL_WIDTHS = [11.4, 9.7, 12.9, 12.5, 13.5, 12.5, 13.4, 10.5, 12.0, 14.1, 11.9, 1
 # Ops 2026-09-16 asked for the zone back, alongside the address: the address answers "where was
 # this trip", the zone answers "how does the week split". They go AFTER the last column of the
 # template, never between: Sheet1's own J and Q are formulas written with fixed letters
-# (=K+M+N, =P-J), and inserting a column in the middle would point them at the wrong cells.
+# (=K+M+N, =P-K), and inserting a column in the middle would point them at the wrong cells.
 LOCATION_EXTRA = ["Pick-up Zone", "Drop-off Zone"]
 LOCATION_HEADERS = HEADERS + LOCATION_EXTRA
 
@@ -189,7 +189,12 @@ def _write_main_row(ws, row, driver_name, t, locations=False):
         t.get("turbo") or 0,                                    # N
         t.get("tolls") or 0,                                    # O
         pf,                                                     # P passenger fare (team convention)
-        f"=P{row}-J{row}" if pf is not None else None,          # Q (template formula)
+        # What Grab kept out of the fare: the passenger's money minus the fare the rider was paid
+        # for the ride. It used to subtract NET, which also contains the bonus and the turbo —
+        # money Grab ADDS on top of the fare, not something it takes out of it. With incentives
+        # the column read low, and on a ฿35 ride with a ฿20 bonus and a ฿41 fare it read -14
+        # (Norm Asia, 2026-09-17; 1,017 of W37's rows carry an incentive).
+        f"=P{row}-K{row}" if pf is not None else None,          # Q
         t.get("customer_image"),                                # R traceback to the delivered image
     ]
     for col, v in enumerate(values, start=1):

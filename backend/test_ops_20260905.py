@@ -173,7 +173,8 @@ check("Phase 2 ใช้คอลัมน์ชุดเดียวกับ S
 check("Phase 2 ต้นทางเป็นสถานที่จริง", lw.cell(2, 6).value == "เอ็มสเฟียร์ ทางออกป้ายรถเมล์")
 check("Phase 2 ปลายทางเป็นสถานที่จริง", lw.cell(2, 7).value == "มหานคร สกายวอล์ค")
 check("Phase 2 มีตัวเงินครบเหมือนไฟล์ส่งงาน", lw.cell(2, 11).value == 100)
-check("Phase 2 ยังคำนวณ Grab Service Fee ด้วยสูตรเดิม", lw.cell(2, 17).value == "=P2-J2")
+# ลูกค้า (Norm Asia) 2026-09-17: ค่าธรรมเนียมคือเงินผู้โดยสารลบค่าโดยสารพื้นฐาน ไม่ใช่ลบรายได้สุทธิ
+check("Phase 2 คิดค่าธรรมเนียมจากค่าโดยสารพื้นฐาน", lw.cell(2, 17).value == "=P2-K2")
 check("Phase 2 โยงกลับไฟล์รูปได้", lw.cell(2, 18).value == "WK36-สมชาย1.jpg")
 check("Phase 2 เรียงตามวันที่", lw.cell(3, 1).value == "สมหญิง")
 # Ops 2026-09-16: ขอโซนกลับมาด้วย ต่อท้ายคอลัมน์เดิม ไม่ใช่แทรกกลาง (สูตร J/Q อ้างตัวอักษรตายตัว)
@@ -181,7 +182,7 @@ check("Phase 2 มีคอลัมน์โซนต่อท้าย 2 ช�
       [lw.cell(1, c).value for c in range(1, len(excel_writer.LOCATION_HEADERS) + 1)] == excel_writer.LOCATION_HEADERS)
 check("Phase 2 โซนต้นทาง/ปลายทางมีค่า",
       (lw.cell(2, 19).value, lw.cell(2, 20).value) == ("Downtown", "Downtown"))
-check("Phase 2 คอลัมน์เงินยังอยู่ที่เดิม สูตรไม่ขยับ", lw.cell(2, 17).value == "=P2-J2")
+check("Phase 2 คอลัมน์เงินยังอยู่ที่เดิม สูตรไม่ขยับ", lw.cell(2, 17).value == "=P2-K2")
 check("ไม่มีที่อยู่: Phase 2 ถอยไปใช้โซน ไม่ปล่อยว่าง",
       openpyxl.load_workbook(io.BytesIO(excel_writer.build_location_workbook(
           [row("2026-09-07", pu=None, do=None)]))
