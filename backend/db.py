@@ -762,6 +762,9 @@ def _is_repeat(row, seen, seen_short) -> bool:
     return (code, row["base_fare"], row["trip_time"]) in seen_short
 
 
+HOLDING_RIDER = "(รออ่าน)"     # a job that only holds pictures until they are read and filed
+
+
 def auto_approve_job(job_id, fresh_ids=()) -> dict:
     """Commit rows that passed every check (✓, not a duplicate, booking code unseen);
     leave the rest for a person. Returns {approved, flagged}.
@@ -770,6 +773,12 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
     held back for one round: Ops often drops the second screenshot moments later, and approving
     the lone top first writes a guessed base fare (and an estimated passenger fare) into the
     workbook. Anything older than this round is approved as usual, so nothing sticks."""
+
+    job = get_job(job_id) or {}
+    if (job.get("driver_name") or "") == HOLDING_RIDER:
+        # the waiting room of the read-then-file mode: these rows belong to nobody yet, and a row
+        # approved under '(รออ่าน)' would go to the customer with that as its rider's name
+        return {"approved": 0, "flagged": 0, "discarded": 0}
     mark_orphan_bottom_duplicates(job_id)
     discarded = discard_settled_duplicates(job_id)
     fresh_ids = set(fresh_ids or ())

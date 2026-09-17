@@ -509,6 +509,7 @@ def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True, force=Fals
             continue
         if d_from in shut:
             continue
+        js = [j for j in js if (j.get("driver_name") or "") != HOLDING_RIDER]
         for j in js:
             if only_job_ids is not None and j["id"] not in only_job_ids:
                 continue
@@ -871,6 +872,30 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
     if swept_fail:
         log(f"⚠ กวาดย้อนหลังพลาด {swept_fail} job — job อื่นไม่ได้รับผลกระทบ")
 
+    if config.POOL_STAGE and not dry_run:
+        # whatever read them — this round's live read, or a batch answered days later — rows in
+        # the waiting room are filed here, once, by what their own slip says
+        import free_dup_seats as _fds_stage
+        shut_stage = set(db.closed_weeks())
+        for (wf, wt), js in sorted(db.jobs_by_week().items()):
+            hold = [j for j in js if (j.get("driver_name") or "") == HOLDING_RIDER]
+            if not hold or not _fds_stage.week_is_open(wf, wt, closed=shut_stage):
+                continue
+            if not file_after_read.staged_rows(wf, wt):
+                continue
+            fid = hold[0].get("drive_folder_id")
+            week_id = (drive.file_meta(fid).get("parents") or [None])[0] if fid else None
+            try:
+                filed = file_after_read.file_rows(drive, week_id, wf, wt, log=log)
+            except Exception as e:  # noqa: BLE001 — filing must not take the round down
+                log(f"  ✗ ลงที่หลังอ่านของสัปดาห์ {wf} ไม่สำเร็จ: {str(e)[:150]}")
+                issues.append((f"file:{wf}", "process", f"ลงที่หลังอ่านของสัปดาห์ {wf} ไม่สำเร็จ: {str(e)[:200]}"))
+                errors += 1
+                continue
+            staged_jobs |= filed["jobs"]
+            if filed["filed"]:
+                touched_weeks.add((wf, wt))
+
     if staged_jobs:
         log(f"📥 ปิดงานให้ job ที่เพิ่งรับแถวจากที่พัก {len(staged_jobs)} job")
         for jid, d1, d2 in db.jobs_dates(staged_jobs):
@@ -1092,10 +1117,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
         if rider == HOLDING_RIDER:
             # a waiting room, not a rider: no delivered picture is named here (naming it now is
             # exactly the mistake this mode removes) and nothing is approved under this name.
-            # the week folder is the one holding the waiting room
-            week_id = (drive.file_meta(folder_id).get("parents") or [None])[0] if folder_id else None
-            filed = file_after_read.file_rows(drive, week_id, d_from, d_to, log=log)
-            staged_jobs |= filed["jobs"]
+            # The filing happens once for the whole week, after every reading path has run.
             touched_weeks.add((d_from, d_to))
             processed_images += len(group)
             continue

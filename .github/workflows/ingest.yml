@@ -67,6 +67,10 @@ on:
         description: "อ่านสดรอบนี้ (ไม่ใช้ batch) — ผลมาทันทีแต่จ่ายเต็มราคา"
         type: boolean
         default: false
+      stage_pool:
+        description: "อ่านก่อนลงที่: กองพักคู่ที่จับได้ไว้ที่ <สัปดาห์>/_พร้อมอ่าน แล้วรอบนี้อ่านเสร็จค่อยลงโฟลเดอร์ไรเดอร์ตามสลิป (ทดลอง)"
+        type: boolean
+        default: false
       cancel_batches:
         description: "ยกเลิก batch ที่ค้าง แล้วอ่านรูปพวกนั้นแบบสดในรอบนี้ (จ่ายเต็มราคาเฉพาะรูปที่ค้าง · รูปใหม่รอบนี้ก็อ่านสด)"
         type: boolean
@@ -140,6 +144,9 @@ jobs:
           # cancelling a stalled batch means Google's queue is not to be trusted this round —
           # new pictures are read live too, not handed to the same queue
           INGEST_BATCH: ${{ (github.event.inputs.live_read == 'true' || github.event.inputs.cancel_batches == 'true') && '0' || '1' }}
+          # read-then-file, for the round a person ticks it on. Off, the pool chooses the rider
+          # as it always has.
+          POOL_STAGE: ${{ github.event.inputs.stage_pool == 'true' && '1' || '0' }}
           INGEST_PARALLEL: "24"
           # 8 was the calm-down after a 32-fault network storm on 2026-08-26, before every Drive
           # call had a retry. With batch reading, downloads ARE the round — 19 images a minute
