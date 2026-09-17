@@ -449,6 +449,7 @@ def write_previews(drive, albums, data, report, log=log):
 
 # --- 5. move mode ---------------------------------------------------------------------------
 USED_DIR = "_ใช้แล้ว"
+HOLDING_DIR = "_พร้อมอ่าน"      # คู่ที่จับได้แล้วแต่ยังไม่รู้ว่าเป็นงานของใคร (config.POOL_STAGE)
 MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
@@ -590,7 +591,7 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
                 x["moved"] = "ไม่รู้ว่ารถกี่ล้อจากชื่ออัลบั้ม — ยังอยู่ในกอง"
             continue
         alloc = allocators.get(week_id)
-        if alloc is None:
+        if alloc is None and not config.POOL_STAGE:
             import db                       # imported where used, as everywhere else in this file
             pool_names = {k: [n for n, kd in db.name_pool_for(k[0]) if kd == k[1]]
                           for k in (("2W", "Win"), ("2W", "Home"), ("4W", "Taxi"), ("4W", "Home"))}
@@ -599,6 +600,7 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
             alloc = allocators[week_id] = distribute.Allocator(
                 drive, week_id, pool_names, log=log, styles=db.rider_styles(week_id))
         carry = []
+        hold_dir = None
         # What the customer still has room for in this week. A group already at its target does
         # not take the next trip and hand it on later: carrying a row afterwards moves the row,
         # the stitched picture, the delivered picture and its name, and W37 spent four such
@@ -617,6 +619,15 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
                 if (f"pool:{x['target']}-full", "folder", why) not in issues:
                     issues.append((f"pool:{x['target']}-full", "folder", why))
                     log(f"  ↪ {why}")
+                continue
+            if config.POOL_STAGE:
+                # nobody owns it yet: it waits where the round can read it, and the rider is
+                # chosen afterwards from what the slip turned out to say
+                if hold_dir is None:
+                    hold_dir = drive.ensure_folder(week_id, HOLDING_DIR)
+                x["dest"] = hold_dir
+                if room is not None and x["target"] in room:
+                    room[x["target"]] -= 1
                 continue
             fid, err = alloc.folder_for(x["target"], wheel, x.get("style"))
             if not err and room is not None and x["target"] in room:

@@ -223,6 +223,12 @@ POOL_PARALLEL = int(_setting("POOL_PARALLEL", "pool_parallel", 4))              
 # every ingest round first pairs and files what is in Week/Pool (pool.round_step); "0" leaves the
 # pool alone so only the manual "Pool" workflow touches it
 POOL_IN_ROUND = str(_setting("POOL_IN_ROUND", "pool_in_round", "1")).lower() in ("1", "true", "yes")
+# OFF until a week has been run with it deliberately. ON, the pool stops choosing a rider: a
+# paired picture waits in <Week>/_พร้อมอ่าน/ with no owner, the round reads it there, and only
+# then — knowing the service on the slip — is it filed, once (file_after_read.py). Every move
+# W37 needed afterwards (rehome, the car relabel, carry and carry back: ~325 rows) exists only
+# because the choice was made before the facts were in.
+POOL_STAGE = str(_setting("POOL_STAGE", "pool_stage", "0")).lower() in ("1", "true", "yes")
 # Week folders kept for trying things out: skipped by the round (both the pool step and the
 # rider-folder read), still reachable from the manual "Pool" workflow by naming the week.
 # Matching is case-insensitive on any part of the folder name.

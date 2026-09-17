@@ -30,6 +30,7 @@ from datetime import date, timedelta
 import batch_client
 import db
 import excel_writer
+import file_after_read
 import pipeline
 import config
 from config import DRIVE_PARALLEL, INGEST_PARALLEL
@@ -48,6 +49,9 @@ ADMIN_RE = re.compile(r"^\s*admin\b\s*(?P<name>.*)$", re.IGNORECASE)
 POOL_FOLDER_NAMES = ("pool", "กอง")
 NUM_PREFIX_RE = re.compile(r"^\s*\d{1,3}\s*[-. ]\s*")
 MONTHS = {m: i for i, m in enumerate(["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+# a paired picture with no owner yet, and the name of the job that holds it meanwhile
+from file_after_read import HOLDING_DIR, HOLDING_RIDER          # noqa: E402
+
 CATEGORIES = {"4 w standard", "4 w saver", "2 w standard", "2 w saver"}
 
 
@@ -295,6 +299,13 @@ def discover(drive, inbox_id, walk=None, closed=None):
                     _discover_category(drive, cat, clean_name(cat["name"]), d1.isoformat(), d2.isoformat(), wk, skipped, items, walk)
                 elif clean_name(cat["name"]).lower() in POOL_FOLDER_NAMES:
                     continue  # Phase 2 album pool (pool.py) — whole albums, not yet sorted into riders
+                elif clean_name(cat["name"]) == HOLDING_DIR:
+                    # pairs waiting to be read, with no owner yet (config.POOL_STAGE). They are
+                    # read like anything else; who drove them is decided afterwards, from the
+                    # service the slip turns out to name (file_after_read.py).
+                    items += _rider_items(drive, cat, HOLDING_RIDER, wk, d1.isoformat(),
+                                          d2.isoformat(), None, skipped,
+                                          f"{top['name']}/{cat['name']}", walk=walk)
                 elif cat["name"].lstrip().startswith("_"):
                     continue  # our own housekeeping — '_ใช้แล้ว', '_รายงาน', '_ทิ้ง-จับคู่ผิด'.
                     # A leading underscore has meant 'the tools put this here' since the pool
@@ -671,6 +682,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
     t0 = time.time()
     issues = []  # (key, kind, message) — synced to ingest_issues at the end (auto-resolve)
     mark = _utc_now()                       # everything after this moment belongs to the next round
+    staged_jobs = set()                     # jobs that received rows filed after reading
     quiet = nothing_new(drive) if not only else None
     if quiet:
         log("⏭ ไม่มีรูปใหม่ใน Drive ตั้งแต่รอบก่อน — ข้ามการเดินโฟลเดอร์ (ยังเก็บผล batch/อนุมัติตามปกติ)")
@@ -858,6 +870,22 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
                            f"job #{jid}: กวาดย้อนหลัง (ลงวันที่/อนุมัติ) ไม่สำเร็จ: {str(e)[:200]}"))
     if swept_fail:
         log(f"⚠ กวาดย้อนหลังพลาด {swept_fail} job — job อื่นไม่ได้รับผลกระทบ")
+
+    if staged_jobs:
+        log(f"📥 ปิดงานให้ job ที่เพิ่งรับแถวจากที่พัก {len(staged_jobs)} job")
+        for jid, d1, d2 in db.jobs_dates(staged_jobs):
+            try:
+                pipeline.pair_fragments(jid)
+                if d1 and d2:
+                    pipeline.spread_dates(jid, d1, d2, only_missing=True)
+                st = db.auto_approve_job(jid)
+                approved += st["approved"]
+                flagged += st["flagged"]
+            except Exception as e:  # noqa: BLE001
+                log(f"  ✗ job #{jid}: ปิดงานหลังลงที่ไม่สำเร็จ — {str(e)[:120]}")
+                errors += 1
+        errs_st, _failed = export_only(drive, exports_id, only_job_ids=staged_jobs, with_xlsx=False)
+        errors += errs_st
 
     shut_now = set(db.closed_weeks())
     mended = db.settled_batch_issue_keys()
@@ -1060,6 +1088,17 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
         dated = pipeline.spread_dates(job_id, d_from, d_to, only_missing=True)
         if dated:
             log(f"  📅 กระจาย {dated} งานลง จ–อา เท่าๆ กัน")
+
+        if rider == HOLDING_RIDER:
+            # a waiting room, not a rider: no delivered picture is named here (naming it now is
+            # exactly the mistake this mode removes) and nothing is approved under this name.
+            # the week folder is the one holding the waiting room
+            week_id = (drive.file_meta(folder_id).get("parents") or [None])[0] if folder_id else None
+            filed = file_after_read.file_rows(drive, week_id, d_from, d_to, log=log)
+            staged_jobs |= filed["jobs"]
+            touched_weeks.add((d_from, d_to))
+            processed_images += len(group)
+            continue
 
         # customer images: Exports/<week>/<vehicle type>/ — all riders' images in one folder,
         # named '<rider><n>.jpg' ('<rider>-<admin><n>.jpg' when two riders share a name in the group)
