@@ -66,6 +66,10 @@ jobs:
           DRIVE_PARALLEL: "12"
           POOL_PARALLEL: "4"
           POOL_FORCE_PAIRS: ${{ github.event.inputs.pairs }}   # read by pool.py, never re-parsed by the shell
+          # Read-then-file is a property of the week, not of who started the round: a pool run
+          # dispatched by hand has to stage its pairs in _พร้อมอ่าน exactly as the one inside an
+          # ingest round does, or the pairs it makes skip the reading and are filed on a guess.
+          POOL_STAGE: ${{ vars.POOL_STAGE || '0' }}
           TZ: Asia/Bangkok
         run: |
           ARGS=""
