@@ -205,6 +205,35 @@ check("อ่านลำดับหน้าไม่ได้เลย → �
 check("ก้อนรายได้เพิ่มเติมคือเลขที่อยู่ก่อนยอดผู้โดยสาร",
       pairing._extra_income([148, 148, 7, 215, 20, 195, 195, 148, 47], 148) == [7])
 
+# --- each half prints the ride income; two halves of one trip print the same one -------------
+# 4W-Home Narumol = 220 left 134 halves unpaired in one round. 48 of the 63 that touch show the
+# top exactly 5.0% above the bottom — the rider's incentive, collapsed on the bottom and absent
+# from the top, so the difference is printed NOWHERE and no arithmetic can confirm the pair.
+# The top's own card can: it says 77 where the bottom says 77. The same card refuses the ฿52
+# top that was glued to a ฿51 bottom in ParichatLot16Sep = 819, because it says 52 against 51.
+_nar_b = {"role": "bottom", "amount": 77.0, "numbers": [4, 5, 19, 20, 77, 96, 125],
+          "seq": [77, 77, 77, 125, 20, 5, 4, 96, 96, 77, 19]}
+check("การ์ดรายได้ของสองครึ่งตรงกัน → จับคู่ แม้ ฿81 กับ ฿77 จะอธิบายด้วยตัวเลขบนหน้าไม่ได้",
+      pairing.match_tier({"role": "top", "amount": 81.0, "own_income": [77.0]}, _nar_b,
+                         neighbours=True) is not None)
+check("ไม่มีการ์ดของครึ่งบน → ตัดสินแบบเดิม (คู่นี้ยังจับไม่ได้)",
+      pairing.match_tier({"role": "top", "amount": 81.0}, _nar_b, neighbours=True) is None)
+_par_b = {"role": "bottom", "amount": 51.0, "numbers": [1, 2, 5, 11, 51, 62, 70],
+          "seq": [51, 51, 70, 1, 5, 2, 62, 62, 51, 11]}
+check("การ์ดรายได้ไม่ตรงกัน (52 กับ 51) → ห้ามจับ ไม่ว่าจะอยู่ติดกันแค่ไหน",
+      pairing.match_tier({"role": "top", "amount": 52.0, "own_income": [52.0]}, _par_b,
+                         neighbours=True) is None)
+check("การ์ดตรงกันไม่ไปทับคู่ที่ตัวเลขอธิบายได้อยู่แล้ว (฿155 = 148 + เทอร์โบ 7)",
+      pairing.match_tier({"role": "top", "amount": 155.0, "own_income": [148.0]},
+                         {"role": "bottom", "amount": 148.0, "numbers": [7, 20, 47, 148, 195, 215],
+                          "seq": [148, 148, 7, 215, 20, 195, 195, 148, 47]}, neighbours=True) == 1)
+check("'฿193' ที่อ่านได้เป็น 1193 ยังเทียบติด เพราะรูปที่ตัด ฿ ออกเดินทางมาด้วย",
+      pairing.match_tier({"role": "top", "amount": 253.0, "own_income": [1193.0, 193.0]},
+                         {"role": "bottom", "amount": 193.0, "numbers": [10, 193, 203, 250],
+                          "seq": [193, 193, 250, 10, 203, 203, 193, 10]}, neighbours=True) is not None)
+check("เวอร์ชันตัวอ่านขยับเป็น r12 — cache ของ r11 ที่ไม่มีการ์ดครึ่งบน ไม่ถูกหยิบกลับมาใช้",
+      pairing.READER not in ("r9", "r10", "r11"))
+
 sample = "Phase2/Test 7"
 if os.path.isdir(sample) and os.environ.get("PAIRING_SAMPLE", "1") == "1":
     try:
@@ -523,10 +552,16 @@ if os.path.isdir(_keang):
     check("คู่นี้มีหลักฐานจริงรับรอง — อินเซนทีฟเทอร์โบ ฿5 พิมพ์อยู่บนครึ่งล่าง (96 = 91 + 5)",
           pairing.match_tier(k1, k2) == 1)
     # The album's other stuck pair has no such line: ฿362 over a card printing 345, and the 17
-    # baht between them appears nowhere. Only standing next to each other can carry that one.
+    # baht between them appear nowhere on either page. Until 2026-09-18 only standing next to
+    # each other carried it. Now the top's own card is read, and it prints 345 — the same figure
+    # the bottom's fee card prints — so the pair stands on what the two pages say about
+    # themselves, and the ฿17 needs no explaining: it is the incentive, collapsed on one half
+    # and absent from the other, the shape that stranded 134 halves in 4W-Home Narumol = 220.
     k3 = pairing.inspect(os.path.join(_keang, "13309_0.jpg"))
     k4 = pairing.inspect(os.path.join(_keang, "13310_0.jpg"))
-    check("อีกคู่ไม่มีบรรทัดไหนอธิบายส่วนต่าง 17 บาท", pairing.match_tier(k3, k4) is None)
+    check("ครึ่งบนพิมพ์รายได้ของตัวเองไว้ ฿345", k3.get("own_income") == [345.0])
+    check("และตรงกับรายได้ในการ์ดของครึ่งล่าง → จับคู่ได้ แม้ ฿17 จะไม่ปรากฏที่ไหน",
+          pairing.match_tier(k3, k4) == 1)
     check("จึงต้องอาศัยว่าอยู่ติดกัน จึงรับเป็นหลักฐานอ่อนที่สุด",
           pairing.match_tier(k3, k4, neighbours=True) == pairing.NEIGHBOUR_ONLY)
     got2, left2 = pairing.pair_album([("t", k3), ("b", k4)])

@@ -215,7 +215,7 @@ def ensure_theme(info, source):
 # r10: nothing is turned upside down before it is read (NO_FLIP) — r9 holds '฿99' as 66.
 # r11: the black-figure screen (read_black_layout) — r10 holds every one of them as a bottom
 # half with no amount and, usually, no clock.
-READER = "r11"
+READER = "r12"
 
 # The status-bar clock: '19:56 น.' — hour and minute, a colon between, no digit touching it on
 # the left (the app writes '3.41 km' straight over the clock on a top half, and '314:56' is
@@ -250,6 +250,47 @@ def read_clock(im):
         return None
     m = CLOCK.search(txt)
     return int(m.group(1)) * 60 + int(m.group(2)) if m else None
+
+
+def own_income(im, green_end):
+    """What the TOP half says it earned for the ride, from its own 'รายได้จากรอบขับ' card.
+
+    The card sits under the big 'คุณได้รับ' figure and prints the income twice — once as
+    'ค่าโดยสารพื้นฐาน 77' and once as the card's own total 'รวมรายได้จากรอบขับ ฿77'. Reading it
+    settles what nothing else on the page can. 4W-Home Narumol = 220 leaves 134 halves unpaired
+    because the rider's 5% incentive is COLLAPSED on the bottom and absent from the top, so ฿81
+    over a bottom earning ฿77 is a real pair that no figure confirms — while ฿52 over a ฿51
+    bottom, in ParichatLot16Sep = 819, is two different trips. The top's own card tells them
+    apart at a glance: 77 against 77, and 52 against 51.
+
+    A figure printed once is a card the screenshot cut in half, and is not reported. The '฿' is
+    read as a leading 1 often enough ('฿193' → '1193') that the stripped form travels alongside
+    as an alternative, the way a misread green figure already does.
+    """
+    if green_end is None or green_end >= im.height - 20:
+        return []
+    strip = im.crop((0, green_end + 2, im.width, im.height))
+    w = 720
+    strip = strip.resize((w, max(1, int(strip.height * w / strip.width))), Image.LANCZOS)
+    try:
+        res, _ = _engine()(np.asarray(strip), **NO_FLIP)
+    except Exception:                                    # noqa: BLE001 — no card, no verdict
+        return []
+    nums = []
+    for box, t, _ in sorted(res or [], key=lambda r: (r[0][0][1], r[0][0][0])):
+        nums += [float(x) for x in re.findall(r'(?<![\d.:])(\d{1,4}(?:\.\d{1,2})?)(?![\d:])',
+                                              (t or "").replace(",", ""))]
+    seen = {}
+    for n in nums:
+        seen[round(n, 2)] = seen.get(round(n, 2), 0) + 1
+    out = []
+    for v, k in seen.items():
+        if k >= 2 and v >= MIN_AMOUNT:
+            out.append(v)
+            rest = str(int(v))[1:] if v == int(v) and str(int(v)).startswith("1") else ""
+            if rest and float(rest) >= MIN_AMOUNT:
+                out.append(float(rest))
+    return sorted(set(out), reverse=True)
 
 
 def clock_gap(a, b):
@@ -436,6 +477,7 @@ def inspect(source):
     info = {"width": im.width, "height": im.height, "amount": None, "alts": [],
             "theme": theme_of(a),
             "numbers": [], "seq": [], "cut_top": None}
+    big_end = None          # where the green figure ends, so a top half can be read below it
     tall = im.width / im.height < 0.36
     if tall or im.width / im.height > JOINED_MIN or content_ratio(a) > JOINED_MIN:
         # 'long' means 'this picture is a whole trip already — move it, do not look for a
@@ -477,6 +519,7 @@ def inspect(source):
         if (y0 + y1) / 2 > im.height * 0.4:
             info["role"] = "top"                             # route + map above, amount below
             info["cut_top"] = date_bar_cut(im)
+            big_end = y1
         else:
             # screenshot that STARTS at 'คุณได้รับ' and continues into the fare breakdown:
             # for pairing it plays the bottom (it carries the net and every breakdown number)
@@ -509,6 +552,7 @@ def inspect(source):
             if info["amount"] and (y0 + y1) / 2 > im.height * 0.4:
                 info["role"] = "top"
                 info["cut_top"] = date_bar_cut(im)
+                big_end = y1
         info["numbers"], info["seq"] = _all_numbers(im)
     if info["amount"] is not None and info["amount"] < MIN_AMOUNT:
         # ฿4, ฿8 … are never a fare: the OCR dropped digits (or read the bonus line). Treated
@@ -532,6 +576,11 @@ def inspect(source):
         info["clock"] = black["clock"]
     else:
         info["clock"] = read_clock(im)
+    if info["role"] == "top":
+        # One more small read, and only on a top half: the strip under its green figure, where
+        # its own income card is printed. It is what decides a pair whose two halves cannot be
+        # reconciled from the bottom alone — see own_income().
+        info["own_income"] = own_income(im, big_end)
     return info
 
 
@@ -844,6 +893,23 @@ def match_tier(top, bottom, neighbours=False, same_shot=False):
     # strongest kind decides alone, nothing weaker was ever consulted behind it.
     if nums and greens:
         greens = [g for g in greens if any(abs(g - n) <= 1 for n in nums)]
+    # The first gate, and the only one that reads BOTH halves' own words. Each half prints the
+    # ride income — the top inside its own card under the green figure, the bottom as its card's
+    # total or in the middle of the fee card — and two halves of one trip print the same figure.
+    # When both can be read and they disagree, nothing else on either page can make them a pair:
+    # ฿52 over ฿51 in ParichatLot16Sep = 819 is two trips, and it took eight void'd rows to find
+    # that out by hand. When they agree it is the strongest thing the pages can say, and it
+    # settles the pairs no other rule can — 4W-Home Narumol = 220 strands 134 halves whose 5%
+    # incentive is collapsed on one half and missing from the other, so ฿81 sits on ฿77 with the
+    # ฿4 printed nowhere. Measured there: 58 of 70 touching pairs recovered, none wrongly.
+    own = [v for v in (top.get("own_income") or []) if v]
+    bottom_income = [g for g in greens] + [c[1] for c in cards]
+    agreed = False
+    if own and bottom_income:
+        if any(abs(o - b) < 0.01 for o in own for b in bottom_income):
+            agreed = True
+        else:
+            return None
     best = None
     if greens:                                                   # A
         for net in nets:
@@ -874,14 +940,17 @@ def match_tier(top, bottom, neighbours=False, same_shot=False):
         # even when it had decided nothing.
         if best is None and cards:
             best = _card_plus_green(nets, cards, greens)
-        return best
+        # Two income cards that agree are evidence in their own right, not a tie-breaker: the
+        # pair stands even when no arithmetic on the bottom explains the green figure above.
+        return best if best is not None else (1 if agreed else None)
     if cards:                                                    # B (tier 4 only for pair_album)
-        return _by_fee_card(nets, cards, nums, card_figs, neighbours)
+        t = _by_fee_card(nets, cards, nums, card_figs, neighbours)
+        return t if t is not None else (1 if agreed else None)
     for net in nets:                                             # C
         t = _tier_one(net, None, nums)
         if t is not None and (best is None or t < best):
             best = t
-    return best
+    return best if best is not None else (1 if agreed else None)
 
 
 def matches(top, bottom) -> bool:
