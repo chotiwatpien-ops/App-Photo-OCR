@@ -41,7 +41,10 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           TZ: Asia/Bangkok
         run: |
+          # พิมพ์ค่าที่ได้รับจริงไว้ด้วย — รอบหนึ่งเคยติ๊ก vacuum แล้วไม่ทำงาน และไม่มีอะไรในล็อกบอกว่าทำไม
+          echo "ได้รับ: apply='${{ inputs.apply }}' vacuum='${{ inputs.vacuum }}'"
           ARGS=""
-          if [ "${{ github.event.inputs.apply }}" = "true" ]; then ARGS="$ARGS --apply"; fi
-          if [ "${{ github.event.inputs.vacuum }}" = "true" ]; then ARGS="$ARGS --vacuum"; fi
+          if [ "${{ inputs.apply }}" = "true" ];  then ARGS="$ARGS --apply";  fi
+          if [ "${{ inputs.vacuum }}" = "true" ]; then ARGS="$ARGS --vacuum"; fi
+          echo "สั่ง: python free_blob_space.py $ARGS"
           python free_blob_space.py $ARGS
