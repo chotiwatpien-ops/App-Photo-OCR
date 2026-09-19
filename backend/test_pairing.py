@@ -205,6 +205,25 @@ check("อ่านลำดับหน้าไม่ได้เลย → �
 check("ก้อนรายได้เพิ่มเติมคือเลขที่อยู่ก่อนยอดผู้โดยสาร",
       pairing._extra_income([148, 148, 7, 215, 20, 195, 195, 148, 47], 148) == [7])
 
+# --- the app in dark mode prints the fare white, not green (2W-Win Porpla=177) ---------------
+# 388 pictures, 113 pairs and 128 halves left over — of which 124 were called 'bottom' and 120
+# had no readable amount at all. The phone (720x1600) runs the app dark, and there the figure
+# under 'คุณได้รับ' is white (R247 G247 B247). The green finder saw only the map's legend, so
+# every top half of that phone became a bottom with no figure and nothing could pair.
+import numpy as np                                              # noqa: E402
+_dark = np.zeros((1600, 720, 3), dtype=np.uint8) + 20          # a dark screen
+_dark[1291:1346, 300:402] = 247                                # the fare: tall, narrow, alone
+_dark[1135:1172, 60:632] = 247                                 # a card row: label + figure, wide
+_wm, _wb = pairing._white_blocks(_dark.astype(int))
+check("บนจอมืด เจอก้อนตัวเลขสีขาว", any(y0 <= 1291 <= y1 for y0, y1 in _wb))
+check("บรรทัดในการ์ดที่กว้างเต็มแถว ไม่ถูกนับเป็นตัวเลขยอด — ค่าบริการ ฿16 เคยถูกอ่านเป็นค่าโดยสาร",
+      not any(y0 <= 1135 <= y1 for y0, y1 in _wb))
+check("จอสว่างไม่ถูกแตะ — ตัวอ่านขาวทำงานเฉพาะเมื่อจอมืดและไม่มีตัวเลขเขียวที่อ่านเป็นเงินได้",
+      pairing.theme_of(np.zeros((100, 100, 3), dtype=int) + 240) == "สว่าง")
+check("เวอร์ชันตัวอ่านขยับเป็น r13 — cache ของ r12 ที่อ่านตัวเลขขาวไม่ได้ ไม่ถูกหยิบกลับมาใช้",
+      pairing.READER not in ("r10", "r11", "r12"))
+
+
 # --- each half prints the ride income; two halves of one trip print the same one -------------
 # 4W-Home Narumol = 220 left 134 halves unpaired in one round. 48 of the 63 that touch show the
 # top exactly 5.0% above the bottom — the rider's incentive, collapsed on the bottom and absent

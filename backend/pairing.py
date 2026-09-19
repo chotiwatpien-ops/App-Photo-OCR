@@ -75,6 +75,40 @@ def _green_blocks(a):
     return mask, [(y0, y1) for y0, y1 in blocks if blue[y0:y1 + 1].sum() < 40]
 
 
+def _white_blocks(a):
+    """Rows of white ink on a dark screen, the way _green_blocks finds the green ones.
+
+    2W-Win Porpla=177 sends 720x1600 screens in the app's dark theme, and there the figure under
+    'คุณได้รับ' is printed WHITE (R247 G247 B247), not green. The green finder sees nothing, so
+    every top half of that phone came back with no amount and — having no big figure — was filed
+    as a bottom: 124 bottoms against 4 tops in one album, and not one of its ~60 trips could be
+    paired. Saturated pixels are left out so the map, the route legend and the chips cannot pose
+    as writing."""
+    lo, hi = a.min(axis=2), a.max(axis=2)
+    mask = (lo > 185) & (hi - lo < 32)
+    rows = np.where(mask.sum(axis=1) > 2)[0]
+    blocks, start = [], None
+    for i, y in enumerate(rows):
+        if start is None:
+            start = y
+        elif y - rows[i - 1] > 3:
+            blocks.append((start, rows[i - 1]))
+            start = y
+    if start is not None:
+        blocks.append((start, rows[-1]))
+    # On a dark screen the LABEL is white too, so a card's row ('รายได้จากรอบขับ … ฿93') lights up
+    # as one block spanning the width of the card — 571 to 644 px of a 720 px screen, and the
+    # reader took its ฿16 for the fare. The figure under 'คุณได้รับ' stands alone: 102 to 132 px.
+    # Green never needed this, because there only the figure is green and the label is not.
+    wide = a.shape[1] * 0.5
+    out = []
+    for y0, y1 in blocks:
+        cols = np.where(mask[y0:y1 + 1].sum(axis=0) > 0)[0]
+        if len(cols) > 1 and cols[-1] - cols[0] + 1 < wide:
+            out.append((y0, y1))
+    return mask, out
+
+
 def _try_amount(im, mask, y0, y1):
     """_amount_from_block that never raises. Every green block on the screen is read now, not
     just the chosen one, and a decoration can crop to a shape the OCR refuses to resize —
@@ -215,7 +249,7 @@ def ensure_theme(info, source):
 # r10: nothing is turned upside down before it is read (NO_FLIP) — r9 holds '฿99' as 66.
 # r11: the black-figure screen (read_black_layout) — r10 holds every one of them as a bottom
 # half with no amount and, usually, no clock.
-READER = "r12"
+READER = "r13"
 
 # The status-bar clock: '19:56 น.' — hour and minute, a colon between, no digit touching it on
 # the left (the app writes '3.41 km' straight over the clock on a top half, and '314:56' is
@@ -450,6 +484,17 @@ def inspect(source):
     im = Image.open(io.BytesIO(source) if isinstance(source, (bytes, bytearray)) else source).convert("RGB")
     a = np.asarray(im).astype(int)
     mask, blocks = _green_blocks(a)
+    if theme_of(a) == "มืด":
+        # The same app in dark mode prints the earnings figure white, not green (Porpla=177).
+        # The green map legend still paints blocks all over such a screen, so the switch is made
+        # on whether any BIG green block reads as money — not on whether green was found at all.
+        def _priced(m, bl):
+            return any((_try_amount(im, m, y0, y1)[0] or 0) >= MIN_AMOUNT for y0, y1 in bl
+                       if im.width * 0.055 <= y1 - y0 <= im.width * 0.16 and y0 > im.height * 0.04)
+        if not _priced(mask, blocks):
+            wmask, wblocks = _white_blocks(a)
+            if _priced(wmask, wblocks):
+                mask, blocks = wmask, wblocks
 
     def is_text(y0, y1):
         """A printed figure ('฿ 28', '฿ 413') is always wider than it is tall; the green map
