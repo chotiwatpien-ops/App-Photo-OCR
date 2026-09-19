@@ -70,11 +70,11 @@ function RunStatus({ run, canTrigger, onTriggered, batchWaiting = 0, batchSince 
         {run?.notes && <p className="text-xs text-amber-700 mt-1 whitespace-pre-line">⚠ {run.notes}</p>}
         {msg && <p className="text-xs text-slate-600 mt-1">{msg}</p>}
       </div>
-      <div className="text-right text-xs text-slate-500">
+      <div className="w-full sm:w-auto text-left sm:text-right text-xs text-slate-500">
         <p>ตั้งเวลา: ทุก 4 ชม. (08:23 12:23 16:23 20:23 00:23 04:23)</p>
         <button onClick={trigger} disabled={busy || running || !canTrigger}
           title={canTrigger ? 'สั่งรันรอบทันที: เก็บผล batch ที่อ่านเสร็จ แล้วส่งรูปใหม่เข้า batch (ผลของรูปใหม่จะมารอบถัดไป)' : 'ยังไม่ได้ตั้งค่า GITHUB_TOKEN — รันได้จากแท็บ Actions บน GitHub'}
-          className="mt-1 bg-slate-900 hover:bg-slate-700 disabled:bg-slate-300 text-white rounded-lg px-4 py-2 text-sm font-medium">
+          className="mt-1 w-full sm:w-auto min-h-11 bg-slate-900 hover:bg-slate-700 disabled:bg-slate-300 text-white rounded-lg px-4 py-2 text-sm font-medium">
           {busy ? 'กำลังสั่ง…' : running ? 'กำลังรันอยู่' : '▶ ดูดรูปตอนนี้'}
         </button>
       </div>
@@ -105,18 +105,22 @@ function JobRow({ j, onOpen, onRenamed }) {
           <span className="ml-2 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-1"
             title="โฟลเดอร์บน Drive ไม่มีชื่อคน — แก้ก่อนแถวเข้า Excel">ไม่มีชื่อ</span>
         )}
-        <button onClick={rename} title="เปลี่ยนชื่อไรเดอร์ของ job นี้"
-          className="ml-2 text-slate-300 hover:text-blue-600 text-xs">✎</button>
+        <button onClick={rename} title="เปลี่ยนชื่อไรเดอร์ของ job นี้" aria-label="เปลี่ยนชื่อไรเดอร์"
+          className="ml-1 inline-flex min-h-11 min-w-9 items-center justify-center text-slate-400 hover:text-blue-600 text-xs">✎</button>
       </td>
-      <td className="py-1.5 pr-3 text-right tabular-nums text-slate-500">{j.images}</td>
+      <td className="hidden sm:table-cell py-1.5 pr-3 text-right tabular-nums text-slate-500">{j.images}</td>
       <td className="py-1.5 pr-3 text-right tabular-nums">{j.done}</td>
-      <td className="py-1.5 pr-3 text-right tabular-nums text-emerald-700">{j.approved}<span className="text-slate-400 text-xs"> ({j.auto} auto)</span></td>
-      <td className="py-1.5 pr-3 text-right tabular-nums">฿{fmt(j.net)}</td>
-      <td className="py-1.5 pr-3"><span className={`text-xs rounded-full px-2 py-0.5 ${st[1]}`}>{st[0]}</span></td>
+      <td className="py-1.5 pr-3 text-right tabular-nums text-emerald-700">{j.approved}
+        <span className="hidden sm:inline text-slate-400 text-xs"> ({j.auto} auto)</span></td>
+      <td className="hidden sm:table-cell py-1.5 pr-3 text-right tabular-nums">฿{fmt(j.net)}</td>
+      <td className="py-1.5 pr-3"><span className={`inline-block whitespace-nowrap text-xs rounded-full px-2 py-0.5 ${st[1]}`}>{st[0]}</span></td>
       <td className="py-1.5 text-right whitespace-nowrap text-sm">
-        {j.rider_folder && <a href={driveFolder(j.rider_folder)} target="_blank" rel="noreferrer" className="text-slate-500 hover:underline mr-3" title="รูปส่งลูกค้าบน Drive">รูป ↗</a>}
-        <a href={exportUrl({ jobId: j.id, committedOnly: false })} className="text-emerald-700 hover:underline mr-3">Excel</a>
-        <button onClick={() => onOpen(j.id)} className="text-blue-600 hover:underline">เปิด</button>
+        {j.rider_folder && <a href={driveFolder(j.rider_folder)} target="_blank" rel="noreferrer"
+          className="hidden sm:inline-flex min-h-11 items-center px-1 text-slate-500 hover:underline" title="รูปส่งลูกค้าบน Drive">รูป ↗</a>}
+        <a href={exportUrl({ jobId: j.id, committedOnly: false })}
+          className="inline-flex min-h-11 items-center px-1 sm:ml-3 text-emerald-700 hover:underline">Excel</a>
+        <button onClick={() => onOpen(j.id)}
+          className="inline-flex min-h-11 items-center px-1 ml-2 sm:ml-3 text-blue-600 hover:underline">เปิด</button>
       </td>
     </tr>
   )
@@ -281,7 +285,7 @@ export default function Home({ onOpenJob, onJobCreated }) {
               </div>
               <div className="text-xs text-slate-500">{W.date_from} → {W.date_to}</div>
             </div>
-            <div className="flex gap-6 text-sm">
+            <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm">
               <div><span className="text-slate-500">ไรเดอร์</span> <b>{W.riders}</b></div>
               <div><span className="text-slate-500">งาน</span> <b>{fmt(W.trips)}</b></div>
               <div><span className="text-slate-500">อนุมัติ</span> <b className="text-emerald-700">{fmt(W.approved)}</b> <span className="text-xs text-slate-400">({W.auto} auto)</span></div>
@@ -289,11 +293,11 @@ export default function Home({ onOpenJob, onJobCreated }) {
               {W.pending > 0 && <div className="text-amber-600">กำลังอ่าน {W.pending}</div>}
               <div><span className="text-slate-500">รายได้</span> <b>฿{fmt(W.net)}</b></div>
             </div>
-            <div className="ml-auto flex items-center gap-3 text-sm">
+            <div className="w-full sm:w-auto sm:ml-auto flex flex-wrap items-center gap-2 sm:gap-3 text-sm">
               {W.xlsx
-                ? <a href={driveFile(W.xlsx)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3 py-1.5">📄 Excel บน Drive ↗</a>
-                : <a href={exportUrl({ dateFrom: W.date_from, dateTo: W.date_to, committedOnly: true })} onClick={(e) => e.stopPropagation()} className="border border-emerald-600 text-emerald-700 rounded-lg px-3 py-1.5">⬇ Excel</a>}
-              {W.folder && <a href={driveFolder(W.folder)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="text-slate-600 hover:underline">🖼 รูปส่งลูกค้า ↗</a>}
+                ? <a href={driveFile(W.xlsx)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="min-h-11 inline-flex items-center bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg px-3">📄 Excel บน Drive ↗</a>
+                : <a href={exportUrl({ dateFrom: W.date_from, dateTo: W.date_to, committedOnly: true })} onClick={(e) => e.stopPropagation()} className="min-h-11 inline-flex items-center border border-emerald-600 text-emerald-700 rounded-lg px-3">⬇ Excel</a>}
+              {W.folder && <a href={driveFolder(W.folder)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()} className="min-h-11 inline-flex items-center px-1 text-slate-600 hover:underline">🖼 รูปส่งลูกค้า ↗</a>}
               {/* ปิดสัปดาห์เมื่อส่งไฟล์ให้ลูกค้าแล้ว — หลังจากนี้ไม่มีงานอัตโนมัติตัวไหนแตะสัปดาห์นี้
                   อีก ทั้งการเก็บกวาดรูปซ้ำออกจากโฟลเดอร์ไรเดอร์ และการสร้างรูปส่งลูกค้าทับของเดิม */}
               {/* span ไม่ใช่ button: แถบหัวสัปดาห์ทั้งแถบเป็น <button> อยู่แล้ว และ button ซ้อน
@@ -309,7 +313,7 @@ export default function Home({ onOpenJob, onJobCreated }) {
                 const p = W.closed ? api.reopenWeek(W.date_from) : api.closeWeek(W.date_from, W.date_to)
                 p.then(load).catch((e2) => setErr(e2.message))
               }}
-                className={`cursor-pointer select-none rounded-lg px-3 py-1.5 hover:bg-slate-50 border ${
+                className={`min-h-11 inline-flex items-center cursor-pointer select-none rounded-lg px-3 hover:bg-slate-50 border ${
                   W.closed ? 'border-slate-300 text-slate-600' : 'border-slate-400 text-slate-700'}`}>
                 {W.closed ? '🔓 เปิดอีกครั้ง' : '🔒 ปิดสัปดาห์'}
               </span>
@@ -323,8 +327,12 @@ export default function Home({ onOpenJob, onJobCreated }) {
                   <h3 className="text-sm font-semibold text-slate-700 mb-1">{g.category} <span className="text-slate-400 font-normal">· {g.jobs.length} คน</span></h3>
                   <table className="w-full text-sm">
                     <thead><tr className="text-left text-slate-500 border-b border-slate-200 text-xs">
-                      <th className="py-1 pr-3">ไรเดอร์</th><th className="py-1 pr-3 text-right">รูป</th><th className="py-1 pr-3 text-right">งาน</th>
-                      <th className="py-1 pr-3 text-right">อนุมัติ</th><th className="py-1 pr-3 text-right">รายได้</th><th className="py-1 pr-3">สถานะ</th><th></th>
+                      <th className="py-1 pr-3">ไรเดอร์</th>
+                      <th className="hidden sm:table-cell py-1 pr-3 text-right">รูป</th>
+                      <th className="py-1 pr-3 text-right">งาน</th>
+                      <th className="py-1 pr-3 text-right">อนุมัติ</th>
+                      <th className="hidden sm:table-cell py-1 pr-3 text-right">รายได้</th>
+                      <th className="py-1 pr-3">สถานะ</th><th></th>
                     </tr></thead>
                     <tbody>{g.jobs.map((j) => <JobRow key={j.id} j={j} onOpen={onOpenJob} onRenamed={load} />)}</tbody>
                   </table>
