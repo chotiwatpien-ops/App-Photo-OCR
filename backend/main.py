@@ -196,13 +196,47 @@ def remove_trip(trip_id: int):
     return {"deleted": trip_id, "picture": moved}
 
 
+_DRIVE_PIC = {}          # trip image fetched back from Drive, kept for this process only
+
+
 @app.get("/api/trips/{trip_id}/image")
 def trip_image(trip_id: int, part: int = 1):
     img = db.get_trip_image(trip_id, part)
     if not img:
-        raise HTTPException(404, "ไม่มีรูป (รูปถูกลบหลังอนุมัติ)")
+        # The blob is gone — approved, or freed from a row parked as a repeat. The picture
+        # itself never was: the row still points at its file on Drive. Fetching it back means a
+        # restored row arrives with its slip, and an approved trip can still be looked at.
+        img = _picture_from_drive(trip_id, part)
+    if not img:
+        raise HTTPException(404, "ไม่มีรูปเก็บไว้ และตามหาต้นฉบับบน Drive ไม่เจอ")
     return Response(content=img[0], media_type=img[1],
                     headers={"Cache-Control": "private, max-age=3600"})
+
+
+def _picture_from_drive(trip_id: int, part: int):
+    """(bytes, mime) from the row's own Drive file, or None. Never raises: a picture we cannot
+    fetch is a 404, not a broken page."""
+    key = (trip_id, part)
+    if key in _DRIVE_PIC:
+        return _DRIVE_PIC[key]
+    try:
+        url = db.trip_image_source(trip_id, part)
+        if not url:
+            return None
+        import re
+        m = re.search(r"/d/([^/?]+)", url)
+        fid = m.group(1) if m else url.rstrip("/").split("/")[-1]
+        if not fid:
+            return None
+        import roster
+        got = (roster._drive().download(fid), "image/jpeg")
+    except Exception as e:                                       # noqa: BLE001
+        logging.warning("ดึงรูป trip %s จาก Drive ไม่สำเร็จ: %s", trip_id, str(e)[:120])
+        return None
+    if len(_DRIVE_PIC) > 200:                    # a reviewer's session, not a cache layer
+        _DRIVE_PIC.clear()
+    _DRIVE_PIC[key] = got
+    return got
 
 
 @app.post("/api/jobs/{job_id}/commit")

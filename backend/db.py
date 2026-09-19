@@ -1266,6 +1266,21 @@ def get_trip_image(trip_id, part=1):
         return bytes(r[0]), r[1] or "image/jpeg"
 
 
+def trip_image_source(trip_id, part=1):
+    """Where the picture of this row lives on Drive, for when the database no longer holds it.
+
+    The database is not the picture store — Drive is. A blob is only there so a reviewer can see
+    the slip before deciding, and it is dropped the moment the row is approved. Rows parked as
+    repeats or voided keep theirs for no reason at all, which is most of what the database
+    weighs. Clearing them is only safe because this exists: the row still knows its Drive file,
+    so the picture can always be fetched again."""
+    with engine.begin() as c:
+        q = (select(trips.c.source_url).where(trips.c.merged_into == trip_id)
+             .order_by(trips.c.id).limit(1) if part == 2
+             else select(trips.c.source_url).where(trips.c.id == trip_id))
+        return c.execute(q).scalar()
+
+
 def update_trip(trip_id, fields: dict):
     allowed = set(TRIP_EDITABLE + _SYSTEM_FIELDS)
     vals = {k: v for k, v in fields.items() if k in allowed}

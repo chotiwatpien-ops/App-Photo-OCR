@@ -1,0 +1,44 @@
+name: คืนพื้นที่ฐานข้อมูล — ปล่อยรูปของแถวที่จบแล้ว (ไม่ลบแถว)
+
+# รูปถูกเก็บลงฐานข้อมูลเฉพาะแถวที่ต้องให้คนเปิดดูก่อนตัดสินใจ แล้วถูกล้างตอนอนุมัติ แต่แถวที่จบลง
+# ด้วยการถูกพักเป็นรูปซ้ำ ถูก void หรืออ่านไม่สำเร็จ ไม่มีใครล้างให้ — รูปจึงค้างตลอดไป และนั่นคือ
+# น้ำหนักส่วนใหญ่ของฐานข้อมูล ซึ่งสำคัญเพราะแพลน Free ของ Neon ให้ 0.5 GB ต่อโปรเจกต์ และเมื่อเต็ม
+# คำสั่งที่เพิ่มข้อมูลจะล้มเหลว = รอบ ingest เขียนแถวใหม่ไม่ได้
+#
+# ไม่ลบแถว ไม่แตะ Drive และไม่แตะรูปของแถวที่ยังรอคนตรวจหรือยังอ่านไม่เสร็จ
+# แถวที่ไม่มี source_url ให้ตามรอยกลับไป Drive จะถูกปล่อยไว้เสมอ
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "ทำจริง (ไม่ติ๊ก = รายงานอย่างเดียว ไม่แตะอะไร)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: free-blob-space
+  cancel-in-progress: false
+
+jobs:
+  free:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: Free the pictures nobody needs to look at
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TZ: Asia/Bangkok
+        run: |
+          if [ "${{ github.event.inputs.apply }}" = "true" ]; then
+            python free_blob_space.py --apply
+          else
+            python free_blob_space.py
+          fi
