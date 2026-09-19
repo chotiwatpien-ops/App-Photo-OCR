@@ -15,6 +15,10 @@ on:
         description: "ทำจริง (ไม่ติ๊ก = รายงานอย่างเดียว ไม่แตะอะไร)"
         type: boolean
         default: false
+      vacuum:
+        description: "เขียนตาราง trips ใหม่เพื่อคืนพื้นที่ซาก — ตารางถูกล็อก 1-3 นาที (ข้ามเองถ้ามีรอบ ingest รันอยู่)"
+        type: boolean
+        default: false
 
 concurrency:
   group: free-blob-space
@@ -37,8 +41,7 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           TZ: Asia/Bangkok
         run: |
-          if [ "${{ github.event.inputs.apply }}" = "true" ]; then
-            python free_blob_space.py --apply
-          else
-            python free_blob_space.py
-          fi
+          ARGS=""
+          if [ "${{ github.event.inputs.apply }}" = "true" ]; then ARGS="$ARGS --apply"; fi
+          if [ "${{ github.event.inputs.vacuum }}" = "true" ]; then ARGS="$ARGS --vacuum"; fi
+          python free_blob_space.py $ARGS

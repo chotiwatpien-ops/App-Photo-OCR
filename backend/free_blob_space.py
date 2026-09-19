@@ -109,6 +109,51 @@ def disk(log=print):
             log(f"   {name:<18}{size / MB:>8,.1f} MB")
 
 
+# ตารางที่ยอมให้เขียนใหม่ได้ — กันชื่อตารางแปลกปลอมหลุดเข้าไปใน SQL
+VACUUMABLE = ("trips", "pool_ocr_cache", "ingested_files")
+
+
+def _table_size(c, table):
+    from sqlalchemy import text
+    return c.execute(text("SELECT pg_total_relation_size(:t)"), {"t": table}).scalar() or 0
+
+
+def vacuum(table="trips", log=print, force=False):
+    """เขียนตารางใหม่ทั้งก้อนโดยไม่เอาซากมาด้วย แล้วคืนพื้นที่ให้ระบบจริงๆ
+
+    ปล่อยรูปเฉยๆ ไม่ทำให้ฐานข้อมูลเล็กลง: Postgres ไม่แก้แถวเดิมในที่เดิม ทุก UPDATE ทิ้งเวอร์ชันเก่า
+    ไว้ให้ autovacuum ซึ่งทำเครื่องหมายว่า "ใช้ซ้ำได้" แต่ไม่คืนไฟล์ให้ระบบ ตาราง trips จึงกิน
+    357 MB ทั้งที่ข้อมูลจริงมี 28.7 MB กับรูปเป็นๆ อีก 54.5 MB — ที่เหลือคือซากของรูปที่ถูกล้าง
+    ตอนอนุมัติ 25,670 ครั้ง
+
+    VACUUM FULL ล็อกทั้งตารางระหว่างทำ อ่านก็ไม่ได้ เขียนก็ไม่ได้ จึงห้ามทับรอบ ingest ที่กำลังรัน"""
+    from sqlalchemy import text
+    if db.engine.dialect.name != "postgresql":
+        log("(ข้ามการเขียนตารางใหม่ — ใช้ได้กับ Postgres เท่านั้น)")
+        return False
+    if table not in VACUUMABLE:
+        log(f"✗ ไม่ยอมแตะตาราง {table!r} — รู้จักแค่ {', '.join(VACUUMABLE)}")
+        return False
+    runs = db.list_ingest_runs(1)
+    if runs and not runs[0].get("finished_at") and not force:
+        log(f"✗ มีรอบ ingest กำลังรันอยู่ (เริ่ม {runs[0].get('started_at')}) — "
+            f"ไม่เขียนตารางใหม่ตอนนี้ เพราะจะล็อกจนรอบนั้นค้าง")
+        return False
+    with db.engine.connect() as c:
+        before = _table_size(c, table)
+    log("")
+    log(f"เขียนตาราง {table} ใหม่ ({before / MB:,.1f} MB) — ตารางถูกล็อกระหว่างนี้…")
+    # VACUUM ทำงานในทรานแซกชันไม่ได้ ต้อง autocommit
+    with db.engine.connect().execution_options(isolation_level="AUTOCOMMIT") as c:
+        c.execute(text(f"VACUUM (FULL, ANALYZE) {table}"))
+        after = _table_size(c, table)
+        total = c.execute(text("SELECT pg_database_size(current_database())")).scalar()
+    log(f"เสร็จแล้ว: {before / MB:,.1f} MB → {after / MB:,.1f} MB "
+        f"(คืนมา {(before - after) / MB:,.1f} MB)")
+    log(f"ฐานข้อมูลทั้งก้อนตอนนี้ {total / MB:,.1f} MB")
+    return True
+
+
 def run(apply=False, log=print):
     t = db.trips.c
     s = survey()
@@ -147,11 +192,18 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="ปล่อยรูปของแถวที่จบแล้ว คืนพื้นที่ฐานข้อมูล (ไม่ลบแถว)")
     ap.add_argument("--apply", action="store_true", help="ทำจริง (ไม่ใส่ = รายงานอย่างเดียว)")
     ap.add_argument("--no-disk", action="store_true", help="ข้ามการวัดว่าอะไรกินพื้นที่")
+    ap.add_argument("--vacuum", action="store_true",
+                    help="เขียนตาราง trips ใหม่เพื่อคืนพื้นที่ซาก (ล็อกตารางชั่วคราว)")
+    ap.add_argument("--vacuum-table", default="trips", help=f"ตารางที่จะเขียนใหม่ ({', '.join(VACUUMABLE)})")
+    ap.add_argument("--force", action="store_true", help="เขียนตารางใหม่แม้มีรอบ ingest กำลังรัน")
     a = ap.parse_args(argv)
     db.init_db()
     if not a.no_disk:
         disk()
     run(apply=a.apply)
+    if a.vacuum:
+        vacuum(table=a.vacuum_table, force=a.force)
+        disk()
     return 0
 
 
