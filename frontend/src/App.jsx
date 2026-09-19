@@ -135,8 +135,20 @@ export default function App() {
           )}
         </div>
       </header>
+      {/* under 768px the nav above is hidden, which left the queue, the data view and the
+          dashboard unreachable from a phone — the devices the queue is actually reviewed on.
+          Same buttons, same band, laid out for a thumb. */}
+      <nav className="md:hidden bg-slate-900 text-white px-3 pb-2 flex gap-1 overflow-x-auto text-sm">
+        {NAV.map(([k, label]) => (
+          <button key={k} onClick={() => { setActiveJob(null); setView(k) }}
+            className={`shrink-0 min-h-11 px-3 rounded-lg ${view === k && !activeJob
+              ? 'bg-white/15 text-white' : 'text-slate-300'}`}>
+            {label}
+          </button>
+        ))}
+      </nav>
 
-      <main className="max-w-screen-2xl mx-auto p-6">
+      <main className="max-w-screen-2xl mx-auto p-4 sm:p-6">
         {activeJob ? (
           <ReviewGrid
             job={activeJob}

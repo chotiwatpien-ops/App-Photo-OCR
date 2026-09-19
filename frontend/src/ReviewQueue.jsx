@@ -168,7 +168,8 @@ function DiscardedLog() {
   return (
     <section className="bg-white rounded-xl border border-slate-200">
       <div className="flex items-center justify-between gap-3 px-5 py-3">
-        <button onClick={() => setOpen(!open)} className="text-left text-sm flex-1 min-w-0">
+        <button onClick={() => setOpen(!open)} aria-expanded={open}
+          className="min-h-11 text-left text-sm flex-1 min-w-0">
           <span className="text-slate-400">{open ? '▾' : '▸'}</span>
           <span className="ml-2 text-slate-600">รูปซ้ำที่ระบบทิ้งเอง</span>
           <span className="ml-2 font-semibold">{rows.length}</span>
@@ -180,17 +181,18 @@ function DiscardedLog() {
         </button>
         <div className="flex items-center gap-3 text-xs shrink-0">
           {hidden > 0 && !everything && (
-            <button onClick={() => { load(true); setOpen(true) }} className="text-blue-600 hover:underline">
+            <button onClick={() => { load(true); setOpen(true) }}
+              className="min-h-11 px-1 text-blue-600 hover:underline">
               ดูของเก่าอีก {hidden}
             </button>
           )}
           {everything && (
-            <button onClick={() => load(false)} className="text-blue-600 hover:underline">
+            <button onClick={() => load(false)} className="min-h-11 px-1 text-blue-600 hover:underline">
               ดูเฉพาะของใหม่
             </button>
           )}
           {rows.length > 0 && !everything && (
-            <button onClick={clear} className="text-slate-400 hover:text-slate-700">
+            <button onClick={clear} className="min-h-11 px-1 text-slate-400 hover:text-slate-700">
               เคลียร์ เริ่มนับใหม่
             </button>
           )}
@@ -212,7 +214,7 @@ function DiscardedLog() {
                   <td className="py-1.5 pr-3 text-right tabular-nums">฿{(t.net_earnings ?? 0).toLocaleString()}</td>
                   <td className="py-1.5 pr-3 text-slate-500 text-xs">{(t.note || '').split(' | ')[0]}</td>
                   <td className="py-1.5 text-right">
-                    <button onClick={() => restore(t)} className="text-blue-600 hover:underline text-xs">กู้กลับเข้าคิว</button>
+                    <button onClick={() => restore(t)} className="px-1 py-2 text-blue-600 hover:underline text-xs">กู้กลับเข้าคิว</button>
                   </td>
                 </tr>
               ))}
@@ -224,6 +226,12 @@ function DiscardedLog() {
   )
 }
 
+// Reviewing happens in the gaps between other work, on a phone as often as at a desk, so the
+// queue has to remember where it was put down. The row id survives a reload; the index does not.
+const PLACE = 'reviewQueue.at'
+const remember = (id) => { try { sessionStorage.setItem(PLACE, String(id)) } catch { /* private mode */ } }
+const recall = () => { try { return Number(sessionStorage.getItem(PLACE)) } catch { return 0 } }
+
 export default function ReviewQueue({ onOpenJob }) {
   const [rows, setRows] = useState(null)
   const [issues, setIssues] = useState([])
@@ -231,11 +239,16 @@ export default function ReviewQueue({ onOpenJob }) {
   const [busy, setBusy] = useState(false)
   const [at, setAt] = useState(0)          // which row is open in the pane
   const [zoom, setZoom] = useState(false)
+  const [queueOpen, setQueueOpen] = useState(false)   // the list is a panel on small screens
   const listRef = useRef(null)
 
   const load = useCallback(() => {
     api.reviewQueue()
-      .then((r) => { setRows(r.rows); setIssues(r.issues || []); setAt(0) })
+      .then((r) => {
+        setRows(r.rows); setIssues(r.issues || [])
+        const back = r.rows.findIndex((x) => x.id === recall())
+        setAt(back < 0 ? 0 : back)
+      })
       .catch((e) => setMsg(e.message))
   }, [])
   useEffect(() => { load() }, [load])
@@ -319,7 +332,8 @@ export default function ReviewQueue({ onOpenJob }) {
 
   useEffect(() => {
     listRef.current?.querySelector('[data-sel="1"]')?.scrollIntoView({ block: 'nearest' })
-  }, [at])
+    if (cur) remember(cur.id)
+  }, [at, cur])
 
   const counts = useMemo(() => {
     const c = { fail: 0, no_data: 0, dup: 0, nodate: 0, ready: 0 }
@@ -363,7 +377,7 @@ export default function ReviewQueue({ onOpenJob }) {
             {counts.ready > 0 && <span className="rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5">พร้อมอนุมัติ {counts.ready}</span>}
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 w-full lg:w-auto lg:gap-3">
           <span className="text-xs text-slate-400 hidden lg:inline">
             <kbd className="border rounded px-1">J</kbd>/<kbd className="border rounded px-1">K</kbd> เลื่อน ·
             <kbd className="border rounded px-1 ml-1">A</kbd> อนุมัติ ·
@@ -372,10 +386,13 @@ export default function ReviewQueue({ onOpenJob }) {
             <kbd className="border rounded px-1 ml-1">E</kbd> ช่องที่ต้องกรอก
           </span>
           <button onClick={approveAllPassing} disabled={busy || !counts.ready}
-            className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-lg px-4 py-2 text-sm font-medium">
+            className="flex-1 lg:flex-none min-h-11 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-lg px-4 py-2 text-sm font-medium">
             {busy ? 'กำลังอนุมัติ…' : `✓ อนุมัติ ${counts.ready} แถวที่ผ่านเช็ค`}
           </button>
-          <button onClick={load} className="text-sm text-blue-600 hover:underline">รีเฟรช</button>
+          <button onClick={load}
+            className="min-h-11 shrink-0 rounded-lg border border-slate-300 bg-white px-3 text-sm text-blue-600 hover:border-blue-400">
+            รีเฟรช
+          </button>
         </div>
       </div>
       {msg && <p className="text-sm text-red-600">⚠️ {msg}</p>}
@@ -386,25 +403,35 @@ export default function ReviewQueue({ onOpenJob }) {
         </div>
       ) : (
         <div className="grid gap-4 lg:grid-cols-[20rem_1fr] items-start">
-          {/* the queue — reason first, because that is what decides the next move */}
+          {/* the queue — reason first, because that is what decides the next move.
+              On a phone it is navigation, not the work: it folds away so the row under review
+              owns the screen, and reopens on demand. */}
+          <div className="min-w-0">
+            <button onClick={() => setQueueOpen((o) => !o)} aria-expanded={queueOpen}
+              className="lg:hidden w-full min-h-11 flex items-center justify-between gap-2 rounded-xl border border-slate-200 bg-white px-4 text-sm">
+              <span className="text-slate-600">เลือกแถวจากรายการ</span>
+              <span className="text-slate-400">{queueOpen ? 'ปิดรายการ ▴' : 'ดูรายการ ▾'}</span>
+            </button>
           <div ref={listRef}
-            className="bg-white rounded-xl border border-slate-200 overflow-y-auto max-h-[38vh] lg:max-h-[78vh]">
+            className={`${queueOpen ? 'block' : 'hidden'} lg:block mt-2 lg:mt-0 bg-white rounded-xl border border-slate-200 overflow-y-auto max-h-[60vh] lg:max-h-[78vh]`}>
             {groups.map((g) => (
               <div key={g.job_id}>
                 <div className="sticky top-0 bg-slate-50 border-y border-slate-200 px-3 py-1.5 z-10">
                   <p className="text-sm font-medium truncate">{g.driver_name}</p>
                   <p className="text-xs text-slate-400">
                     job #{g.job_id} · รอ {g.rows.length}
-                    <button onClick={() => onOpenJob(g.job_id)} className="ml-2 text-blue-600 hover:underline">เปิดทั้ง job</button>
+                    <button onClick={() => onOpenJob(g.job_id)}
+                      className="ml-2 inline-block -my-1 px-1 py-1.5 text-blue-600 hover:underline">เปิดทั้ง job</button>
                   </p>
                 </div>
                 {g.rows.map((t) => {
                   const w = why(t)
                   const sel = t._i === at
                   return (
-                    <button key={t.id} data-sel={sel ? '1' : '0'} onClick={() => setAt(t._i)}
-                      className={`w-full text-left px-3 py-2 border-b border-slate-100 flex items-center gap-2
-                        ${sel ? 'bg-blue-50 border-l-4 border-l-blue-500 pl-2' : 'hover:bg-slate-50 border-l-4 border-l-transparent pl-2'}`}>
+                    <button key={t.id} data-sel={sel ? '1' : '0'}
+                      onClick={() => { setAt(t._i); setQueueOpen(false) }}
+                      className={`w-full text-left px-3 py-2.5 border-b border-slate-100 flex items-center gap-2
+                        ${sel ? 'bg-blue-50 ring-1 ring-inset ring-blue-300' : 'hover:bg-slate-50'}`}>
                       <img src={`/api/trips/${t.id}/image`} alt="" loading="lazy"
                         className="h-10 w-10 shrink-0 object-cover rounded border border-slate-200"
                         onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} />
@@ -419,6 +446,7 @@ export default function ReviewQueue({ onOpenJob }) {
               </div>
             ))}
           </div>
+          </div>
 
           {/* the one being reviewed */}
           {cur && (() => {
@@ -431,17 +459,18 @@ export default function ReviewQueue({ onOpenJob }) {
             return (
               <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
                 <div className="flex items-start justify-between gap-3 flex-wrap">
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <p className="font-medium">
                       {cur.driver_name}
-                      <span className="text-slate-400 font-normal text-sm ml-2">{cur.file_name}</span>
+                      <span className="block truncate lg:inline lg:ml-2 text-slate-400 font-normal text-sm">{cur.file_name}</span>
                     </p>
                     <p className="text-xs text-slate-400">
                       job #{cur.job_id} · {cur.booking_code || 'ไม่มี booking code'} ·
-                      <button onClick={() => onOpenJob(cur.job_id)} className="ml-1 text-blue-600 hover:underline">เปิดทั้ง job</button>
+                      <button onClick={() => onOpenJob(cur.job_id)}
+                        className="ml-1 inline-block -my-1 px-1 py-1.5 text-blue-600 hover:underline">เปิดทั้ง job</button>
                     </p>
                   </div>
-                  <p className="text-xs text-slate-400 tabular-nums">{at + 1} / {rows.length}</p>
+                  <p className="hidden lg:block text-xs text-slate-400 tabular-nums">{at + 1} / {rows.length}</p>
                 </div>
 
                 <div className={`rounded-lg border px-3 py-2 ${BANNER[w.tone]}`}>
@@ -457,15 +486,19 @@ export default function ReviewQueue({ onOpenJob }) {
                 <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_16rem]">
                   {/* the picture, at a size you can actually read */}
                   <button onClick={() => setZoom(true)} className="block w-full" title="กดเพื่อขยาย (Z)">
-                    <div className="flex gap-2 justify-center bg-slate-50 rounded-lg border border-slate-200 p-2">
+                    {/* two halves side by side is unreadable under ~640px: stack them there */}
+                    <div className="relative flex flex-col sm:flex-row gap-2 justify-center bg-slate-50 rounded-lg border border-slate-200 p-2">
                       <img src={`/api/trips/${cur.id}/image`} alt=""
-                        className="max-h-[52vh] w-auto object-contain rounded"
+                        className="mx-auto max-h-[46vh] sm:max-h-[52vh] w-auto object-contain rounded"
                         onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} />
                       {two && (
                         <img src={`/api/trips/${cur.id}/image?part=2`} alt=""
-                          className="max-h-[52vh] w-auto object-contain rounded"
+                          className="mx-auto max-h-[46vh] sm:max-h-[52vh] w-auto object-contain rounded"
                           onError={(e) => { e.currentTarget.style.display = 'none' }} />
                       )}
+                      <span className="lg:hidden absolute bottom-3 right-3 rounded-md bg-slate-900/70 px-2 py-1 text-[11px] font-medium text-white">
+                        แตะเพื่อขยาย
+                      </span>
                     </div>
                   </button>
 
@@ -498,19 +531,21 @@ export default function ReviewQueue({ onOpenJob }) {
                       onSave={(v) => edit(cur, 'passenger_total', v)}
                       hint="ยอดที่แกร็บคิดค่าบริการ ไม่ใช่ยอดรวมที่ผู้โดยสารจ่าย" />
 
-                    <div className="flex gap-2 pt-1">
+                    {/* on a touch screen these two live in the bar pinned at the bottom instead,
+                        where a thumb can reach them without scrolling past the picture */}
+                    <div className="hidden lg:flex gap-2 pt-1">
                       <button onClick={() => approve(cur)} disabled={!cur.trip_date}
                         title={cur.trip_date ? 'อนุมัติ (A)' : 'ต้องใส่วันที่ก่อน'}
                         className="flex-1 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-lg px-3 py-2 text-sm font-medium">
                         อนุมัติ <span className="opacity-60 text-xs">A</span>
                       </button>
                       <button onClick={() => remove(cur)} title="ลบ (X)"
-                        className="rounded-lg border border-slate-300 hover:border-red-400 hover:text-red-600 px-3 py-2 text-sm">
+                        className="rounded-lg border border-red-200 text-red-700 hover:border-red-400 hover:bg-red-50 px-3 py-2 text-sm">
                         ลบ <span className="opacity-50 text-xs">X</span>
                       </button>
                     </div>
                     <button onClick={() => confirm(`อนุมัติทุกแถวที่เหลือของ ${cur.driver_name}?`) && approveRest(cur.job_id, cur.driver_name)}
-                      className="w-full text-xs text-emerald-700 hover:underline pt-0.5">
+                      className="w-full min-h-11 lg:min-h-0 text-xs text-emerald-700 hover:underline pt-0.5">
                       อนุมัติที่เหลือทั้งหมดของ {cur.driver_name}
                     </button>
                   </div>
@@ -530,19 +565,59 @@ export default function ReviewQueue({ onOpenJob }) {
         </div>
       )}
 
+      {/* Touch has no J/K/A/X. Everything the keyboard does for a reviewer at a desk is pinned
+          here instead, inside thumb reach, and clear of the home indicator. */}
+      {cur && (
+        <>
+          <div className="h-32 lg:hidden" aria-hidden="true" />
+          <div className="lg:hidden fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur
+                          px-3 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] space-y-2">
+            <div className="flex items-center gap-2">
+              <button onClick={() => setAt((i) => Math.max(i - 1, 0))} disabled={at === 0}
+                className="min-h-11 flex-1 rounded-lg border border-slate-300 bg-white text-sm disabled:opacity-40">
+                ก่อนหน้า
+              </button>
+              <span className="min-w-20 text-center text-sm tabular-nums text-slate-500">
+                {at + 1} / {rows.length}
+              </span>
+              <button onClick={() => setAt((i) => Math.min(i + 1, rows.length - 1))} disabled={at >= rows.length - 1}
+                className="min-h-11 flex-1 rounded-lg border border-slate-300 bg-white text-sm disabled:opacity-40">
+                ถัดไป
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => approve(cur)} disabled={!cur.trip_date}
+                className="min-h-12 flex-1 rounded-lg bg-emerald-600 text-white text-sm font-medium disabled:bg-slate-300">
+                {cur.trip_date ? 'อนุมัติ' : 'ต้องใส่วันที่ก่อน'}
+              </button>
+              <button onClick={() => remove(cur)}
+                className="min-h-12 rounded-lg border border-red-200 bg-white px-5 text-sm font-medium text-red-700">
+                ลบ
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
       {zoom && cur && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-6" onClick={() => setZoom(false)}>
-          <div className="bg-white rounded-xl p-3 max-h-full overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-2 px-1 gap-6">
-              <span className="text-sm text-slate-600">
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-2 sm:p-6"
+          onClick={() => setZoom(false)}>
+          {/* zooming is what a small screen needs MOST, so here the picture takes the whole of it */}
+          <div className="bg-white rounded-xl p-2 sm:p-3 w-full sm:w-auto max-h-full overflow-auto"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-2 px-1 gap-3">
+              <span className="text-sm text-slate-600 truncate">
                 {cur.driver_name} · {cur.file_name}{cur.booking_code ? ` · ${cur.booking_code}` : ''}
               </span>
-              <button onClick={() => setZoom(false)} className="text-slate-400 hover:text-slate-700 text-xl px-2">✕</button>
+              <button onClick={() => setZoom(false)} aria-label="ปิด"
+                className="min-h-11 min-w-11 shrink-0 text-slate-400 hover:text-slate-700 text-xl">✕</button>
             </div>
-            <div className="flex gap-3">
-              <img src={`/api/trips/${cur.id}/image`} alt="" className="max-w-[44vw] max-h-[82vh] rounded-lg" />
+            <div className="flex flex-col sm:flex-row gap-3">
+              <img src={`/api/trips/${cur.id}/image`} alt=""
+                className="w-full sm:w-auto sm:max-w-[44vw] max-h-[70vh] sm:max-h-[82vh] object-contain rounded-lg" />
               {(cur.note || '').startsWith('รวม 2 รูป') && (
-                <img src={`/api/trips/${cur.id}/image?part=2`} alt="" className="max-w-[44vw] max-h-[82vh] rounded-lg"
+                <img src={`/api/trips/${cur.id}/image?part=2`} alt=""
+                  className="w-full sm:w-auto sm:max-w-[44vw] max-h-[70vh] sm:max-h-[82vh] object-contain rounded-lg"
                   onError={(e) => { e.currentTarget.style.display = 'none' }} />
               )}
             </div>
