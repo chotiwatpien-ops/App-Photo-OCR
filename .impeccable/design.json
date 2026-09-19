@@ -1,0 +1,183 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-19T22:10:00+07:00",
+  "title": "Design System: Rider Photo OCR",
+  "extensions": {
+    "note": "ทุกค่าในไฟล์นี้วัดจากแอปที่รันจริง (Tailwind 4 emit เป็น OKLCH) ไม่ได้คัดลอกจากตารางสีมาตรฐาน · tonalRamp บันทึกเฉพาะขั้นที่โปรเจกต์ใช้จริง ไม่เติมขั้นที่ไม่มีอยู่",
+    "colorMeta": {
+      "ink": {
+        "role": "neutral",
+        "displayName": "หมึก (Ink)",
+        "canonical": "oklch(0.279 0.041 260.031)",
+        "tonalRamp": ["oklch(0.208 0.042 265.755)", "oklch(0.279 0.041 260.031)", "oklch(0.446 0.043 257.281)", "oklch(0.554 0.046 257.417)", "oklch(0.704 0.04 256.788)", "oklch(0.869 0.022 252.894)", "oklch(0.929 0.013 255.508)", "oklch(0.968 0.007 247.896)"]
+      },
+      "ground": { "role": "neutral", "displayName": "พื้นจม (Ground)", "canonical": "oklch(0.968 0.007 247.896)" },
+      "hairline": { "role": "neutral", "displayName": "เส้นผม (Hairline)", "canonical": "oklch(0.929 0.013 255.508)" },
+      "chrome": { "role": "neutral", "displayName": "แถบเครื่อง (Chrome)", "canonical": "oklch(0.208 0.042 265.755)" },
+      "commit": {
+        "role": "primary",
+        "displayName": "เขียวลงมือ (Commit Green)",
+        "canonical": "oklch(0.596 0.145 163.225)",
+        "tonalRamp": ["oklch(0.508 0.118 165.612)", "oklch(0.596 0.145 163.225)", "oklch(0.696 0.17 162.48)", "oklch(0.95 0.052 163.051)", "oklch(0.979 0.021 166.113)"]
+      },
+      "settled": { "role": "primary", "displayName": "เขียวลงตัว (Settled)", "canonical": "oklch(0.508 0.118 165.612)" },
+      "decide": {
+        "role": "secondary",
+        "displayName": "แดงต้องตัดสิน (Decide Red)",
+        "canonical": "oklch(0.505 0.213 27.518)",
+        "tonalRamp": ["oklch(0.505 0.213 27.518)", "oklch(0.936 0.032 17.717)", "oklch(0.971 0.013 17.38)"]
+      },
+      "incomplete": {
+        "role": "secondary",
+        "displayName": "เหลืองข้อมูลไม่พอ (Incomplete Amber)",
+        "canonical": "oklch(0.555 0.163 48.998)",
+        "tonalRamp": ["oklch(0.555 0.163 48.998)", "oklch(0.769 0.188 70.08)", "oklch(0.879 0.169 91.605)", "oklch(0.962 0.059 95.617)", "oklch(0.987 0.022 95.277)"]
+      },
+      "wayfinding": {
+        "role": "tertiary",
+        "displayName": "น้ำเงินทางเดิน (Wayfinding Blue)",
+        "canonical": "oklch(0.546 0.245 262.881)",
+        "tonalRamp": ["oklch(0.546 0.245 262.881)", "oklch(0.623 0.214 259.815)", "oklch(0.809 0.105 251.813)", "oklch(0.932 0.032 255.585)", "oklch(0.97 0.014 254.604)"]
+      },
+      "waiting": {
+        "role": "tertiary",
+        "displayName": "ฟ้ารอผล (Waiting Sky)",
+        "canonical": "oklch(0.443 0.11 240.79)",
+        "tonalRamp": ["oklch(0.443 0.11 240.79)", "oklch(0.977 0.013 236.62)"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "ตัวเลข KPI ในหน้า Dashboard เท่านั้น ใช้ tabular-nums เสมอ" },
+      "headline": { "displayName": "Headline", "purpose": "ชื่อสัปดาห์บนหัวการ์ด" },
+      "title": { "displayName": "Title", "purpose": "หัวข้อของแต่ละส่วนในการ์ด" },
+      "body": { "displayName": "Body", "purpose": "เนื้อหาหลักและทุกแถวในตาราง" },
+      "label": { "displayName": "Label", "purpose": "หัวตาราง ป้ายสถานะ คำอธิบายใต้ช่องกรอก" },
+      "micro": { "displayName": "Micro", "purpose": "ข้อมูลที่อ่านเมื่อสงสัย เช่น ชื่อไฟล์ เลข job" }
+    },
+    "shadows": [
+      { "name": "none", "value": "none", "purpose": "ค่าเริ่มต้นของทุกพื้นผิว ความลึกมาจากเส้นขอบ 1px ไม่ใช่เงา" },
+      { "name": "legacy-sm", "value": "0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1)", "purpose": "ของค้างจากรุ่นแรก เหลือ 7 จุดในโค้ด ถอดออกได้เมื่อแก้ไฟล์นั้น — ห้ามใช้กับของใหม่" },
+      { "name": "overlay-scrim", "value": "background: rgb(0 0 0 / 0.8)", "purpose": "ฉากหลังของกล่องขยายรูป ที่เดียวที่ตั้งใจสร้างความลึกจริง" }
+    ],
+    "motion": [
+      { "name": "none", "value": "no transition", "purpose": "ค่าเริ่มต้น หน้าจอนี้ไม่มีระบบการเคลื่อนไหว สถานะเปลี่ยนทันที" },
+      { "name": "progress-fill", "value": "transition: all", "purpose": "จุดเดียวที่มีการเคลื่อนไหว — แถบความคืบหน้าของรอบดูดรูป ซึ่งสื่อว่ามีอะไรกำลังเดินอยู่จริง" }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Commit Button",
+      "kind": "button",
+      "refersTo": "button-commit",
+      "description": "การกระทำที่เกิดผลจริง — อนุมัติ บันทึก ดาวน์โหลด หนึ่งหน้าจอควรมีไม่เกินหนึ่งถึงสองปุ่ม",
+      "html": "<button class=\"ds-btn-commit\">✓ อนุมัติ 2 แถวที่ผ่านเช็ค</button>",
+      "css": ".ds-btn-commit { min-height: 44px; background: oklch(0.596 0.145 163.225); color: #fff; border: none; border-radius: 8px; padding: 8px 16px; font: 500 14px \"Segoe UI\", \"Leelawadee UI\", Tahoma, sans-serif; cursor: pointer; } .ds-btn-commit:hover { background: oklch(0.508 0.118 165.612); } .ds-btn-commit:focus-visible { outline: 2px solid oklch(0.546 0.245 262.881); outline-offset: 2px; } .ds-btn-commit:disabled { background: oklch(0.869 0.022 252.894); cursor: default; }"
+    },
+    {
+      "name": "Quiet Button",
+      "kind": "button",
+      "refersTo": "button-quiet",
+      "description": "การกระทำที่ไม่เปลี่ยนข้อมูล — รีเฟรช ก่อนหน้า ถัดไป",
+      "html": "<button class=\"ds-btn-quiet\">ถัดไป</button>",
+      "css": ".ds-btn-quiet { min-height: 44px; background: #fff; color: oklch(0.546 0.245 262.881); border: 1px solid oklch(0.869 0.022 252.894); border-radius: 8px; padding: 0 12px; font: 400 14px \"Segoe UI\", \"Leelawadee UI\", Tahoma, sans-serif; cursor: pointer; } .ds-btn-quiet:hover { border-color: oklch(0.623 0.214 259.815); } .ds-btn-quiet:disabled { opacity: 0.4; cursor: default; }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "ลบแถวออกจากระบบ แดงตั้งแต่ยังไม่แตะ ไม่รอ hover เพราะนิ้วไม่มี hover",
+      "html": "<button class=\"ds-btn-danger\">ลบ</button>",
+      "css": ".ds-btn-danger { min-height: 48px; background: #fff; color: oklch(0.505 0.213 27.518); border: 1px solid oklch(0.936 0.032 17.717); border-radius: 8px; padding: 0 20px; font: 500 14px \"Segoe UI\", \"Leelawadee UI\", Tahoma, sans-serif; cursor: pointer; } .ds-btn-danger:hover { background: oklch(0.971 0.013 17.38); border-color: oklch(0.505 0.213 27.518); }"
+    },
+    {
+      "name": "State Chip",
+      "kind": "chip",
+      "refersTo": "chip-decide",
+      "description": "ป้ายบอกสถานะ อ่านอย่างเดียว กดไม่ได้ · แคปซูลคือสัญญาณว่าอันนี้ไม่ใช่ปุ่ม",
+      "html": "<span class=\"ds-chip ds-chip-decide\">เลขขัดกัน</span> <span class=\"ds-chip ds-chip-incomplete\">ข้อมูลไม่พอ</span> <span class=\"ds-chip ds-chip-settled\">พร้อมอนุมัติ</span>",
+      "css": ".ds-chip { display: inline-block; white-space: nowrap; border-radius: 9999px; padding: 2px 8px; font: 400 12px \"Segoe UI\", \"Leelawadee UI\", Tahoma, sans-serif; } .ds-chip-decide { background: oklch(0.936 0.032 17.717); color: oklch(0.505 0.213 27.518); } .ds-chip-incomplete { background: oklch(0.962 0.059 95.617); color: oklch(0.555 0.163 48.998); } .ds-chip-settled { background: oklch(0.95 0.052 163.051); color: oklch(0.508 0.118 165.612); }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "ภาชนะของทุกอย่าง ขาวบนพื้นเทา ขอบบาง ไม่มีเงา และไม่ซ้อนกัน",
+      "html": "<section class=\"ds-card\"><h2 class=\"ds-card-title\">ดูดรูปจาก Google Drive</h2><p class=\"ds-card-body\">รอบล่าสุด 2026-09-19 20:08 · รูปใหม่ 59 · อนุมัติอัตโนมัติ 36</p></section>",
+      "css": ".ds-card { background: #fff; border: 1px solid oklch(0.929 0.013 255.508); border-radius: 12px; padding: 20px; font-family: \"Segoe UI\", \"Leelawadee UI\", Tahoma, sans-serif; } .ds-card-title { margin: 0; font: 600 16px \"Segoe UI\", \"Leelawadee UI\", Tahoma, sans-serif; color: oklch(0.279 0.041 260.031); } .ds-card-body { margin: 4px 0 0; font-size: 14px; color: oklch(0.446 0.043 257.281); }"
+    },
+    {
+      "name": "Figure Input",
+      "kind": "input",
+      "refersTo": "input-figure",
+      "description": "ช่องแก้ตัวเลขในคิวตรวจ · สถานะ asking คือช่องที่ระบบยังขาดข้อมูลและจะเลิกร้องขอทันทีที่เริ่มพิมพ์",
+      "html": "<label class=\"ds-field\"><span class=\"ds-field-label\">ค่าโดยสารพื้นฐาน</span><input class=\"ds-input\" value=\"77\"></label><label class=\"ds-field\"><span class=\"ds-field-label\">วันที่ <b class=\"ds-ask\">· ต้องกรอกก่อนอนุมัติ</b></span><input class=\"ds-input ds-input-asking\" placeholder=\"\"></label>",
+      "css": ".ds-field { display: block; margin-bottom: 10px; font-family: \"Segoe UI\", \"Leelawadee UI\", Tahoma, sans-serif; } .ds-field-label { font-size: 12px; color: oklch(0.554 0.046 257.417); } .ds-ask { color: oklch(0.505 0.213 27.518); font-weight: 500; } .ds-input { display: block; width: 100%; margin-top: 2px; padding: 6px 8px; font-size: 14px; font-variant-numeric: tabular-nums; background: #fff; border: 1px solid oklch(0.929 0.013 255.508); border-radius: 8px; outline: none; } .ds-input:focus { border-color: oklch(0.623 0.214 259.815); box-shadow: 0 0 0 2px oklch(0.932 0.032 255.585); } .ds-input-asking { background: oklch(0.971 0.013 17.38); border-color: oklch(0.505 0.213 27.518); }"
+    },
+    {
+      "name": "Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "แถบหัวเว็บ ต่ำกว่า 768px ย้ายลงมาเป็นแถวเลื่อนแนวนอน ไม่ใช้เมนูแฮมเบอร์เกอร์",
+      "html": "<nav class=\"ds-nav\"><button class=\"ds-nav-item\">หน้าหลัก</button><button class=\"ds-nav-item ds-nav-item-active\">คิวตรวจ (6)</button><button class=\"ds-nav-item\">ข้อมูลทั้งหมด</button><button class=\"ds-nav-item\">Dashboard</button></nav>",
+      "css": ".ds-nav { display: flex; gap: 4px; background: oklch(0.208 0.042 265.755); padding: 8px 12px; overflow-x: auto; } .ds-nav-item { flex-shrink: 0; min-height: 44px; padding: 0 12px; border: none; background: transparent; color: oklch(0.869 0.022 252.894); border-radius: 8px; font: 400 14px \"Segoe UI\", \"Leelawadee UI\", Tahoma, sans-serif; cursor: pointer; } .ds-nav-item:hover { background: rgb(255 255 255 / 0.1); color: #fff; } .ds-nav-item-active { background: rgb(255 255 255 / 0.15); color: #fff; }"
+    },
+    {
+      "name": "Queue Row",
+      "kind": "custom",
+      "refersTo": "row-selected",
+      "description": "องค์ประกอบที่นิยามแอปนี้ · เหตุผลมาก่อนชื่อไฟล์เสมอ เพราะสิ่งที่ต้องรู้ก่อนคือแถวนี้ต้องการอะไร",
+      "html": "<button class=\"ds-row ds-row-selected\"><span class=\"ds-row-thumb\"></span><span class=\"ds-row-main\"><span class=\"ds-chip ds-chip-decide\">เลขขัดกัน</span><span class=\"ds-row-file\">Narumol = 220_142806+142807_฿81.jpg</span></span><span class=\"ds-row-money\">฿81</span></button>",
+      "css": ".ds-row { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 10px 12px; background: #fff; border: none; border-bottom: 1px solid oklch(0.968 0.007 247.896); font-family: \"Segoe UI\", \"Leelawadee UI\", Tahoma, sans-serif; cursor: pointer; } .ds-row:hover { background: oklch(0.984 0.003 247.858); } .ds-row-selected { background: oklch(0.97 0.014 254.604); box-shadow: inset 0 0 0 1px oklch(0.809 0.105 251.813); } .ds-row-thumb { flex: 0 0 auto; width: 40px; height: 40px; border-radius: 4px; border: 1px solid oklch(0.929 0.013 255.508); background: oklch(0.968 0.007 247.896); } .ds-row-main { flex: 1 1 auto; min-width: 0; } .ds-row-file { display: block; margin-top: 2px; font-size: 12px; color: oklch(0.704 0.04 256.788); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-row-money { flex: 0 0 auto; font-size: 14px; font-variant-numeric: tabular-nums; color: oklch(0.446 0.043 257.281); } .ds-chip { display: inline-block; white-space: nowrap; border-radius: 9999px; padding: 2px 8px; font-size: 11px; } .ds-chip-decide { background: oklch(0.936 0.032 17.717); color: oklch(0.505 0.213 27.518); }"
+    },
+    {
+      "name": "Reason Banner",
+      "kind": "custom",
+      "refersTo": "banner-decide",
+      "description": "บรรทัดแรกคือข้อเท็จจริงพร้อมตัวเลข บรรทัดที่สองคือสิ่งที่ต้องทำต่อ — เหตุผลที่คนไม่ต้องเดาว่าทำไมระบบถึงหยุด",
+      "html": "<div class=\"ds-banner ds-banner-decide\"><p class=\"ds-banner-head\">รายได้ 81 ≠ พื้นฐาน 77 + โบนัส 0 + เทอร์โบ 0 = 77</p><p class=\"ds-banner-body\">ต่างกัน 4 บาท — เทียบกับรูปแล้วแก้ช่องที่ผิด</p></div>",
+      "css": ".ds-banner { border: 1px solid; border-radius: 8px; padding: 8px 12px; font-family: \"Segoe UI\", \"Leelawadee UI\", Tahoma, sans-serif; } .ds-banner-head { margin: 0; font-size: 14px; font-weight: 500; } .ds-banner-body { margin: 2px 0 0; font-size: 12px; opacity: 0.8; } .ds-banner-decide { background: oklch(0.971 0.013 17.38); border-color: oklch(0.936 0.032 17.717); color: oklch(0.505 0.213 27.518); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "โต๊ะตรวจหลักฐาน (The Audit Desk)",
+    "overview": "หน้าจอนี้ไม่ได้มีไว้ให้ชื่นชม มันมีไว้ให้คนตัดสินใจเรื่องเงินของคนอื่นได้เร็วและไม่พลาด ทุกแถวที่ขึ้นมาคือข้อกล่าวอ้างว่า 'ไรเดอร์คนนี้วิ่งเที่ยวนี้ ได้เท่านี้' และหน้าที่ของหน้าจอคือวางหลักฐานไว้ข้างข้อกล่าวอ้างนั้น — รูปสลิปจริง ตัวเลขที่ AI อ่านได้ และเหตุผลว่าทำไมระบบถึงไม่กล้าตัดสินเอง — แล้วถอยออกมาให้คนตัดสิน ระบบจึงเงียบโดยตั้งใจ พื้นเทาอ่อน การ์ดขาว เส้นขอบบาง ไม่มีเงา ไม่มีการเคลื่อนไหว สีทั้งหมดถูกสงวนไว้บอกสถานะเท่านั้น เพราะบนหน้าจอที่มีตัวเลขเป็นร้อยตัว สิ่งเดียวที่ควรดึงตาคือแถวที่ต้องการคน",
+    "keyCharacteristics": [
+      "หลักฐานอยู่ข้างข้อกล่าวอ้างเสมอ รูปกับตัวเลขอยู่ในสายตาเดียวกัน",
+      "แบนราบ เส้นขอบ 1px คือระบบความลึกทั้งหมด",
+      "สีมีความหมายตายตัว ไม่มีสีตกแต่ง",
+      "หนาแน่นแต่อ่านออก ตัวเลขเรียงหลักตรงกันทุกคอลัมน์",
+      "ภาษาไทยทั้งหมด และข้อความบอกตัวเลขของตัวเองเสมอ"
+    ],
+    "rules": [
+      { "name": "The Colour-Is-State Rule", "body": "สีไม่เคยถูกใช้เพื่อความสวย ทุกครั้งที่สีปรากฏ มันกำลังตอบคำถามว่า 'แถวนี้ต้องการอะไรจากฉัน' — แดง = ต้องตัดสิน · เหลือง = ข้อมูลไม่พอ · เขียว = ผ่านแล้ว · ฟ้า = รอเครื่องอื่น · น้ำเงิน = กดแล้วไปต่อ หน้าจอที่สีทั้งหมดหายไปแปลว่าไม่มีอะไรค้าง และนั่นคือหน้าจอที่ถูกต้อง", "section": "colors" },
+      { "name": "The Two-Layer Rule", "body": "สีสถานะทุกสีมีสองชั้นเสมอ: พื้นอ่อนสำหรับกล่องข้อความยาว และพื้นเข้มขึ้นหนึ่งขั้นสำหรับป้ายสั้น ห้ามใช้สีทึบเป็นพื้นของข้อความ ยกเว้นปุ่มลงมือสีเขียวเท่านั้น", "section": "colors" },
+      { "name": "The Tabular Rule", "body": "ทุกตัวเลขที่อยู่ในคอลัมน์เดียวกันหรือถูกเทียบกันต้องใช้ tabular-nums เสมอ หลักที่ไม่ตรงกันทำให้คนอ่านผิดและเป็นเงินของคนอื่น", "section": "typography" },
+      { "name": "The Number-Says-Why Rule", "body": "ข้อความบอกสถานะต้องพกตัวเลขของตัวเองมาด้วย ไม่ใช่ป้ายลอยๆ — เขียนว่า 'รายได้ 81 ≠ พื้นฐาน 77 + โบนัส 0 + เทอร์โบ 0 = 77 · ต่างกัน 4 บาท' ไม่ใช่ 'ข้อมูลไม่ถูกต้อง'", "section": "typography" },
+      { "name": "The 44 Rule", "body": "ทุกสิ่งที่นิ้วต้องกดมีความสูงอย่างน้อย 44px และมีระยะห่างจากเพื่อนบ้านพอที่จะไม่กดพลาด หน้าคิวตรวจถูกใช้บนมือถือจริง", "section": "layout" },
+      { "name": "The No-Sideways Rule", "body": "หน้าเว็บต้องไม่เลื่อนแนวนอนที่ความกว้าง 320px ขึ้นไป ตารางที่กว้างเกินต้องตัดคอลัมน์หรือใส่กล่องเลื่อนของตัวเอง ไม่ใช่ปล่อยให้ทั้งหน้าเลื่อน", "section": "layout" },
+      { "name": "The Hairline Rule", "body": "ถ้าต้องแยกสองสิ่งออกจากกัน ใช้เส้น 1px สี hairline ก่อนเสมอ ถ้าเส้นไม่พอให้ใช้ระยะห่าง ถ้าระยะห่างไม่พอค่อยเปลี่ยนพื้นเป็น surface-tint — เงาไม่อยู่ในลำดับนี้", "section": "elevation" }
+    ],
+    "dos": [
+      "Do วางรูปหลักฐานกับตัวเลขที่อ่านได้ไว้ในสายตาเดียวกันเสมอ ถ้าหน้าจอขอให้ตัดสินใจ มันต้องแสดงสิ่งที่ใช้ตัดสิน",
+      "Do ใช้ tabular-nums กับตัวเลขทุกตัวที่ถูกเทียบกัน",
+      "Do ให้ข้อความสถานะพกตัวเลขของตัวเองมาด้วย พร้อมบอกวิธีแก้",
+      "Do ทำให้ทุกเป้าที่นิ้วกดสูงอย่างน้อย 44px",
+      "Do ใช้เส้น 1px hairline เป็นตัวแบ่งอันดับแรก",
+      "Do ตัดคอลัมน์ที่ไว้ดูทีหลังออกบนจอแคบ และให้มันกลับมาที่ 640px"
+    ],
+    "donts": [
+      "Don't ใช้สีเพื่อความสวย ทุกสีในแอปนี้เป็นคำตอบของคำถามว่าแถวนี้ต้องการอะไร",
+      "Don't ใส่ความหมายไว้ใน hover: อย่างเดียว — ปุ่มลบเคยเป็นสีแดงเฉพาะตอน hover และบนมือถือมันกลายเป็นปุ่มธรรมดา",
+      "Don't ใช้แถบสีหนาด้านซ้ายของการ์ดหรือแถวเพื่อบอกว่าถูกเลือก ใช้พื้นอ่อนกับวงแหวน 1px แทน",
+      "Don't ใส่เงาให้ของใหม่ ระบบนี้แบน",
+      "Don't ซ้อนการ์ดในการ์ด",
+      "Don't ปล่อยให้ป้ายสถานะขึ้นบรรทัดใหม่ในตาราง",
+      "Don't ซ่อนเมนูหรือการกระทำหลักบนจอเล็กโดยไม่มีอะไรมาแทน"
+    ]
+  }
+}
