@@ -63,6 +63,52 @@ def _clearable(recoverable=True):
     return ended & (t.source_url.isnot(None) if recoverable else t.source_url.is_(None))
 
 
+# คอลัมน์ข้อความของ trips ที่มีโอกาสเป็นตัวกินที่ตัวจริง
+_TEXTY = ["pickup_text", "dropoff_text", "note", "file_name", "source_url", "customer_image",
+          "booking_code", "error", "image_hash", "batch_name", "image_mime", "model"]
+
+
+def disk(log=print):
+    """อะไรกินพื้นที่จริงบ้าง — ตาราง ดัชนี ซากจากการ update และคอลัมน์ที่อ้วนที่สุด
+
+    รูปที่ปล่อยได้เป็นแค่ส่วนเดียวของน้ำหนัก และการเดาว่าส่วนที่เหลือคืออะไรเคยพลาดมาแล้วหนึ่งครั้ง
+    (ประเมินรูปไว้ 330 MB ของจริง 54.5 MB) — ถามฐานข้อมูลตรงๆ ดีกว่า"""
+    if db.engine.dialect.name != "postgresql":
+        log("(ข้ามการวัดพื้นที่ — ใช้ได้กับ Postgres เท่านั้น)")
+        return
+    from sqlalchemy import text
+    with db.engine.begin() as c:
+        total = c.execute(text("SELECT pg_database_size(current_database())")).scalar()
+        log("")
+        log(f"ขนาดฐานข้อมูลทั้งก้อน: {total / MB:,.1f} MB")
+        rows = c.execute(text("""
+            SELECT c.relname,
+                   pg_total_relation_size(c.oid) AS total,
+                   pg_relation_size(c.oid)       AS heap,
+                   pg_indexes_size(c.oid)        AS idx,
+                   COALESCE(s.n_live_tup, 0), COALESCE(s.n_dead_tup, 0),
+                   COALESCE(to_char(GREATEST(s.last_autovacuum, s.last_vacuum),
+                                    'MM-DD HH24:MI'), 'ยังไม่เคย')
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid
+            WHERE n.nspname = 'public' AND c.relkind = 'r'
+            ORDER BY pg_total_relation_size(c.oid) DESC""")).all()
+        log("")
+        log(f"{'ตาราง':<22}{'รวม':>10}{'ข้อมูล':>10}{'รูป/ยาว':>10}{'ดัชนี':>10}"
+            f"{'แถวเป็น':>10}{'ซาก':>9}  เก็บกวาดล่าสุด")
+        for name, tot, heap, idx, live, dead, vac in rows:
+            toast = max(0, tot - heap - idx)
+            log(f"{name[:21]:<22}{tot / MB:>9,.1f}{heap / MB:>10,.1f}{toast / MB:>10,.1f}"
+                f"{idx / MB:>10,.1f}{live:>10,}{dead:>9,}  {vac}")
+        cols = ", ".join(f"COALESCE(SUM(pg_column_size({n})), 0)" for n in _TEXTY)
+        sizes = c.execute(text(f"SELECT {cols} FROM trips")).first()
+        log("")
+        log("คอลัมน์ข้อความของ trips ที่กินที่มากสุด:")
+        for name, size in sorted(zip(_TEXTY, sizes), key=lambda x: -x[1])[:6]:
+            log(f"   {name:<18}{size / MB:>8,.1f} MB")
+
+
 def run(apply=False, log=print):
     t = db.trips.c
     s = survey()
@@ -100,8 +146,11 @@ def run(apply=False, log=print):
 def main(argv=None):
     ap = argparse.ArgumentParser(description="ปล่อยรูปของแถวที่จบแล้ว คืนพื้นที่ฐานข้อมูล (ไม่ลบแถว)")
     ap.add_argument("--apply", action="store_true", help="ทำจริง (ไม่ใส่ = รายงานอย่างเดียว)")
+    ap.add_argument("--no-disk", action="store_true", help="ข้ามการวัดว่าอะไรกินพื้นที่")
     a = ap.parse_args(argv)
     db.init_db()
+    if not a.no_disk:
+        disk()
     run(apply=a.apply)
     return 0
 
