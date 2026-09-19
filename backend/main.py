@@ -185,9 +185,15 @@ def remove_trip(trip_id: int):
         raise HTTPException(404, "ไม่พบรายการ")
     if t["committed"]:
         raise HTTPException(409, "รายการนี้อนุมัติแล้ว ลบไม่ได้")
+    # The picture goes to <week>/_ทิ้ง-กดลบ/<rider>/ before the row does, while the job and the
+    # Drive id can still be read off it. A row thrown away by hand is a picture worth looking at
+    # again — and left in the rider's folder it is worse than useless, because the sweep counts
+    # it as read and Ops count it as a trip. A failed move never fails the delete.
+    import trash_picture
+    moved = trash_picture.move_to_trash(trip_id)
     db.delete_trip(trip_id)
     db.refresh_job_status(t["job_id"])
-    return {"deleted": trip_id}
+    return {"deleted": trip_id, "picture": moved}
 
 
 @app.get("/api/trips/{trip_id}/image")
