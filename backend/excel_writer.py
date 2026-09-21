@@ -453,11 +453,13 @@ def build_location_workbook(rows: list[dict]) -> bytes | None:
     return buf.getvalue()
 
 
-def build_fare_lines_workbook(rows: list[dict]) -> bytes | None:
+def build_fare_lines_workbook(rows: list[dict], every_week=False) -> bytes | None:
     """The Phase 3 file: from FARE_LINES_FROM_WEEK on, every line of the passenger's fare block.
     Same sheet name, place columns and trailing zones as Phase 2, so whatever reads Phase 2 finds
-    its way around this one. None when no trip is in scope yet."""
-    wanted = [t for t in rows if in_fare_lines_scope(t.get("trip_date"))]
+    its way around this one. None when no trip is in scope yet. `every_week` takes the rows as
+    given — a set-aside batch (set_aside.py) is dated into a week the weekly file no longer
+    covers, and it must still come out in the layout the customer now reads."""
+    wanted = [t for t in rows if every_week or in_fare_lines_scope(t.get("trip_date"))]
     if not wanted:
         return None
     wb = openpyxl.Workbook()
