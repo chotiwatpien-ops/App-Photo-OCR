@@ -1,0 +1,61 @@
+name: อ่านบล็อกค่าโดยสารผู้โดยสารใหม่ — เติมส่วนลด ค่าประกัน ค่าทางด่วน (ไม่แตะค่ารอบ)
+
+# Sheet1 now shows every line between what the passenger paid and the ride fare (Ops 2026-09-21).
+# A week read before that has ส่วนลด and the insurance fee in one field and no passenger tolls at
+# all. This fills them in: rows that already add up are split by sign without reading anything;
+# rows that do not add up are read again, and the new reading is kept only if it keeps the row's
+# own paid and fare and its lines add up between them. Everything else is listed, not touched.
+#
+# Report-only unless `apply` is ticked. A report still reads the rows (up to `limit`) — that is
+# the measurement.
+
+on:
+  workflow_dispatch:
+    inputs:
+      week:
+        description: "วันแรกของสัปดาห์ (จันทร์) เช่น 2026-09-14"
+        type: string
+        default: "2026-09-14"
+      limit:
+        description: "อ่านใหม่ไม่เกินกี่แถว (ว่าง = ทุกแถวที่ไม่ลงตัว)"
+        type: string
+        default: "40"
+      apply:
+        description: "เขียนจริง (ไม่ติ๊ก = รายงานอย่างเดียว ไม่เขียนอะไร)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: drive-write
+  cancel-in-progress: false
+
+jobs:
+  reread:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: Read the passenger block again
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.DRIVE_OAUTH_TOKEN_JSON }}
+          DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-3.7-flash' }}
+          TZ: Asia/Bangkok
+          WEEK: ${{ inputs.week }}
+          LIMIT: ${{ inputs.limit }}
+        run: |
+          echo "ได้รับ: week='$WEEK' limit='$LIMIT' apply='${{ inputs.apply }}'"
+          ARGS="--week $WEEK"
+          if [ -n "$LIMIT" ]; then ARGS="$ARGS --limit $LIMIT"; fi
+          if [ "${{ inputs.apply }}" = "true" ]; then ARGS="$ARGS --apply"; fi
+          echo "สั่ง: python reread_passenger.py $ARGS"
+          python reread_passenger.py $ARGS

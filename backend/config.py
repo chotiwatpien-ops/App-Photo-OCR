@@ -155,6 +155,12 @@ USD_THB = 35.0
 EXTRACT_DROP_FIELDS = tuple(
     f for f in str(_setting("EXTRACT_DROP_FIELDS", "extract_drop_fields", "")).split(",")
     if f.strip())
+# Ops 2026-09-21 asked for every line of the passenger's fare block in Sheet1 (Joe: "ride fare").
+# The reader used to put ส่วนลด and the travel-insurance fee into one field and never read the
+# passenger's ค่าทางด่วน at all — 1 row in 8 of W38 could not add up to the fare. With this on,
+# each line gets its own field. Off until a re-read of W38 has measured it; the re-read turns it
+# on for itself.
+PASSENGER_LINES = str(_setting("PASSENGER_LINES", "passenger_lines", "0")).lower() in ("1", "true", "yes")
 GEMINI_THINKING_LEVEL = _setting("GEMINI_THINKING_LEVEL", "thinking_level", "low")
 _tb = _setting("GEMINI_THINKING_BUDGET", "thinking_budget", 0)
 GEMINI_THINKING_BUDGET = int(_tb) if _tb not in (None, "") else None

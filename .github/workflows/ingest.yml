@@ -136,6 +136,9 @@ jobs:
           DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
           DRIVE_EXPORTS_FOLDER_ID: ${{ secrets.DRIVE_EXPORTS_FOLDER_ID }}
           GEMINI_MODEL: ${{ github.event.inputs.model || vars.GEMINI_MODEL || 'gemini-3.7-flash' }}
+          # every line of the passenger's fare block, one field each — off until W38's re-read has
+          # measured it; switched on for good with the repository variable PASSENGER_LINES=1
+          PASSENGER_LINES: ${{ vars.PASSENGER_LINES || '0' }}
           TZ: Asia/Bangkok        # runner clock is UTC; the app stamps Bangkok — keep logs comparable
           # 0 turns the 'anything new?' probe off for this run, so the whole Inbox is walked.
           # Moving files into a folder does not change their modifiedTime, so a delivery can be

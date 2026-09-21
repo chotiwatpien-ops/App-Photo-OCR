@@ -73,6 +73,10 @@ trips = Table(
     Column("num_stops", Integer),
     Column("app_fee", Float),
     Column("other_adj", Float),
+    # the passenger's fare block, one line each (extractor.PASSENGER_LINE_PROPS) — signs as printed
+    Column("discount", Float),             # ส่วนลด (+)
+    Column("insurance_fee", Float),        # ค่าธรรมเนียมซื้อประกันภัยการเดินทางเพิ่มเติม (−)
+    Column("passenger_tolls", Float),      # ค่าทางด่วน on the passenger's side (−)
     Column("fare_refund", Float),
     Column("model", Text),
     Column("tok_in", Integer),
@@ -256,7 +260,8 @@ TRIP_EDITABLE = [
     "distance_km", "duration_mins", "net_earnings", "base_fare",
     "intl_fee", "bonus", "turbo", "tolls", "tip", "passenger_total", "passenger_paid",
     "pickup_district", "dropoff_district", "surge", "queue_type",
-    "num_stops", "app_fee", "other_adj", "fare_refund", "note",
+    "num_stops", "app_fee", "other_adj", "discount", "insurance_fee", "passenger_tolls",
+    "fare_refund", "note",
 ]
 _SYSTEM_FIELDS = ["status", "error", "booking_code", "check_status", "duplicate_of", "image_hash",
                   "grab_commission", "model", "tok_in", "tok_out", "tok_think", "kind", "merged_into",
@@ -295,6 +300,8 @@ def init_db():
             c.execute(text("ALTER TABLE batch_jobs ADD COLUMN IF NOT EXISTS job_ids TEXT"))
             c.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS drive_folder_id VARCHAR(64)"))
             c.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS source_album TEXT"))
+            for col in ("discount", "insurance_fee", "passenger_tolls"):
+                c.execute(text(f"ALTER TABLE trips ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION"))
 
 
 # ---------- jobs ----------

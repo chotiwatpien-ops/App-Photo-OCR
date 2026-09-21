@@ -7,6 +7,7 @@ import time
 from google import genai
 from google.genai import types
 
+import config
 from config import GEMINI_MODEL, GEMINI_THINKING_BUDGET, GEMINI_THINKING_LEVEL, load_api_key
 
 PROVINCE_ENUM = ["BKK", "NBI", "PTE", "SPK", "SKN", "NPT", "CBI", "AYA", "OTHER"]
@@ -117,6 +118,50 @@ SCHEMA = types.Schema(
     },
     required=["net_earnings", "kind"],
 )
+
+# Every line of the passenger's fare block, one field each (config.PASSENGER_LINES). Without them
+# ส่วนลด and the travel-insurance fee shared other_adjustments — a slip carrying both kept one —
+# and the passenger's ค่าทางด่วน was not read at all, so 1 row in 8 of W38 could not be added up
+# to the fare from its own columns. Signs stay as printed: the sheet shows the slip.
+PASSENGER_LINE_PROPS = {
+    "discount": types.Schema(
+        type=types.Type.NUMBER, nullable=True,
+        description="'ส่วนลด' line in the 'ค่าโดยสารของผู้โดยสารทั้งหมด' section, as printed (positive, e.g. 50). Null if not shown.",
+    ),
+    "insurance_fee": types.Schema(
+        type=types.Type.NUMBER, nullable=True,
+        description="'ค่าธรรมเนียมซื้อประกันภัยการเดินทางเพิ่มเติม' line (often wrapped over 2-3 lines) in the 'ค่าโดยสารของผู้โดยสารทั้งหมด' section, as printed (negative, e.g. -10). Null if not shown.",
+    ),
+    "passenger_tolls": types.Schema(
+        type=types.Type.NUMBER, nullable=True,
+        description="'ค่าทางด่วน' line INSIDE the 'ค่าโดยสารของผู้โดยสารทั้งหมด' section, as printed (negative, e.g. -140). Not the driver's 'รายการจ่ายคืน' — that stays in tolls. Null if not shown.",
+    ),
+    "other_adjustments": types.Schema(
+        type=types.Type.NUMBER, nullable=True,
+        description="Sum of any OTHER line in the 'ค่าโดยสารของผู้โดยสารทั้งหมด' section that is not the app fee, international fee, ส่วนลด, insurance, ค่าทางด่วน or ค่าทิป, as printed. Null if there is none.",
+    ),
+}
+PASSENGER_LINE_FIELDS = ("discount", "insurance_fee", "passenger_tolls")
+
+PASSENGER_LINE_RULES = """- The 'ค่าโดยสารของผู้โดยสารทั้งหมด' section turns what the passenger paid into the fare. Its
+  first line 'ยอดที่ผู้โดยสารชำระ' is passenger_paid and its bold 'รวมค่าโดยสารของผู้โดยสาร' is
+  passenger_total. Each line between them goes to its own field, sign as printed:
+  'ค่าธรรมเนียมการใช้แอป' / 'ค่าธรรมเนียมเรียกใช้บริการ' → app_fee (e.g. -1, -20);
+  'ค่าธุรกรรมต่างประเทศ' → intl_fee (absolute number); 'ส่วนลด' → discount (e.g. 3, 50);
+  'ค่าธรรมเนียมซื้อประกันภัยการเดินทางเพิ่มเติม' → insurance_fee (e.g. -5, -10);
+  'ค่าทางด่วน' → passenger_tolls (e.g. -140); a negative 'ค่าทิป' here is the tip — leave it out;
+  anything else → other_adjustments. A slip can carry several of these at once (a discount AND
+  an insurance fee is common) — report every one. Check before answering: passenger_paid plus
+  those lines, minus any ค่าทิป, equals passenger_total.
+"""
+
+
+def passenger_lines(lines=None) -> bool:
+    return config.PASSENGER_LINES if lines is None else bool(lines)
+
+
+def prompt(lines=None) -> str:
+    return PROMPT + (PASSENGER_LINE_RULES if passenger_lines(lines) else "")
 
 PROMPT = """You are reading a screenshot from the Grab Driver app (Thai UI). The image may contain
 one or two phone screens side by side showing the SAME single trip (left: route/map/payment,
@@ -305,17 +350,21 @@ def _suspect_fields(data: dict) -> list[str]:
     return bad
 
 
-def _schema_without(drop):
+def _schema_without(drop, lines=None):
     """The same schema minus some properties — output tokens are the expensive half of a read,
-    so a field nobody uses is worth measuring before paying for it on every image."""
-    if not drop:
+    so a field nobody uses is worth measuring before paying for it on every image. With the
+    passenger lines on, their fields join it and other_adjustments narrows to what is left."""
+    props = dict(SCHEMA.properties)
+    if passenger_lines(lines):
+        props.update(PASSENGER_LINE_PROPS)
+    elif not drop:
         return SCHEMA
-    kept = {k: v for k, v in SCHEMA.properties.items() if k not in set(drop)}
+    kept = {k: v for k, v in props.items() if k not in set(drop or ())}
     return types.Schema(type=types.Type.OBJECT, properties=kept, required=SCHEMA.required)
 
 
-def _gen_config(model: str, drop=()) -> types.GenerateContentConfig:
-    cfg = dict(response_mime_type="application/json", response_schema=_schema_without(drop),
+def _gen_config(model: str, drop=(), lines=None) -> types.GenerateContentConfig:
+    cfg = dict(response_mime_type="application/json", response_schema=_schema_without(drop, lines),
                temperature=0)
     if "2.5-pro" in model:
         # 2.5 Pro is the one model that cannot switch thinking off — 128 is its floor
@@ -329,10 +378,10 @@ def _gen_config(model: str, drop=()) -> types.GenerateContentConfig:
     return types.GenerateContentConfig(**cfg)
 
 
-def _call_gemini(img, model: str = None, drop=()) -> dict:
+def _call_gemini(img, model: str = None, drop=(), lines=None) -> dict:
     model = model or GEMINI_MODEL
     resp = client().models.generate_content(
-        model=model, contents=[PROMPT, img], config=_gen_config(model, drop),
+        model=model, contents=[prompt(lines), img], config=_gen_config(model, drop, lines),
     )
     data = fix_passenger_total(json.loads(resp.text))
     u = resp.usage_metadata
@@ -346,7 +395,7 @@ def _call_gemini(img, model: str = None, drop=()) -> dict:
 
 
 def extract_image(image_bytes: bytes, mime_type: str = "image/jpeg", model: str = None,
-                  drop=()) -> dict:
+                  drop=(), lines=None) -> dict:
     """Returns extracted dict (with '_usage' token info); raises after 3 failed API attempts.
 
     A response whose critical numbers are 0/missing counts as a bad read and is
@@ -360,7 +409,7 @@ def extract_image(image_bytes: bytes, mime_type: str = "image/jpeg", model: str 
     spent = {"tok_in": 0, "tok_out": 0, "tok_think": 0}
     for attempt in range(3):
         try:
-            data = _call_gemini(img, model, drop)
+            data = _call_gemini(img, model, drop, lines)
             for k in spent:
                 spent[k] += data["_usage"][k]
             data["_usage"].update(spent)

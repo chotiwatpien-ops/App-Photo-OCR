@@ -55,7 +55,7 @@ def submit(items, model=None, display_name="ingest", workers=4) -> list:
         requests = [
             types.InlinedRequest(
                 model=model,
-                contents=[extractor.PROMPT,
+                contents=[extractor.prompt(),
                           types.Part.from_bytes(data=img, mime_type=mime)],
                 config=cfg,
                 metadata={"trip_id": str(trip_id)},
