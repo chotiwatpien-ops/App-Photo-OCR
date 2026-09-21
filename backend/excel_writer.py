@@ -68,16 +68,20 @@ LOCATION_HEADERS = HEADERS + LOCATION_EXTRA
 # as the slip prints it (negative) and M no longer carries the tip. Then the passenger's block in
 # slip order, each line its own column, signs as printed — so a reader can check any row:
 #     V + L + Q + R + S + T + U − P = W          (paid + every line − the tip = the ride fare)
+# Total Commission is the customer's definition (Norm Asia, after W37: "commission + platform
+# fee"; Fiat 2026-09-21 chose it): Grab's cut on the slip plus the app fee the passenger paid.
+# Grab Service Fee stays as the slip prints it beside it, so both are there to compare.
 FARE_HEADERS = [
     "Driver Name", "Date & Time", "Time", "Service Type", "Payment Method",
     "Pick-up Location", "Drop-off Location", "Distance (km)", "Duration (mins)",
     "Net Earnings (THB)", "Base Fare (THB)", "International Fee", "Bonus",
     "Turbo Incentive (THB)", "Reimbursements / Tolls (THB)", "Tip (THB)",
     "Application Fee", "Discount", "Travel Insurance Fee", "Passenger Tolls", "Other Fees",
-    "Passenger Fare (THB)", "Ride Fare (THB)", "Grab Service Fee (THB)", "Image",
+    "Passenger Fare (THB)", "Ride Fare (THB)", "Grab Service Fee (THB)", "Total Commission (THB)",
+    "Image",
 ]
 FARE_WIDTHS = [11.4, 9.7, 12.9, 12.5, 13.5, 46, 46, 10.5, 12.0, 14.1, 11.9, 13.2, 7.8, 16.4, 22.3,
-               9.5, 13.5, 10.5, 16.5, 14.5, 11.5, 15.9, 13.5, 17.1, 18]
+               9.5, 13.5, 10.5, 16.5, 14.5, 11.5, 15.9, 13.5, 17.1, 17.5, 18]
 FARE_LINES_HEADERS = FARE_HEADERS + LOCATION_EXTRA
 _FARE_COL = {h: i for i, h in enumerate(FARE_HEADERS, start=1)}
 _FL = {h: get_column_letter(i) for h, i in _FARE_COL.items()}   # formulas name columns by header
@@ -301,6 +305,9 @@ def _write_fare_row(ws, row, driver_name, t):
         "Ride Fare (THB)": ride,
         "Grab Service Fee (THB)": (f"={_FL['Ride Fare (THB)']}{row}-{_FL['Base Fare (THB)']}{row}"
                                    if ride is not None else None),
+        # the app fee is printed negative, so taking it away adds it: 4 − (−1) = 5
+        "Total Commission (THB)": (f"={_FL['Grab Service Fee (THB)']}{row}-{_FL['Application Fee']}{row}"
+                                   if ride is not None else None),
         "Image": t.get("customer_image"),
     }
     for h, v in values.items():
@@ -318,6 +325,7 @@ def _write_fare_row(ws, row, driver_name, t):
         est_font = Font(name=_BODY_FONT.name, size=_BODY_FONT.size, italic=True, color="7F7F7F")
         ws.cell(row=row, column=_FARE_COL["Ride Fare (THB)"]).font = est_font
         ws.cell(row=row, column=_FARE_COL["Grab Service Fee (THB)"]).font = est_font
+        ws.cell(row=row, column=_FARE_COL["Total Commission (THB)"]).font = est_font
 
 
 def _write_analysis_row(ws, row, driver_name, t):

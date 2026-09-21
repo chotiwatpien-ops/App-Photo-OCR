@@ -84,6 +84,21 @@ check("LAYOUT เปลี่ยนแล้ว — ไฟล์บน Drive ถ
 r = by_name["สมชาย"]
 check("J = K+M+N+P (ทิปมีช่องของตัวเองแล้ว)", ws.cell(r, H["Net Earnings (THB)"]).value == f"=K{r}+M{r}+N{r}+P{r}")
 check("X = W−K (ค่าบริการ Grab จากค่ารอบ)", ws.cell(r, H["Grab Service Fee (THB)"]).value == f"=W{r}-K{r}")
+check("Y Total Commission = X − Q (ค่าบริการ Grab + ค่าแอปที่ผู้โดยสารจ่าย · ลูกค้า นิยาม ข.)",
+      ws.cell(r, H["Total Commission (THB)"]).value == f"=X{r}-Q{r}")
+check("สลิปของ Ops: Total Commission = 4 − (−1) = 5",
+      (v("ops", "Ride Fare (THB)") - v("ops", "Base Fare (THB)")) - v("ops", "Application Fee") == 5)
+check("Total Commission อยู่ถัดจาก Grab Service Fee ก่อน Image",
+      H["Total Commission (THB)"] == H["Grab Service Fee (THB)"] + 1 == H["Image"] - 1)
+_nr = openpyxl.load_workbook(io.BytesIO(xw.build_fare_lines_workbook(
+    [trip(name="ซ", base_fare=10), trip(name="ฌ", base_fare=None)])))[xw.LOCATION_SHEET]
+_est, _none = (2, 3) if _nr.cell(2, 1).value == "ซ" else (3, 2)
+check("ไม่มีเลขผู้โดยสาร: ค่ารอบเป็นค่าประมาณ ตัวเอียงสีเทา รวมถึง Total Commission",
+      _nr.cell(_est, H["Total Commission (THB)"]).value is not None
+      and _nr.cell(_est, H["Total Commission (THB)"]).font.italic)
+check("ไม่มีอะไรให้คำนวณเลย: ช่องค่าบริการและ Total Commission ว่าง ไม่มีสูตรลอย ๆ",
+      _nr.cell(_none, H["Grab Service Fee (THB)"]).value is None
+      and _nr.cell(_none, H["Total Commission (THB)"]).value is None)
 check("K คือ Base Fare, P คือ Tip, W คือ Ride Fare",
       (H["Base Fare (THB)"], H["Tip (THB)"], H["Ride Fare (THB)"]) == (11, 16, 23))
 
