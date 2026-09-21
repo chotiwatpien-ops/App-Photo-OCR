@@ -28,6 +28,8 @@ import argparse
 import sys
 from collections import defaultdict
 
+from sqlalchemy import select
+
 import config
 import db
 
@@ -40,14 +42,46 @@ DEAD = ("duplicate", "voided")
 
 
 def dead_trips(jobs):
-    """{job_id: [trip, ...]} — rows that cost a seat and earn nothing."""
-    out = {}
-    for j in jobs:
-        full = db.get_job(j["id"]) or {"trips": []}
-        dead = [t for t in full["trips"] if str(t.get("status")) in DEAD]
-        if dead:
-            out[j["id"]] = dead
-    return out
+    """{job_id: [trip, ...]} — rows that cost a seat and earn nothing.
+
+    One query for the whole week. It was one db.get_job per job — every column of every trip, some
+    200 round trips to a database an ocean away — and it ran twice a round: that was most of the
+    12 of 19.5 minutes round #312 spent with nothing new to read (2026-09-21)."""
+    ids = [j["id"] for j in jobs]
+    if not ids:
+        return {}
+    t = db.trips.c
+    out = defaultdict(list)
+    with db.engine.begin() as c:
+        for r in c.execute(select(t.id, t.job_id, t.status, t.file_name)
+                           .where(t.job_id.in_(ids), t.status.in_(DEAD))).mappings().all():
+            out[r["job_id"]].append(dict(r))
+    return dict(out)
+
+
+# Jobs whose folders were found holding none of their parked rows' pictures, with the parked set
+# they were checked against. A parked row's picture leaves once and does not come back, so while
+# a job's parked set is unchanged its folder has nothing to give — listing it again, every job,
+# twice a round, is what kept round #312 busy for twelve minutes. A new parked row changes the
+# set and the folder is looked at again.
+CLEAN_KEY = "dup_seats_clean"
+
+
+def _signature(dead):
+    return ",".join(str(i) for i in sorted(t["id"] for t in dead))
+
+
+def _clean_load():
+    import json
+    try:
+        return json.loads(db.state_get(CLEAN_KEY) or "{}")
+    except ValueError:
+        return {}
+
+
+def _clean_save(memo):
+    import json
+    db.state_set(CLEAN_KEY, json.dumps(memo, separators=(",", ":")))
 
 
 def live_count(job_id):
@@ -115,7 +149,7 @@ def week_is_open(date_from, d_to=None, closed=None, today=None) -> bool:
     return True
 
 
-def sweep(drive, jobs, d_from, d_to, apply=False, cap=SWEEP_CAP, log=print):
+def sweep(drive, jobs, d_from, d_to, apply=False, cap=SWEEP_CAP, log=print, remember=True):
     """เอารูปของแถวที่ตายแล้วออกจากโฟลเดอร์ไรเดอร์ · คืนสรุปเป็น dict
 
     ใช้ได้ทั้งจากคำสั่งมือ (main ข้างล่าง) และจากท้ายรอบ ingest ผลลัพธ์เหมือนกันทุกอย่าง
@@ -125,7 +159,10 @@ def sweep(drive, jobs, d_from, d_to, apply=False, cap=SWEEP_CAP, log=print):
            "moved": 0, "failed": 0, "over_cap": False, "plan": []}
     if not dead_by_job:
         return out
-    plan = plan_for(drive, jobs, dead_by_job)
+    memo = _clean_load() if remember else {}
+    plan = plan_for(drive, jobs, dead_by_job, memo=memo)
+    if remember:
+        _clean_save(memo)            # the folders found clean are clean whatever happens next
     broken = [p for p in plan if p.get("error")]
     plan = [p for p in plan if p.get("files")]
     out["plan"] = plan
@@ -151,13 +188,19 @@ def sweep(drive, jobs, d_from, d_to, apply=False, cap=SWEEP_CAP, log=print):
     hold_root = drive.ensure_folder(wk["id"], HOLD_DIR)
     for p in plan:
         dest = drive.ensure_folder(hold_root, str(p["job"]["driver_name"]))
+        failed = 0
         for img in p["files"]:
             try:
                 drive.move_file(img["id"], dest)
                 out["moved"] += 1
             except Exception as e:                              # noqa: BLE001
                 out["failed"] += 1
+                failed += 1
                 log(f"  ⚠ ย้ายไม่สำเร็จ {img['name']}: {str(e)[:70]}")
+        if not failed:
+            memo[str(p["job"]["id"])] = _signature(dead_by_job[p["job"]["id"]])
+    if remember:
+        _clean_save(memo)
     out["week_name"] = wk["name"]
     return out
 
@@ -188,20 +231,22 @@ def return_picture(trip_id, drive=None, log=print) -> bool:
         return False
 
 
-def plan_for(drive, jobs, dead_by_job):
+def plan_for(drive, jobs, dead_by_job, memo=None):
     """[{job, folder, on_drive, live, files}] — what would leave each rider folder.
 
     Only files still sitting in the rider's own folder count. A picture already moved on by a
     revert or an earlier sweep is somebody else's business, and a folder that cannot be read is
-    reported rather than guessed at."""
+    reported rather than guessed at. `memo` ({job id: parked set}) skips folders already found
+    clean against the same parked rows, and gains the ones found clean now."""
     plan = []
-    for j in jobs:
-        dead = dead_by_job.get(j["id"])
-        fid = j.get("drive_folder_id")
-        if not dead or not fid:
-            continue
-        want = db.drive_ids_for_trips([t["id"] for t in dead])
-        ids = {v for v in want.values() if v}
+    memo = {} if memo is None else memo
+    todo = [j for j in jobs if dead_by_job.get(j["id"]) and j.get("drive_folder_id")
+            and memo.get(str(j["id"])) != _signature(dead_by_job[j["id"]])]
+    want = db.drive_ids_for_trips([t["id"] for j in todo for t in dead_by_job[j["id"]]])
+    for j in todo:
+        dead = dead_by_job[j["id"]]
+        fid = j["drive_folder_id"]
+        ids = {want.get(t["id"]) for t in dead} - {None}
         try:
             # หนึ่งครั้งต่อโฟลเดอร์ ไม่ใช่สองครั้ง — เดิมถามรายการเดิมซ้ำเพื่อนับจำนวนรูป ซึ่งเป็น
             # ครึ่งหนึ่งของ 12 นาทีที่รอบกวาด W37 ใช้ไป และตอนนี้มันรันท้ายทุกรอบ
@@ -213,6 +258,8 @@ def plan_for(drive, jobs, dead_by_job):
         if here:
             plan.append({"job": j, "files": here, "live": live_count(j["id"]),
                          "on_drive": len(on_drive)})
+        else:
+            memo[str(j["id"])] = _signature(dead)
     return plan
 
 
@@ -230,7 +277,8 @@ def main(argv=None):
     jobs = [j for (f, t), js in db.jobs_by_week().items()
             if f == a.d_from and t == a.d_to for j in js]
     # สั่งเองไม่มีเพดาน — คนสั่งคือคนที่ดูรายงานมาแล้ว เพดานมีไว้กันรอบอัตโนมัติเท่านั้น
-    res = sweep(drive, jobs, a.d_from, a.d_to, apply=a.apply, cap=None)
+    # a person running this wants every folder looked at, not the memory of an earlier round
+    res = sweep(drive, jobs, a.d_from, a.d_to, apply=a.apply, cap=None, remember=False)
     print(f"{a.d_from}..{a.d_to} · {res['jobs']} job · job ที่มีแถวซ้ำ/ถูกพัก {res['with_dead']}")
     if not res["with_dead"]:
         print("ไม่มีอะไรต้องคืน ✔")

@@ -14,7 +14,12 @@ os.environ["PHOTO_OCR_DATA"] = tempfile.mkdtemp(prefix="pocr-seats-")
 os.environ.pop("DATABASE_URL", None)
 sys.path.insert(0, "backend")
 
+from sqlalchemy import insert                                   # noqa: E402
+
+import db                                                       # noqa: E402
 import free_dup_seats as fs                                     # noqa: E402
+
+db.init_db()
 
 ok = True
 
@@ -64,7 +69,16 @@ JOBS = [{"id": 1, "driver_name": "สัมมา Win", "category": "2 W Saver",
         {"id": 4, "driver_name": "ข Win", "category": "2 W Saver", "drive_folder_id": "f4"},
         {"id": 5, "driver_name": "ค Win", "category": "2 W Saver", "drive_folder_id": None}]
 
-fs.db.get_job = lambda jid: {"trips": TRIPS.get(jid, [])}
+# the rows live in a real database now: dead_trips asks for the whole week in one query
+with db.engine.begin() as c:
+    for j in JOBS:
+        c.execute(insert(db.jobs).values(id=j["id"], driver_name=j["driver_name"], date_from="2026-09-14",
+                                         date_to="2026-09-20", status="review", category=j["category"],
+                                         drive_folder_id=j["drive_folder_id"], created_at="2026-09-21 00:00:00"))
+    for jid, ts in TRIPS.items():
+        for t in ts:
+            c.execute(insert(db.trips).values(id=t["id"], job_id=jid, file_name=f"{t['id']}.jpg",
+                                              status=t["status"]))
 fs.db.drive_ids_for_trips = lambda ids: {i: f"d{i}" for i in ids}
 
 dead = fs.dead_trips(JOBS)
@@ -118,6 +132,53 @@ check("รวมกันแล้วต้องไม่หักล้าง�
 over = [{"on_drive": 25, "live": 0, "files": [0] * 25, "job": {"category": "2 W Saver"}}]
 check("โฟลเดอร์ที่ล้นโควตา คืนได้ไม่เกิน 21", fs.seats_freed(over) == 21)
 check("แยกตามล้อได้", (fs.wheel_of("2 W Saver"), fs.wheel_of("4 W Standard")) == ("2W", "4W"))
+
+# --- a folder found clean is not listed again (round #312 spent 12 of 19.5 minutes on this) --------
+class CountingDrive(FakeDrive):
+    def __init__(self):
+        super().__init__()
+        self.listed = []
+
+    def list_images(self, pid):
+        self.listed.append(pid)
+        return super().list_images(pid)
+
+
+c1 = CountingDrive()
+c1.images["f1"] = [{"id": "d11", "name": "a.jpg"}, {"id": "d13", "name": "c.jpg"}]
+c1.images["f2"] = [{"id": "d22", "name": "e.jpg"}]
+memo = {}
+fs.plan_for(c1, JOBS, dead, memo=memo)
+check("โฟลเดอร์ที่ไม่มีรูปของแถวตายเหลือ ถูกจำว่าสะอาด", "2" in memo)
+check("โฟลเดอร์ที่ยังมีรูปต้องย้าย ไม่ถูกจำ", "1" not in memo)
+c1.listed.clear()
+fs.plan_for(c1, JOBS, dead, memo=memo)
+check("รอบถัดไป: ไม่ list โฟลเดอร์ที่สะอาดแล้วอีก", "f2" not in c1.listed and "f1" in c1.listed)
+dead_more = {k: list(v) for k, v in dead.items()}
+dead_more[2] = dead_more[2] + [{"id": 23, "status": "duplicate"}]
+c1.listed.clear()
+fs.plan_for(c1, JOBS, dead_more, memo=memo)
+check("❗ มีแถวตายใหม่ใน job นั้น: กลับไป list ใหม่", "f2" in c1.listed)
+check("dead_trips ใช้ query เดียว ไม่เรียก get_job รายงาน",
+      "get_job" not in fs.dead_trips.__code__.co_names)
+
+# the whole sweep, twice: the second round lists only what could still hold something
+c2 = CountingDrive()
+c2.images["f1"] = [{"id": "d11", "name": "a.jpg"}, {"id": "d12", "name": "b.jpg"}, {"id": "d13", "name": "c.jpg"}]
+c2.images["f2"] = [{"id": "d22", "name": "e.jpg"}]
+fs.config.DRIVE_INBOX_FOLDER_ID = "inbox"
+import rebalance_quota as _rq                                   # noqa: E402
+_rq.week_folder = lambda drive, inbox, a, b: {"id": "week", "name": "Week 14-20 Sep"}
+db.state_set(fs.CLEAN_KEY, "{}")
+r1 = fs.sweep(c2, JOBS, "2026-09-14", "2026-09-20", apply=True, cap=None, log=lambda *_: None)
+check("รอบแรก: ย้ายรูปของแถวตาย 2 ใบ", r1["moved"] == 2)
+c2.listed.clear()
+r2 = fs.sweep(c2, JOBS, "2026-09-14", "2026-09-20", apply=True, cap=None, log=lambda *_: None)
+check("❗ รอบสอง: ไม่ต้อง list โฟลเดอร์ไหนเลย (ย้ายหมดแล้ว / สะอาดแล้ว)", c2.listed == [] and r2["moved"] == 0)
+c2.listed.clear()
+r3 = fs.sweep(c2, JOBS, "2026-09-14", "2026-09-20", apply=True, cap=None, log=lambda *_: None,
+              remember=False)
+check("สั่งมือ (ไม่ใช้ความจำ): list ทุกโฟลเดอร์ที่มีแถวตาย", sorted(c2.listed) == ["f1", "f2"])
 
 check("ชื่อที่พักคือ _ซ้ำ", fs.HOLD_DIR == "_ซ้ำ")
 check("นับสถานะตายไว้สองแบบเท่านั้น", set(fs.DEAD) == {"duplicate", "voided"})

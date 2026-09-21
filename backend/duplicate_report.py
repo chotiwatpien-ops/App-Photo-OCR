@@ -171,6 +171,7 @@ def load(d_from, d_to):
 # แยกจากไฟล์หลักที่ส่งลูกค้า (Rider Trips*.xlsx และโฟลเดอร์รูปของแต่ละสัปดาห์) — Ops 2026-09-13
 # ขีดล่างนำหน้าให้เรียงแยกจากโฟลเดอร์สัปดาห์ และบอกด้วยตาว่านี่ไม่ใช่ของส่งมอบประจำสัปดาห์
 DRIVE_DIR = "_รายงานรูปซ้ำ"
+FINGERPRINT_KEY = "dup_report"
 
 
 def report_name(d_from) -> str:
@@ -199,8 +200,22 @@ def refresh_week(drive, exports_id, d_from, d_to, log=print):
     cases, undecided = build(rows, twins)
     if not cases and not undecided:
         return None
-    folder, fid = upload_to_drive(drive, exports_id, d_from, build_xlsx(cases, undecided))
     sure = sum(1 for c in cases if c.get("ผู้ส่งแน่ชัด") and c.get("ต้นฉบับแน่ชัด"))
+    # The same report twice is one upload too many: a week's repeats settle once it is read,
+    # and every round after that wrote an identical file back to Drive (and paid Drive and Neon
+    # transfer for it). The fingerprint is of what the file says, so any change still goes out.
+    import hashlib
+    import json
+    sig = hashlib.sha1(json.dumps([cases, undecided], ensure_ascii=False, sort_keys=True,
+                                  default=str).encode("utf-8")).hexdigest()
+    key = f"{FINGERPRINT_KEY}:{d_from}"
+    if db.state_get(key) == sig:
+        log(f"📋 รายงานรูปซ้ำ {report_name(d_from)}: ไม่มีอะไรเปลี่ยนตั้งแต่รอบก่อน (ใบซ้ำ {len(cases)})"
+            " — ไม่ต้องเขียนใหม่")
+        return {"cases": len(cases), "undecided": len(undecided), "sure": sure, "file_id": None,
+                "unchanged": True}
+    folder, fid = upload_to_drive(drive, exports_id, d_from, build_xlsx(cases, undecided))
+    db.state_set(key, sig)
     log(f"📋 รายงานรูปซ้ำ {report_name(d_from)}: ใบซ้ำ {len(cases)} · รอคนตัดสิน {len(undecided)}"
         f" · ระบุตัวคนส่งได้ {sure} → https://drive.google.com/file/d/{fid}/view")
     return {"cases": len(cases), "undecided": len(undecided), "sure": sure, "file_id": fid}

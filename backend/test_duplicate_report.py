@@ -136,6 +136,16 @@ _d2, _said = _FakeDrive(), []
 _res = rep.refresh_week(_d2, "EXPORTS", "2026-09-07", "2026-09-13", log=_said.append)
 check("ท้ายรอบประกอบรายงานแล้ววางลง Drive", _res and _res["cases"] == 1 and len(_d2.files) == 1)
 check("บอกใน log ว่าวางไว้ที่ไหน", any("รูปซ้ำ_2026-W37.xlsx" in s and "drive.google.com" in s for s in _said))
+_d2b, _said2 = _FakeDrive(), []
+_res2 = rep.refresh_week(_d2b, "EXPORTS", "2026-09-07", "2026-09-13", log=_said2.append)
+check("❗ รอบถัดไปที่ใบซ้ำไม่เปลี่ยน: ไม่อัปโหลดซ้ำ", _res2.get("unchanged") and not _d2b.files)
+check("บอกใน log ว่าไม่ต้องเขียนใหม่", any("ไม่มีอะไรเปลี่ยน" in s for s in _said2))
+_d2c = _FakeDrive()
+import db as _db                                                # noqa: E402
+_db.state_set(f"{rep.FINGERPRINT_KEY}:2026-09-07", "stale")
+check("เนื้อหาเปลี่ยน: อัปโหลดใหม่",
+      rep.refresh_week(_d2c, "EXPORTS", "2026-09-07", "2026-09-13", log=lambda *a: None)["file_id"]
+      and len(_d2c.files) == 1)
 _d3 = _FakeDrive()
 check("สัปดาห์ที่ไม่มีใบซ้ำ ไม่สร้างไฟล์เปล่า",
       rep.refresh_week(_d3, "EXPORTS", "2026-08-10", "2026-08-16", log=lambda *a: None) is None
