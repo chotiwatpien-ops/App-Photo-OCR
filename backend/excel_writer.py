@@ -34,12 +34,19 @@ LOCATION_SHEET = "Location"
 # Only from W36, the first week read with the addresses switched back on: W35 was read with the
 # field off for 1,271 of its rows, and half a week of places is worse than none.
 LOCATION_FROM_WEEK = str(getattr(config, "LOCATION_FROM_WEEK", "2026-W36"))
+# Ops 2026-09-21 (Joe DMK) asked for every line of the passenger's fare block, and a name for the
+# fare that stops people confusing it with what the passenger paid: "ride fare". That moves
+# columns from L on, and flips L's sign to match the slip — a different sheet, not the same one
+# with columns inserted. So, as at W36, a file of its own from the first week it applies to:
+# W38, not yet delivered when this was decided. Phase 2 stops the week before and keeps its look.
+FARE_LINES_FROM_WEEK = "2026-W38"
+FARE_LINES_FILE = "Rider Trips Phase 3.xlsx"
 
 # Bump whenever the shape of either workbook changes — columns, sheets, which rows go where.
 # Uploads are skipped when no row has changed since the last round, which is right for data and
 # wrong for layout: the Phase 2 file would have kept its old columns until the next approval
 # happened to come along. Folding this into that fingerprint forces exactly one rewrite.
-LAYOUT = "2026-09-17"
+LAYOUT = "2026-09-21"
 
 HEADERS = [
     "Driver Name", "Date & Time", "Time", "Service Type", "Payment Method",
@@ -56,6 +63,24 @@ COL_WIDTHS = [11.4, 9.7, 12.9, 12.5, 13.5, 12.5, 13.4, 10.5, 12.0, 14.1, 11.9, 1
 # (=K+M+N, =P-K), and inserting a column in the middle would point them at the wrong cells.
 LOCATION_EXTRA = ["Pick-up Zone", "Drop-off Zone"]
 LOCATION_HEADERS = HEADERS + LOCATION_EXTRA
+
+# Phase 3 (from FARE_LINES_FROM_WEEK). A–O as the customer knows them, except that L is printed
+# as the slip prints it (negative) and M no longer carries the tip. Then the passenger's block in
+# slip order, each line its own column, signs as printed — so a reader can check any row:
+#     V + L + Q + R + S + T + U − P = W          (paid + every line − the tip = the ride fare)
+FARE_HEADERS = [
+    "Driver Name", "Date & Time", "Time", "Service Type", "Payment Method",
+    "Pick-up Location", "Drop-off Location", "Distance (km)", "Duration (mins)",
+    "Net Earnings (THB)", "Base Fare (THB)", "International Fee", "Bonus",
+    "Turbo Incentive (THB)", "Reimbursements / Tolls (THB)", "Tip (THB)",
+    "Application Fee", "Discount", "Travel Insurance Fee", "Passenger Tolls", "Other Fees",
+    "Passenger Fare (THB)", "Ride Fare (THB)", "Grab Service Fee (THB)", "Image",
+]
+FARE_WIDTHS = [11.4, 9.7, 12.9, 12.5, 13.5, 46, 46, 10.5, 12.0, 14.1, 11.9, 13.2, 7.8, 16.4, 22.3,
+               9.5, 13.5, 10.5, 16.5, 14.5, 11.5, 15.9, 13.5, 17.1, 18]
+FARE_LINES_HEADERS = FARE_HEADERS + LOCATION_EXTRA
+_FARE_COL = {h: i for i, h in enumerate(FARE_HEADERS, start=1)}
+_FL = {h: get_column_letter(i) for h, i in _FARE_COL.items()}   # formulas name columns by header
 
 ANALYSIS_HEADERS = [
     "Driver Name", "Date", "Time", "Booking Code", "Week", "Pick-up Zone", "Drop-off Zone",
@@ -222,7 +247,77 @@ def iso_week(trip_date: str) -> str:
 
 
 def in_location_scope(trip_date: str) -> bool:
+    """From W36 on a trip is no longer in the first file. It is in Phase 2 or Phase 3."""
     return bool(trip_date) and iso_week(trip_date) >= LOCATION_FROM_WEEK
+
+
+def in_fare_lines_scope(trip_date: str) -> bool:
+    return bool(trip_date) and iso_week(trip_date) >= FARE_LINES_FROM_WEEK
+
+
+def _n(v):
+    return v if v is not None else 0
+
+
+def _write_fare_row(ws, row, driver_name, t):
+    """One trip in the Phase 3 layout (FARE_HEADERS). Signs as the slip prints them."""
+    d = datetime.strptime(t["trip_date"], "%Y-%m-%d")
+    ride = passenger_fare(t)
+    # Only the part of the tip the net actually contains moves out of Bonus. The row's bonus has
+    # carried the tip since the first reader (pipeline.apply_extraction), except where the slip's
+    # own 'คุณได้รับ' left it out — #30298 prints tip 20 in the extra income and ฿78 = base 74 +
+    # turbo 4 as what the rider got. Net follows 'คุณได้รับ' and must not move, so there the tip
+    # stays out of the rider's columns (and that row's passenger block shows the 20 it lacks).
+    tip = min(_n(t.get("tip")), max(_n(t.get("bonus")), 0))
+    values = {
+        "Driver Name": driver_name,
+        "Date & Time": d,
+        "Time": time_band(t.get("trip_time")),
+        "Service Type": t.get("service_type"),
+        "Payment Method": t.get("payment_method"),
+        "Pick-up Location": place(t.get("pickup_text"), t.get("pickup_district"), t.get("pickup_code")),
+        "Drop-off Location": place(t.get("dropoff_text"), t.get("dropoff_district"), t.get("dropoff_code")),
+        "Distance (km)": t.get("distance_km"),
+        "Duration (mins)": t.get("duration_mins"),
+        # the tip left Bonus for a column of its own, so the net adds it back: same total as before
+        "Net Earnings (THB)": "=" + "+".join(f"{_FL[h]}{row}" for h in (
+            "Base Fare (THB)", "Bonus", "Turbo Incentive (THB)", "Tip (THB)")),
+        "Base Fare (THB)": t.get("base_fare"),
+        # stored as an absolute number since the first reader; the slip prints it negative
+        "International Fee": -abs(t["intl_fee"]) if t.get("intl_fee") else 0,
+        # the row's bonus has always carried the tip (pipeline.apply_extraction) — take it out
+        "Bonus": _n(t.get("bonus")) - tip,
+        "Turbo Incentive (THB)": _n(t.get("turbo")),
+        "Reimbursements / Tolls (THB)": _n(t.get("tolls")),
+        "Tip (THB)": tip,
+        "Application Fee": _n(t.get("app_fee")),
+        "Discount": _n(t.get("discount")),
+        "Travel Insurance Fee": _n(t.get("insurance_fee")),
+        "Passenger Tolls": _n(t.get("passenger_tolls")),
+        # ค่าบริจาคเพื่อชดเชยคาร์บอน, and a line Grab itself labels "อื่นๆ" (W38: 72 rows, 1.9%)
+        "Other Fees": _n(t.get("other_adj")),
+        # the old app screen has no paid line: left empty rather than worked out from the rest
+        "Passenger Fare (THB)": t.get("passenger_paid"),
+        "Ride Fare (THB)": ride,
+        "Grab Service Fee (THB)": (f"={_FL['Ride Fare (THB)']}{row}-{_FL['Base Fare (THB)']}{row}"
+                                   if ride is not None else None),
+        "Image": t.get("customer_image"),
+    }
+    for h, v in values.items():
+        cell = ws.cell(row=row, column=_FARE_COL[h])
+        cell.value = v
+        cell.font = _BODY_FONT
+        cell.border = _BORDER
+        if h == "Date & Time":
+            cell.number_format = "d-mmm-yy"
+        elif h == "Time":
+            cell.alignment = Alignment(horizontal="center")
+        elif h in ("Pick-up Location", "Drop-off Location"):
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+    if ride is not None and passenger_fare_estimated(t):
+        est_font = Font(name=_BODY_FONT.name, size=_BODY_FONT.size, italic=True, color="7F7F7F")
+        ws.cell(row=row, column=_FARE_COL["Ride Fare (THB)"]).font = est_font
+        ws.cell(row=row, column=_FARE_COL["Grab Service Fee (THB)"]).font = est_font
 
 
 def _write_analysis_row(ws, row, driver_name, t):
@@ -312,7 +407,8 @@ def build_location_workbook(rows: list[dict]) -> bytes | None:
     the same way — only F and G differ, carrying the address instead of the zone. A separate
     workbook on purpose: the customer's own file keeps the zone it has always had. Returns None
     when no trip is in scope yet, so a file of nothing but headers never lands on Drive."""
-    wanted = [t for t in rows if in_location_scope(t.get("trip_date"))]
+    wanted = [t for t in rows if in_location_scope(t.get("trip_date"))
+              and not in_fare_lines_scope(t.get("trip_date"))]
     if not wanted:
         return None
     wb = openpyxl.Workbook()
@@ -333,6 +429,45 @@ def build_location_workbook(rows: list[dict]) -> bytes | None:
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def build_fare_lines_workbook(rows: list[dict]) -> bytes | None:
+    """The Phase 3 file: from FARE_LINES_FROM_WEEK on, every line of the passenger's fare block.
+    Same sheet name, place columns and trailing zones as Phase 2, so whatever reads Phase 2 finds
+    its way around this one. None when no trip is in scope yet."""
+    wanted = [t for t in rows if in_fare_lines_scope(t.get("trip_date"))]
+    if not wanted:
+        return None
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = LOCATION_SHEET
+    _style_header(ws, FARE_LINES_HEADERS, FARE_WIDTHS + [14, 14], medium=True)
+    ws.freeze_panes = "A2"
+    zone_col = len(FARE_HEADERS) + 1
+    for i, t in enumerate(sorted(wanted, key=lambda x: (x.get("trip_date") or "", x["driver_name"])),
+                          start=2):
+        _write_fare_row(ws, i, t["driver_name"], t)
+        for col, z in enumerate((zone_for(t.get("pickup_district"), t.get("pickup_code"), t.get("pickup_text")),
+                                 zone_for(t.get("dropoff_district"), t.get("dropoff_code"), t.get("dropoff_text"))),
+                                start=zone_col):
+            cell = ws.cell(row=i, column=col, value=z)
+            cell.font, cell.border = _BODY_FONT, _BORDER
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def later_workbooks(rows: list[dict]) -> list[tuple[str, bytes]]:
+    """(file name, bytes) for every workbook after the first that has rows in it — Phase 2, then
+    Phase 3. The places that write the customer files all ask here, so a new phase is one change,
+    not three."""
+    out = []
+    for name, build in ((LOCATION_FILE, build_location_workbook),
+                        (FARE_LINES_FILE, build_fare_lines_workbook)):
+        data = build(rows)
+        if data:
+            out.append((name, data))
+    return out
 
 
 # ---------- local append mode ----------

@@ -671,6 +671,20 @@ def export_phase2():
     )
 
 
+@app.get("/api/export/phase3")
+def export_phase3():
+    """The Phase 3 workbook (every line of the passenger's fare block, from W38), built now."""
+    rows = db.query_trips(committed_only=True)
+    data = excel_writer.build_fare_lines_workbook(rows) or excel_writer.build_workbook([])
+    stamp = datetime.now().strftime("%Y%m%d-%H%M")
+    fname = f"Rider Trips Phase 3 {stamp}.xlsx"
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"},
+    )
+
+
 # Ops (2026-09-09): "a button that syncs the Excel without waiting for an ingest round". An
 # ingest round rewrites both customer workbooks on Drive, but only every few hours and only
 # after the whole round; an approval made in the review queue at 10:00 reached the customer's
@@ -696,9 +710,8 @@ def _sync_workbooks():
         rows = db.query_trips(committed_only=True)
         fid = drive.upload_xlsx(config.DRIVE_EXPORTS_FOLDER_ID, "Rider Trips.xlsx",
                                 excel_writer.build_workbook(rows))
-        loc = excel_writer.build_location_workbook(rows)
-        if loc:
-            drive.upload_xlsx(config.DRIVE_EXPORTS_FOLDER_ID, excel_writer.LOCATION_FILE, loc)
+        for later, data in excel_writer.later_workbooks(rows):
+            drive.upload_xlsx(config.DRIVE_EXPORTS_FOLDER_ID, later, data)
         for (d_from, _), _js in db.jobs_by_week().items():
             db.record_drive_file(ingest.week_label(d_from), "xlsx", fid, "Rider Trips.xlsx")
         db.state_set(ingest.XLSX_KEY, f"{excel_writer.LAYOUT}:{db.committed_fingerprint()}")

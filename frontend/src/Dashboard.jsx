@@ -105,11 +105,13 @@ function ExcelSync() {
         title="Rider Trips.xlsx จากฐานข้อมูลตอนนี้">⬇ Excel</a>
       <a href="/api/export/phase2" className="rounded-full px-3 py-1.5 border bg-white border-slate-300 text-slate-600 hover:border-slate-400"
         title="Rider Trips Phase 2.xlsx จากฐานข้อมูลตอนนี้">⬇ Phase 2</a>
+      <a href="/api/export/phase3" className="rounded-full px-3 py-1.5 border bg-white border-slate-300 text-slate-600 hover:border-slate-400"
+        title="Rider Trips Phase 3.xlsx (ตั้งแต่ W38 · ทุกบรรทัดค่าโดยสารผู้โดยสาร) จากฐานข้อมูลตอนนี้">⬇ Phase 3</a>
       <button onClick={start} disabled={running}
         className={`rounded-full px-3 py-1.5 border ${running
           ? 'bg-slate-100 border-slate-200 text-slate-400'
           : 'bg-emerald-600 border-emerald-600 text-white hover:bg-emerald-700'}`}
-        title="เขียน Excel ทั้งสองไฟล์ขึ้น Drive ตอนนี้ ไม่ต้องรอรอบ ingest">
+        title="เขียน Excel ทุกไฟล์ขึ้น Drive ตอนนี้ ไม่ต้องรอรอบ ingest">
         {running ? 'กำลัง sync ขึ้น Drive…' : '⟳ Sync Excel ขึ้น Drive'}
       </button>
       {st?.state === 'done' && (

@@ -161,8 +161,9 @@ check("ปีถัดไปยังเข้า (เทียบสัปด�
 check("ไม่มีทริปในขอบเขต: ไม่สร้างไฟล์เปล่า",
       excel_writer.build_location_workbook([row("2026-08-20")]) is None)
 
+# สมหญิงเคยเป็น 2026-09-14 (W38) — ตั้งแต่ 2026-09-21 W38 ขึ้นไปอยู่ใน Phase 3 (test_phase3.py)
 data = excel_writer.build_location_workbook([row("2026-08-20"), row("2026-09-07"),
-                                             row("2026-09-14", name="สมหญิง")])
+                                             row("2026-09-08", name="สมหญิง")])
 lb = openpyxl.load_workbook(io.BytesIO(data))
 lw = lb[excel_writer.LOCATION_SHEET]
 check("Phase 2 มีชีตเดียว", len(lb.sheetnames) == 1)
