@@ -1264,6 +1264,12 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
                 why = f"{svc} ของสัปดาห์ {wf} เกินเป้า {config.WEEKLY_TARGET_PER_GROUP} อยู่ {over} งาน — ยกส่วนเกินไปสัปดาห์หน้า"
                 issues.append((f"target:{wf}:{svc}", "folder", why))
                 log(f"  ⚠ {why}")
+            if card["staged"]:
+                bits_st = " · ".join(f"{k} {v}" for k, v in sorted(card["staged"].items()))
+                why = (f"สัปดาห์ {wf}: {sum(card['staged'].values())} แถวอ่านแล้วแต่ยังค้างในกองพัก "
+                       f"_พร้อมอ่าน ({bits_st}) — กลุ่มเต็มหรือไม่มีกลุ่มรับ")
+                issues.append((f"staged:{wf}", "staged", why))
+                log(f"  ⚠ {why}")
             if card["no_picture"]:
                 why = f"สัปดาห์ {wf}: {card['no_picture']} แถวยังไม่มีรูปส่งลูกค้า"
                 issues.append((f"nopic:{wf}", "images", why))

@@ -1,0 +1,56 @@
+name: Move staged — ย้ายแถวที่ค้างในกองพัก _พร้อมอ่าน เพราะกลุ่มเต็ม ไปกองพักสัปดาห์หน้า
+
+# A pair is read in <Week>/_พร้อมอ่าน/ and filed into a rider's folder afterwards, but only while
+# its group is under target. When the group is full the row waits there for good — never filed,
+# approved or pictured. This keeps the earliest-driven rows the week still has room for (the next
+# round files them) and moves the rest, picture and all, into next week's _พร้อมอ่าน, dated across
+# next week with the slip's day in the note. Rows no group takes are left alone and reported.
+#
+# Report-only unless `apply` is ticked.
+
+on:
+  workflow_dispatch:
+    inputs:
+      week_from:
+        description: "สัปดาห์ที่มีแถวค้าง: วันแรก (จันทร์)"
+        type: string
+        default: "2026-09-14"
+      week_to:
+        description: "สัปดาห์ที่มีแถวค้าง: วันสุดท้าย"
+        type: string
+        default: "2026-09-20"
+      apply:
+        description: "ย้ายจริง (ไม่ติ๊ก = รายงานอย่างเดียว)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: drive-write
+  cancel-in-progress: false
+
+jobs:
+  move:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: Move what the week has no room for
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.DRIVE_OAUTH_TOKEN_JSON }}
+          DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
+          TZ: Asia/Bangkok
+          WFROM: ${{ inputs.week_from }}
+          WTO: ${{ inputs.week_to }}
+        run: |
+          echo "ได้รับ: week=$WFROM..$WTO apply='${{ inputs.apply }}'"
+          set -- --from "$WFROM" --to "$WTO"
+          if [ "${{ inputs.apply }}" = "true" ]; then set -- "$@" --apply; fi
+          python -u move_staged.py "$@"

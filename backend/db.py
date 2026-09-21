@@ -1963,11 +1963,11 @@ def week_scorecard(date_from, date_to, target=None):
     with engine.begin() as c:
         rows = [dict(r) for r in c.execute(
             select(t.id, t.status, t.service_type, t.customer_image, t.net_earnings,
-                   t.base_fare, t.bonus, t.turbo, t.tolls, jobs.c.category)
+                   t.base_fare, t.bonus, t.turbo, t.tolls, jobs.c.category, jobs.c.driver_name)
             .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
             .where(jobs.c.date_from == date_from, jobs.c.date_to == date_to)).mappings().all()]
     out = {"rows": len(rows), "by_service": {}, "over": {}, "under": {}, "no_picture": 0,
-           "shared_picture": 0, "halves_disagree": [], "error": 0, "pending": 0}
+           "shared_picture": 0, "halves_disagree": [], "error": 0, "pending": 0, "staged": {}}
     seen_pic = {}
     n = lambda v: v or 0                                          # noqa: E731
     for r in rows:
@@ -1978,6 +1978,12 @@ def week_scorecard(date_from, date_to, target=None):
         if r["status"] != "done":
             continue
         svc = (r["service_type"] or "?").strip()
+        if (r["driver_name"] or "") == HOLDING_RIDER:
+            # read, but still in the week's _พร้อมอ่าน: on nobody's bill yet and never pictured.
+            # W38 counted 15 of them as the car group over target and 19 as unpictured rows, and
+            # the page sent people to look for an upload fault (2026-09-21). Said on their own.
+            out["staged"][svc] = out["staged"].get(svc, 0) + 1
+            continue
         out["by_service"][svc] = out["by_service"].get(svc, 0) + 1
         pic = r["customer_image"]
         if not pic:
