@@ -393,7 +393,7 @@ def render(report):
             lines.append(f"    คู่  {p['top']}  +  {p['bottom']}   ฿{p['amount']:g}"
                          + ("" if p["distance"] == 1 else f"  (ห่าง {p['distance']})")
                          + ("  [สั่งจับคู่เอง]" if p.get("by_hand") else "")
-                         + f"  → {p.get('target') or 'ไม่รู้ประเภทรถ'}"
+                         + f"  → {p.get('target') or p.get('target_from') or 'ไม่รู้ประเภทรถ'}"
                          + (f"  ✔ {p['moved']}" if "/" in p.get("moved", "") or p.get("carried")
                             else (f"  ⚠ {p['moved']}" if p.get("moved") else "")))
         for l in a["long"]:
@@ -401,7 +401,7 @@ def render(report):
             # being printed — 230 pictures stayed in the pool with nothing on the line to say
             # why, and the answer (the name list had run out) reached only the web.
             why = l.get("moved") or ""
-            lines.append(f"    ยาว {l['file']}  → {l.get('target') or 'ไม่รู้ประเภทรถ'}"
+            lines.append(f"    ยาว {l['file']}  → {l.get('target') or l.get('target_from') or 'ไม่รู้ประเภทรถ'}"
                          + ("  ✔ ย้ายแล้ว" if "/" in why else
                             (f"  ✔ {why}" if l.get("carried") else (f"  ⚠ {why}" if why else ""))))
         for l in a["leftovers"]:
@@ -610,6 +610,17 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
         for x in entry["pairs"] + entry["long"]:
             x["dest"] = None
             if not x["target"]:
+                if config.POOL_STAGE:
+                    # The group is only needed to pick a rider, and in this mode no rider is
+                    # picked until the slip has been read — the reader sees the chip the free
+                    # OCR could not, and file_after_read files it by that, room checked there.
+                    # Three long pictures of 2W-Win มกรา = 105 sat in the pool for days because
+                    # a 41 KB screenshot's chip was too small to read and the album name says
+                    # '2W' but not the tier (2026-09-21).
+                    if hold_dir is None:
+                        hold_dir = drive.ensure_folder(week_id, HOLDING_DIR)
+                    x["dest"] = hold_dir
+                    x["target_from"] = "ให้สลิปบอกหลังอ่าน"
                 continue
             if room is not None and room.get(x["target"], 1) <= 0:
                 why = (f"{x['target']} ครบ {config.WEEKLY_TARGET_PER_GROUP} งานของสัปดาห์นี้แล้ว "
@@ -658,7 +669,7 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
         sent_from = []          # ไฟล์ที่ออกจากอัลบั้มนี้ · เขียนลงฐานข้อมูลทีเดียวท้ายอัลบั้ม
 
         def do_pair(p):
-            if not p["target"]:
+            if not p["target"] and not p.get("dest"):
                 p["moved"] = "ไม่รู้ประเภทรถ — ยังอยู่ในกอง"
                 return 0
             if not p.get("dest"):
@@ -675,7 +686,7 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
                 sent_from.append(drive.create_file(p["dest"], name, buf.getvalue(), "image/jpeg"))
                 drive.move_file(p["top_id"], used_dir)
                 drive.move_file(p["bottom_id"], used_dir)
-                p["moved"] = f"{p['target']}/{name}"
+                p["moved"] = f"{p['target'] or HOLDING_DIR}/{name}"
                 return 1
             except Exception as e:  # noqa: BLE001 — this pair stays in the pool for the next run
                 p["moved"] = f"ย้ายไม่สำเร็จ: {str(e)[:80]}"
@@ -683,7 +694,7 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
                 return 0
 
         def do_long(l):
-            if not l["target"]:
+            if not l["target"] and not l.get("dest"):
                 l["moved"] = "ไม่รู้ประเภทรถ — ยังอยู่ในกอง"
                 return 0
             if not l.get("dest"):
@@ -692,7 +703,7 @@ def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=No
                 drive.move_file(l["id"], l["dest"])
                 # รูปยาวเก็บชื่อเดิมที่มือถือตั้งไว้ ไม่มีชื่ออัลบั้มติดมาเหมือนคู่ที่ต่อแล้ว
                 sent_from.append(l["id"])
-                l["moved"] = f"{l['target']}/{l['file']}"
+                l["moved"] = f"{l['target'] or HOLDING_DIR}/{l['file']}"
                 return 1
             except Exception as e:  # noqa: BLE001
                 l["moved"] = f"ย้ายไม่สำเร็จ: {str(e)[:80]}"
