@@ -360,8 +360,17 @@ CATEGORY_SERVICE = {
 # The customer buys one car product. A Saver chip on a car slip is still that product (Ops via
 # Fiat, 2026-09-16: "4W saver ให้ตีเข้า Standard") — W37 delivered 20 rows reading 'Saver Car',
 # a service no group holds and no target counts, which left the car group looking 20 short.
+# Car products the customer does not buy separately, all counted as Standard Car: Saver Car (Ops
+# 2026-09-16, "4W saver ให้ตีเข้า Standard"), and EV and Women driver (Fiat 2026-09-21 — W38 held
+# 6 EV and 2 Women driver rows that no group would take, stuck in _พร้อมอ่าน for a week).
+_CAR_WORDS = re.compile(r"\bev\b|electric|women", re.I)
+
+
 def car_is_standard(service):
-    return "Standard Car" if (service or "").strip().endswith("Car") else service
+    s = (service or "").strip()
+    if s.endswith("Car") or (_CAR_WORDS.search(s) and "bike" not in s.lower()):
+        return "Standard Car"
+    return service
 
 
 def normalize_service(ai_value, category, trust_tier=True):

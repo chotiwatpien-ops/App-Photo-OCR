@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""Rows already read as 'Saver Car' become 'Standard Car' — the customer buys one car product.
+"""Rows already read as 'Saver Car', 'EV' or 'Women driver' become 'Standard Car' — the customer
+buys one car product (pipeline.car_is_standard; EV and Women driver added by Fiat 2026-09-21).
 
 The reader stopped writing 'Saver Car' on 2026-09-16 (pipeline.car_is_standard, Ops via Fiat:
 "4W saver ให้ตีเข้า Standard"), but rows read before that keep what they were given: W37 held 20,
@@ -20,6 +21,7 @@ from collections import Counter
 from sqlalchemy import select
 
 import db
+from pipeline import car_is_standard
 
 TARGET = "Standard Car"
 
@@ -35,21 +37,21 @@ def rows_to_relabel(d_from, d_to):
             select(t.id, t.job_id, t.file_name, t.service_type, t.note)
             .where(t.job_id.in_(list(jobs)), t.status == "done").order_by(t.id)).mappings().all()]
     return [(r, jobs[r["job_id"]]) for r in rows
-            if (r.get("service_type") or "").strip().endswith("Car")
+            if car_is_standard(r.get("service_type")) == TARGET
             and (r.get("service_type") or "").strip() != TARGET]
 
 
 def apply(pairs, log=print):
     for r, _j in pairs:
         was = (r.get("service_type") or "").strip()
-        note = f"ประเภทงาน {was} → {TARGET} (รถยนต์มีสินค้าเดียว · Ops 2026-09-16)"
+        note = f"ประเภทงาน {was} → {TARGET} (รถยนต์นับเป็นสินค้าเดียว)"
         db.update_trip(r["id"], {"service_type": TARGET,
                                  "note": f"{note} | {r['note']}" if r.get("note") else note})
     return len(pairs)
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="เปลี่ยนแถวรถยนต์ที่ยังเขียนว่า Saver Car ให้เป็น Standard Car")
+    ap = argparse.ArgumentParser(description="เปลี่ยนแถวรถยนต์ (Saver Car / EV / Women driver) ให้เป็น Standard Car")
     ap.add_argument("--from", dest="d_from", required=True)
     ap.add_argument("--to", dest="d_to", required=True)
     ap.add_argument("--apply", action="store_true")

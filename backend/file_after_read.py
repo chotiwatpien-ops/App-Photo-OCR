@@ -24,6 +24,7 @@ from sqlalchemy import select
 import config
 import db
 import distribute
+from pipeline import car_is_standard
 
 HOLDING_RIDER = "(รออ่าน)"
 HOLDING_DIR = "_พร้อมอ่าน"
@@ -72,7 +73,7 @@ def file_rows(drive, week_id, d_from, d_to, rows=None, target=None, log=print):
     pics = db.drive_ids_for_trips([r["id"] for r in rows])
     jobs_seen, by_group = set(), Counter()
     for r in rows:
-        svc = (r.get("service_type") or "").strip()
+        svc = car_is_standard((r.get("service_type") or "").strip())
         group = GROUP_OF.get(svc)
         if not group:
             out["ยังไม่รู้ประเภทงาน"] += 1
