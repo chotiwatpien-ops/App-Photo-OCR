@@ -27,7 +27,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 import db
 
@@ -106,6 +106,16 @@ def rows_of_week(week):
     return out
 
 
+def _write(pairs):
+    """All the rows in one transaction. One round trip per row took the first W38 run past ten
+    minutes for 1,031 splits — the database is an ocean away from the runner."""
+    allowed = set(db.TRIP_EDITABLE)
+    with db.engine.begin() as c:
+        for tid, fields in pairs:
+            c.execute(update(db.trips).where(db.trips.c.id == tid)
+                      .values(**{k: v for k, v in fields.items() if k in allowed}))
+
+
 def _file_id(url):
     m = re.search(r"/d/([^/?]+)", url or "")
     return m.group(1) if m else None
@@ -133,8 +143,7 @@ def run(week, apply=False, limit=None, model=None, workers=8, log=print):
     log(f"  ไม่ลงตัว ต้องอ่านใหม่ {len(todo):,} · ไม่มียอดชำระ (จอเก่า) ข้าม {no_paid:,}")
 
     if apply:
-        for t, s in splits:
-            db.update_trip(t["id"], s)
+        _write((t["id"], s) for t, s in splits)
         log(f"  ✓ แยกช่องรวมแล้ว {len(splits):,} แถว")
 
     if limit is not None and limit < len(todo):
@@ -177,8 +186,7 @@ def run(week, apply=False, limit=None, model=None, workers=8, log=print):
         for t, detail in ts[:5]:
             log(f"          #{t['id']} {t.get('driver_name') or ''} {t.get('file_name') or ''} — {detail}")
     if apply:
-        for t, f in took:
-            db.update_trip(t["id"], f)
+        _write((t["id"], f) for t, f in took)
         log(f"\n✓ เขียนแล้ว {len(took):,} แถว")
     else:
         log("\n(รายงานอย่างเดียว — ยังไม่ได้เขียนอะไร · ใส่ --apply เพื่อเขียนจริง)")

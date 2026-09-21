@@ -58,4 +58,4 @@ jobs:
           if [ -n "$LIMIT" ]; then ARGS="$ARGS --limit $LIMIT"; fi
           if [ "${{ inputs.apply }}" = "true" ]; then ARGS="$ARGS --apply"; fi
           echo "สั่ง: python reread_passenger.py $ARGS"
-          python reread_passenger.py $ARGS
+          python -u reread_passenger.py $ARGS   # -u: the log shows each step as it happens
