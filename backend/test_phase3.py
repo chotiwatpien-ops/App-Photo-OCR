@@ -2,8 +2,8 @@
 """Rider Trips Phase 3: every line of the passenger's fare block, from W38 (Ops 2026-09-21).
 
 What must hold: each row adds up across its own columns — paid + every line − tip = ride fare —
-so a customer checking a row with a calculator lands on the slip's own figure. The net is the
-same number it always was, only with the tip in a column of its own. Phase 2 stops at W37 and
+so a customer checking a row with a calculator lands on the slip's own figure. The net is what
+the rider received: the slip's 'คุณได้รับ' plus the toll refund Grab prints beside it. Phase 2 stops at W37 and
 keeps its look; nothing already delivered changes. The money below is real W38 slips.
 """
 import io
@@ -48,6 +48,13 @@ SLIPS = {
     "tip_31962": trip(name="จ", base_fare=125, bonus=40, tip=40, passenger_paid=206,
                       app_fee=-20, discount=10, passenger_total=156),
     "old_screen": trip(name="ฉ", base_fare=100, passenger_total=120),
+    # the passenger block is 182 − 20 = 162 with no tip line; the rider's extra 6 is folded shut
+    "no_tip_line_30935": trip(name="ฎ", service_type="Standard Car", base_fare=130, bonus=6, tip=6,
+                              passenger_paid=182, app_fee=-20, passenger_total=162),
+    # 'คุณได้รับ ฿234' = base 223 + turbo 11; the 50 toll refund sits in 'รายการจ่ายคืน' beside it
+    "toll_refund_30706": trip(name="ซ", service_type="Standard Car", base_fare=223, turbo=11, tolls=50,
+                              passenger_paid=289, app_fee=-20, discount=60, passenger_tolls=-50,
+                              passenger_total=279),
     # the slip shows tip 20 in the extra income but 'คุณได้รับ ฿78' = base 74 + turbo 4
     "tip_outside_net_30298": trip(name="ช", base_fare=74, turbo=4, bonus=0, tip=20,
                                   passenger_paid=144, app_fee=-20, intl_fee=4, passenger_total=100),
@@ -82,7 +89,8 @@ check("LAYOUT เปลี่ยนแล้ว — ไฟล์บน Drive ถ
 
 # --- formulas point at the right columns ------------------------------------------------------
 r = by_name["สมชาย"]
-check("J = K+M+N+P (ทิปมีช่องของตัวเองแล้ว)", ws.cell(r, H["Net Earnings (THB)"]).value == f"=K{r}+M{r}+N{r}+P{r}")
+check("J = K+M+N+O+P (ทิปมีช่องของตัวเอง + ค่าทางด่วนที่ได้คืน)",
+      ws.cell(r, H["Net Earnings (THB)"]).value == f"=K{r}+M{r}+N{r}+O{r}+P{r}")
 check("X = W−K (ค่าบริการ Grab จากค่ารอบ)", ws.cell(r, H["Grab Service Fee (THB)"]).value == f"=W{r}-K{r}")
 check("Y Total Commission = X − Q (ค่าบริการ Grab + ค่าแอปที่ผู้โดยสารจ่าย · ลูกค้า นิยาม ข.)",
       ws.cell(r, H["Total Commission (THB)"]).value == f"=X{r}-Q{r}")
@@ -125,11 +133,24 @@ check("#31962 net เท่าเดิม: K+M+N+P = 125+0+0+40 = 165 = สู�
       v("tip_31962", "Base Fare (THB)") + v("tip_31962", "Bonus") + v("tip_31962", "Turbo Incentive (THB)")
       + v("tip_31962", "Tip (THB)") == t["base_fare"] + t["bonus"] == 165)
 
+check("#30706 Net รวมค่าทางด่วนที่ได้คืน: 223 + 11 + 50 = 284 (ลูกค้า: 'net earning is not 160')",
+      sum(v("toll_refund_30706", h) for h in ("Base Fare (THB)", "Bonus", "Turbo Incentive (THB)",
+                                              "Reimbursements / Tolls (THB)", "Tip (THB)")) == 284)
+check("#30706 บล็อกผู้โดยสารลงตัว: 289 − 20 + 60 − 50 = 279", adds_up("toll_refund_30706"))
+
 check("❗ #30298 ทิปที่ไม่ได้อยู่ในรายได้สุทธิ: Bonus ไม่ติดลบ",
       v("tip_outside_net_30298", "Bonus") == 0)
-check("❗ #30298 net ไม่ขยับ: 74 + 0 + 4 + 0 = 78 ตาม 'คุณได้รับ'",
+check("❗ #30298 net ตาม 'คุณได้รับ': 74 + 0 + 4 + 0 = 78",
       v("tip_outside_net_30298", "Base Fare (THB)") + v("tip_outside_net_30298", "Bonus")
       + v("tip_outside_net_30298", "Turbo Incentive (THB)") + v("tip_outside_net_30298", "Tip (THB)") == 78)
+
+check("#30935 ไม่มีบรรทัดทิปในบล็อกผู้โดยสาร: 6 อยู่ใน Bonus เหมือนไฟล์เดิม ไม่ย้ายไป Tip",
+      v("no_tip_line_30935", "Bonus") == 6 and v("no_tip_line_30935", "Tip (THB)") == 0)
+check("#30935 บล็อกผู้โดยสารลงตัว: 182 − 20 = 162", adds_up("no_tip_line_30935"))
+check("#30935 net ไม่ขยับ: 130 + 6 = 136 ตาม 'คุณได้รับ'",
+      v("no_tip_line_30935", "Base Fare (THB)") + v("no_tip_line_30935", "Bonus")
+      + v("no_tip_line_30935", "Tip (THB)") == 136)
+check("#31962 ทิปที่ผ่านบล็อกผู้โดยสารจริง ยังแยกออกมาที่ Tip", v("tip_31962", "Tip (THB)") == 40)
 
 # --- the old app screen ------------------------------------------------------------------------
 check("จอเก่าไม่มียอดชำระ: Passenger Fare ว่าง ไม่เดาเลข", v("old_screen", "Passenger Fare (THB)") is None)

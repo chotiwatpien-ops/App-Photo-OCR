@@ -65,7 +65,7 @@ LOCATION_EXTRA = ["Pick-up Zone", "Drop-off Zone"]
 LOCATION_HEADERS = HEADERS + LOCATION_EXTRA
 
 # Phase 3 (from FARE_LINES_FROM_WEEK). A–O as the customer knows them, except that L is printed
-# as the slip prints it (negative) and M no longer carries the tip. Then the passenger's block in
+# as the slip prints it (negative), M no longer carries the tip, and J includes the toll refund. Then the passenger's block in
 # slip order, each line its own column, signs as printed — so a reader can check any row:
 #     V + L + Q + R + S + T + U − P = W          (paid + every line − the tip = the ride fare)
 # Total Commission is the customer's definition (Norm Asia, after W37: "commission + platform
@@ -273,6 +273,16 @@ def _write_fare_row(ws, row, driver_name, t):
     # turbo 4 as what the rider got. Net follows 'คุณได้รับ' and must not move, so there the tip
     # stays out of the rider's columns (and that row's passenger block shows the 20 it lacks).
     tip = min(_n(t.get("tip")), max(_n(t.get("bonus")), 0))
+    # A tip the passenger paid runs through the passenger's block as a 'ค่าทิป' line. When that
+    # block already adds up without it, this trip's receipt has no tip — #30935: 182 − 20 = 162,
+    # and the rider's extra-income box folded shut around a 6 that may be turbo or a tip added
+    # later. The slip cannot say which, so it stays in Bonus, as every file before this one had it.
+    paid, total = t.get("passenger_paid"), t.get("passenger_total")
+    if tip and paid is not None and total is not None:
+        lines = (paid + _n(t.get("app_fee")) - abs(_n(t.get("intl_fee"))) + _n(t.get("discount"))
+                 + _n(t.get("insurance_fee")) + _n(t.get("passenger_tolls")) + _n(t.get("other_adj")))
+        if abs(total - lines) < 0.51:
+            tip = 0
     values = {
         "Driver Name": driver_name,
         "Date & Time": d,
@@ -283,9 +293,13 @@ def _write_fare_row(ws, row, driver_name, t):
         "Drop-off Location": place(t.get("dropoff_text"), t.get("dropoff_district"), t.get("dropoff_code")),
         "Distance (km)": t.get("distance_km"),
         "Duration (mins)": t.get("duration_mins"),
-        # the tip left Bonus for a column of its own, so the net adds it back: same total as before
+        # What the rider actually received. The customer, on a slip where the rider got ฿250 =
+        # fare 160 + a 90 toll refund: "The net earning is not 160". Grab's 'คุณได้รับ' leaves the
+        # refund out — it sits in its own 'รายการจ่ายคืน' box (#30706: ฿234 shown, 50 toll beside
+        # it) — so the net adds O. The tip left Bonus for P, so it is added back too.
         "Net Earnings (THB)": "=" + "+".join(f"{_FL[h]}{row}" for h in (
-            "Base Fare (THB)", "Bonus", "Turbo Incentive (THB)", "Tip (THB)")),
+            "Base Fare (THB)", "Bonus", "Turbo Incentive (THB)", "Reimbursements / Tolls (THB)",
+            "Tip (THB)")),
         "Base Fare (THB)": t.get("base_fare"),
         # stored as an absolute number since the first reader; the slip prints it negative
         "International Fee": -abs(t["intl_fee"]) if t.get("intl_fee") else 0,
