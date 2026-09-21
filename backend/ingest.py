@@ -589,8 +589,10 @@ def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True, force=Fals
             for (d_from, _), _js in db.jobs_by_week().items():
                 db.record_drive_file(week_label(d_from), "xlsx", fid, "Rider Trips.xlsx")
             old_n = sum(1 for t in rows if not excel_writer.in_location_scope(t.get("trip_date")))
-            log(f"📄 Rider Trips.xlsx: {old_n} แถว (ถึง {excel_writer.LOCATION_FROM_WEEK} เท่านั้น) · "
-                f"Phase 2: {len(rows) - old_n} แถว")
+            p3_n = sum(1 for t in rows if excel_writer.in_fare_lines_scope(t.get("trip_date")))
+            log(f"📄 Rider Trips.xlsx: {old_n} แถว (ก่อน {excel_writer.LOCATION_FROM_WEEK}) · "
+                f"Phase 2: {len(rows) - old_n - p3_n} แถว · "
+                f"Phase 3: {p3_n} แถว (ตั้งแต่ {excel_writer.FARE_LINES_FROM_WEEK})")
         except Exception as e:  # noqa: BLE001
             log(f"✗ upload xlsx: {e}")
             errors += 1
@@ -1175,7 +1177,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
                 db.record_drive_file(week_label(d_from), "xlsx", fid, name)
             old_n = sum(1 for t in rows if not excel_writer.in_location_scope(t.get("trip_date")))
             log(f"📄 {name}: {old_n} แถว — หยุดที่ก่อน {excel_writer.LOCATION_FROM_WEEK} "
-                f"(อีก {len(rows) - old_n} แถวอยู่ใน Phase 2 / Phase 3)")
+                f"(อีก {len(rows) - old_n} แถวอยู่ใน Phase 2 และ Phase 3)")
             # the later files ride along on the same trigger: same rows, same moment, so they
             # never disagree about what is approved
             for later, data in excel_writer.later_workbooks(rows):
