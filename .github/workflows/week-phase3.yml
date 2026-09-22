@@ -9,13 +9,21 @@ on:
   workflow_dispatch:
     inputs:
       date_from:
-        description: "วันแรกของสัปดาห์ (จันทร์) เช่น 2026-08-24"
+        description: "วันแรกของสัปดาห์ (จันทร์) — หลายสัปดาห์ในไฟล์เดียว: คั่นด้วยจุลภาค เช่น 2026-08-17,2026-08-24"
         type: string
         default: "2026-08-24"
       date_to:
-        description: "วันสุดท้ายของสัปดาห์ เช่น 2026-08-30"
+        description: "วันสุดท้ายของสัปดาห์ (เรียงคู่กับช่องบน) เช่น 2026-08-23,2026-08-30"
         type: string
         default: "2026-08-30"
+      folder:
+        description: "วางไฟล์ในโฟลเดอร์นี้ใต้ Exports (ว่าง = วางข้างไฟล์ประจำสัปดาห์)"
+        type: string
+        default: ""
+      file_name:
+        description: "ชื่อไฟล์ (ว่าง = ตั้งจากสัปดาห์)"
+        type: string
+        default: ""
       to_drive:
         description: "วางไฟล์ลง Drive (ไม่ติ๊ก = นับอย่างเดียว)"
         type: boolean
@@ -51,9 +59,11 @@ jobs:
           TZ: Asia/Bangkok
           DFROM: ${{ inputs.date_from }}
           DTO: ${{ inputs.date_to }}
+          FOLDER: ${{ inputs.folder }}
+          FNAME: ${{ inputs.file_name }}
         run: |
           echo "ได้รับ: $DFROM..$DTO to_drive='${{ inputs.to_drive }}'"
-          set -- --from "$DFROM" --to "$DTO"
+          set -- --from "$DFROM" --to "$DTO" --folder "$FOLDER" --name "$FNAME"
           if [ "${{ inputs.to_drive }}" = "true" ]; then set -- "$@" --to-drive; fi
           if [ "${{ inputs.drop_repeats }}" = "true" ]; then set -- "$@" --drop-repeats; fi
           python -u week_phase3.py "$@"

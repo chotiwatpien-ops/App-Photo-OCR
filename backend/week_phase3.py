@@ -290,8 +290,10 @@ def removed_sheet(data, dropped, held):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="ออกไฟล์ของสัปดาห์เดียวในรูปแบบ Phase 3 (ไฟล์แยก)")
-    ap.add_argument("--from", dest="d_from", required=True)
-    ap.add_argument("--to", dest="d_to", required=True)
+    ap.add_argument("--from", dest="d_from", required=True, help="วันแรกของสัปดาห์ (หลายสัปดาห์: คั่นด้วยจุลภาค)")
+    ap.add_argument("--to", dest="d_to", required=True, help="วันสุดท้ายของสัปดาห์ (เรียงคู่กับ --from)")
+    ap.add_argument("--folder", default="", help="วางไฟล์ในโฟลเดอร์ชื่อนี้ใต้ Exports (สร้างให้ถ้ายังไม่มี)")
+    ap.add_argument("--name", default="", help="ชื่อไฟล์ที่จะวาง (ว่าง = ตั้งจากสัปดาห์)")
     ap.add_argument("--xlsx", help="เขียนไฟล์ไว้ที่นี่")
     ap.add_argument("--to-drive", action="store_true", help="วางไฟล์ลง Drive ข้างไฟล์ประจำสัปดาห์")
     ap.add_argument("--keep", default="", help="id ที่คนเปิดรูปแล้วเลือกเก็บ ในรหัสที่ค่ารอบไม่ตรงกัน (คั่นด้วยจุลภาค)")
@@ -300,9 +302,21 @@ def main(argv=None):
     a = ap.parse_args(argv)
     sys.stdout.reconfigure(encoding="utf-8")
     db.init_db()
-    rows = week_rows(a.d_from, a.d_to)
-    print(f"สัปดาห์ {a.d_from}..{a.d_to} ({week_label(a.d_from)}): {len(rows):,} แถว")
-    print("  " + " · ".join(f"{k or '?'} {v:,}" for k, v in Counter(r.get("category") for r in rows).most_common()))
+    # one file may carry several weeks: Ops reads the re-delivery of W34 and W35 as one file
+    # in one folder, not four files beside the weekly ones (Fiat 2026-09-23)
+    froms = [x for x in a.d_from.replace(" ", "").split(",") if x]
+    tos = [x for x in a.d_to.replace(" ", "").split(",") if x]
+    if len(froms) != len(tos):
+        print("✗ --from กับ --to ต้องมีจำนวนเท่ากัน")
+        return 1
+    rows = []
+    for f, t in zip(froms, tos):
+        part = week_rows(f, t)
+        print(f"สัปดาห์ {f}..{t} ({week_label(f)}): {len(part):,} แถว")
+        print("  " + " · ".join(f"{k or '?'} {v:,}" for k, v in Counter(r.get("category") for r in part).most_common()))
+        rows += part
+    if len(froms) > 1:
+        print(f"รวมทั้งหมด {len(rows):,} แถว ในไฟล์เดียว")
     lines = sum(1 for r in rows if any(r.get(k) for k in ("discount", "insurance_fee", "passenger_tolls")))
     print(f"  แถวที่มีบรรทัดส่วนลด/ประกัน/ทางด่วนแยกแล้ว {lines:,}")
     if not rows:
@@ -321,15 +335,21 @@ def main(argv=None):
     data = excel_writer.build_fare_lines_workbook(rows, every_week=True)
     if dropped is not None:
         data = removed_sheet(data, dropped, held)
-    name = file_name(a.d_from, clean=a.drop_repeats)
+    name = a.name or (file_name(froms[0], clean=a.drop_repeats) if len(froms) == 1 else
+                      f"Rider Trips {'-'.join(week_label(f) for f in froms)} Phase 3.xlsx")
     if a.xlsx:
         open(a.xlsx, "wb").write(data)
         print(f"เขียนไฟล์แล้ว: {a.xlsx}")
     if a.to_drive:
         import config
         import roster
-        fid = roster._drive().upload_xlsx(config.DRIVE_EXPORTS_FOLDER_ID, name, data)
-        print(f"วางลง Drive แล้ว: {name} → https://drive.google.com/file/d/{fid}/view")
+        drive = roster._drive()
+        where = config.DRIVE_EXPORTS_FOLDER_ID
+        if a.folder:
+            where = drive.ensure_folder(where, a.folder)
+        fid = drive.upload_xlsx(where, name, data)
+        print(f"วางลง Drive แล้ว: {(a.folder + '/') if a.folder else ''}{name}"
+              f" → https://drive.google.com/file/d/{fid}/view")
     if not (a.xlsx or a.to_drive):
         print(f"\n(นับอย่างเดียว — ใส่ --to-drive เพื่อวาง '{name}' ลง Drive)")
     return 0

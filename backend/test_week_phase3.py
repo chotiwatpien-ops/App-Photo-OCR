@@ -136,7 +136,8 @@ check("❗ รูปติดกัน ค่ารอบเท่ากัน �
 import fix_rows                                                 # noqa: E402
 with db.engine.begin() as c:
     fx = c.execute(insert(db.trips).values(job_id=j1, file_name="k.jpg", status="done", committed=1,
-                                           base_fare=0.0, net_earnings=104.0, turbo=5.0)).inserted_primary_key[0]
+                                           trip_date="2026-08-19", base_fare=0.0, net_earnings=104.0,
+                                           turbo=5.0)).inserted_primary_key[0]
 check("fix_rows: รายงานอย่างเดียวไม่เขียน",
       fix_rows.main(["--fix", f"{fx} base_fare 0 99", "--why", "สลิปพิมพ์ 99"]) == 0
       and db.get_trip(fx)["base_fare"] == 0)
@@ -146,6 +147,15 @@ check("fix_rows: ค่าเดิมตรง → แก้ และลงโ
 check("fix_rows: ค่าในแถวเปลี่ยนไปแล้ว → ไม่ทับ",
       fix_rows.main(["--fix", f"{fx} base_fare 0 50", "--why", "x", "--apply"]) == 1
       and db.get_trip(fx)["base_fare"] == 99)
+
+# --- several weeks in one file, in a folder of their own (Fiat 2026-09-23) ----------------------
+both = os.path.join(WORK, "both.xlsx")
+check("สองสัปดาห์ในไฟล์เดียวรันได้",
+      wp.main(["--from", f"{W34[0]},{W35[0]}", "--to", f"{W34[1]},{W35[1]}", "--xlsx", both]) == 0)
+wsb = load_workbook(both).active
+check("ไฟล์รวมมีแถวของทั้งสองสัปดาห์", wsb.max_row == 1 + len(wp.week_rows(*W34)) + len(wp.week_rows(*W35)))
+check("จำนวน --from กับ --to ไม่เท่ากัน → ไม่เขียนอะไร",
+      wp.main(["--from", f"{W34[0]},{W35[0]}", "--to", W34[1], "--xlsx", both]) == 1)
 
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
