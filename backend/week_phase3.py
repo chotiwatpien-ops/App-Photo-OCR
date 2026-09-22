@@ -209,6 +209,11 @@ def same_trip_groups(rows):
                     continue                   # both print the passenger's figures, and they differ
                 if not (pa or pb):
                     continue                   # two tops: two trips, each with a bottom of its own
+                da, db_ = a.get("distance_km"), b.get("distance_km")
+                if da and db_ and abs(da - db_) > 0.05:
+                    # ฿24 over a 23/24 fee card is every other short trip: เสน่ห์ 17 and 18 print the
+                    # same figures and stand side by side, but one ran 1.95 km and the other 1.65
+                    continue
                 na, nb = _num(a.get("file_name")), _num(b.get("file_name"))
                 same_upload = _family(a.get("file_name")) == _family(b.get("file_name"))
                 adjacent = same_upload and na is not None and nb is not None and abs(na - nb) <= 2

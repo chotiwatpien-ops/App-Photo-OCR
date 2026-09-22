@@ -123,6 +123,14 @@ M = [row(21, "MyImage-1787829394-00.jpg", 28, 28, 40, 30, t="12:31", rider="พ�
      row(26, "Screenshot 2026-08-28 124219.png", 25, 25, t="12:42", rider="อนุรักษ์")]
 kept, dropped, _ = wp.drop_repeats(M)
 check("❗ ชื่อแบบ MyImage-…-00 / …_0_…_0 / Screenshot ในอัปเดียวกัน ค่ารอบเท่ากัน ไม่ถูกรวม", not dropped)
+# เสน่ห์ 17 and 18: side by side, same ฿24, same 23/24 card — and 1.95 km against 1.65 km
+S = [{**row(31, "เสน่ห์ 17.jpg", 24, 24, 23, 24, t="12:57", rider="เสน่ห์"), "distance_km": 1.95},
+     {**row(32, "เสน่ห์ 18.jpg", 24, 24, 23, 24, t="12:58", rider="เสน่ห์"), "distance_km": 1.65},
+     {**row(33, "เสน่ห์ 9.jpg", 79, 79, 93, 105, t="13:04", rider="เสน่ห์"), "distance_km": 10.93},
+     {**row(34, "เสน่ห์ 11.jpg", 79, 79, 93, 105, t="13:04", rider="เสน่ห์"), "distance_km": 10.93}]
+kept, dropped, _ = wp.drop_repeats(S)
+check("❗ รูปติดกัน ค่ารอบเท่ากัน แต่ระยะทางต่างกัน = คนละงาน · ระยะทางเท่ากัน = งานเดียวกัน",
+      {31, 32} <= {r["id"] for r in kept} and [r["id"] for r, _k, _w in dropped] in ([33], [34]))
 
 # --- fix_rows: a figure is changed only where the row still holds what a person saw --------------
 import fix_rows                                                 # noqa: E402
