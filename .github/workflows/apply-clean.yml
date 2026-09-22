@@ -1,0 +1,65 @@
+name: Apply clean — เขียนผลคลีนของสัปดาห์ลงฐานข้อมูล และจัดโฟลเดอร์รูปให้ตรง
+
+# Every repeat the clean copy leaves out becomes status 'duplicate' (pointing at the row that
+# stands for its trip, reason in the note, out of the delivered file), so the dashboard, the
+# week's scorecard, Rider Trips.xlsx and the duplicate report all say what the clean copy says.
+# Pictures no remaining row names move to the week's _แทนที่แล้ว in Exports. Nothing is deleted;
+# `undo` puts every row this set aside back. Report-only unless `apply` is ticked.
+
+on:
+  workflow_dispatch:
+    inputs:
+      date_from:
+        description: "วันแรกของสัปดาห์ (จันทร์) เช่น 2026-08-17"
+        type: string
+        default: "2026-08-17"
+      date_to:
+        description: "วันสุดท้ายของสัปดาห์ เช่น 2026-08-23"
+        type: string
+        default: "2026-08-23"
+      keep:
+        description: "id ที่คนเปิดรูปแล้วเลือกเก็บ ในรหัสที่ค่ารอบไม่ตรงกัน (คั่นด้วยจุลภาค)"
+        type: string
+        default: ""
+      undo:
+        description: "คืนทุกแถวที่เคยพักไว้ในสัปดาห์นี้"
+        type: boolean
+        default: false
+      apply:
+        description: "เขียนจริง (ไม่ติ๊ก = รายงานอย่างเดียว)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: drive-write
+  cancel-in-progress: false
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: Apply the clean week
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          DRIVE_OAUTH_TOKEN_JSON: ${{ secrets.DRIVE_OAUTH_TOKEN_JSON }}
+          DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
+          DRIVE_EXPORTS_FOLDER_ID: ${{ secrets.DRIVE_EXPORTS_FOLDER_ID }}
+          TZ: Asia/Bangkok
+          DFROM: ${{ inputs.date_from }}
+          DTO: ${{ inputs.date_to }}
+          KEEP: ${{ inputs.keep }}
+        run: |
+          echo "ได้รับ: $DFROM..$DTO keep='$KEEP' undo='${{ inputs.undo }}' apply='${{ inputs.apply }}'"
+          set -- --from "$DFROM" --to "$DTO" --keep "$KEEP"
+          if [ "${{ inputs.undo }}" = "true" ]; then set -- "$@" --undo; fi
+          if [ "${{ inputs.apply }}" = "true" ]; then set -- "$@" --apply; fi
+          python -u apply_clean.py "$@"

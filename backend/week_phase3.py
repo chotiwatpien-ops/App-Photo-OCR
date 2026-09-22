@@ -38,13 +38,17 @@ def file_name(d_from, clean=False):
     return f"Rider Trips {week_label(d_from)} Phase 3{' (คลีน)' if clean else ''}.xlsx"
 
 
-def drop_repeats(rows):
+def drop_repeats(rows, keep=()):
     """(kept, dropped, held): one row per booking code — the one that says the most.
 
     W34 carried 293 booking codes on 642 rows, nearly all the same slip sent again and filed under
     another rider (Fiat 2026-09-22: clean the week, one step at a time). `dropped` is [(row, the
     kept row)]. A code whose rows disagree on the base fare is not a repeat anyone can be sure of —
-    a misread code looks the same — so all its rows stay, and `held` lists them for a person."""
+    a misread code looks the same — so all its rows stay, and `held` lists them for a person, unless
+    `keep` names the row a person picked after opening the pictures (W34: all seven such codes were
+    one trip, one row with the fare misread — 175 for 184, 103 for 108 — or joined to another trip's
+    bottom half)."""
+    keep = set(keep or ())
     full = {norm_code(r.get("booking_code")) for r in rows
             if r.get("booking_code") and not cut_short(r["booking_code"])}
     by_code = {}
@@ -60,7 +64,13 @@ def drop_repeats(rows):
         if len(g) < 2:
             continue
         if len({r.get("base_fare") for r in g if r.get("base_fare")}) > 1:
-            held.append(g)
+            chosen = [r for r in g if r["id"] in keep]
+            if len(chosen) != 1:
+                held.append(g)
+                continue
+            for r in g:
+                if r is not chosen[0]:
+                    drop[r["id"]] = (r, chosen[0], "รหัสการจองซ้ำ (เปิดรูปแล้ว: ค่ารอบของแถวนี้อ่านผิดหรือต่อผิดคู่)")
             continue
         # the row that says the most stands for the trip (a joined picture over the half the album
         # counted on its own: W34's 16.jpg is a top with no passenger figures, 'วรวิทย์ 4.jpg' the
@@ -70,10 +80,27 @@ def drop_repeats(rows):
             if r is not first:
                 drop[r["id"]] = (r, first, "รหัสการจองซ้ำ")
     kept = [r for r in rows if r["id"] not in drop]
+    # the same picture under two riders, read without its code: equal in day, time, fare, distance
+    # and pick-up to the last character. W34's พงศ์กฤษณ์ and วิมลวรรณ hold the very same
+    # MyImage-….jpg files; all 13 such sets were opened and each was one trip (2026-09-23)
+    same = {}
+    for r in kept:
+        if r.get("base_fare") and r.get("distance_km") and (r.get("pickup_text") or "").strip():
+            same.setdefault((r.get("trip_date"), r.get("trip_time"), r["base_fare"], r["distance_km"],
+                             r["pickup_text"].strip()), []).append(r)
+    for g in same.values():
+        if len(g) < 2 or not all(codes_agree(a.get("booking_code"), b.get("booking_code"))
+                                 for a in g for b in g):
+            continue
+        first = max(g, key=_richness)
+        for r in g:
+            if r is not first:
+                drop[r["id"]] = (r, first, "เหมือนกันทุกช่อง (วัน เวลา ค่ารอบ ระยะทาง จุดรับ) ไม่มีรหัสการจองให้แยก")
+    kept = [r for r in rows if r["id"] not in drop]
     # the same trip twice under one rider, with no code to say so (W34 วรวิทย์, 2026-09-23)
-    for keep, gone in same_trip_groups(kept):
+    for stands, gone in same_trip_groups(kept):
         for r, why in gone:
-            drop[r["id"]] = (r, keep, why)
+            drop[r["id"]] = (r, stands, why)
     kept = [r for r in rows if r["id"] not in drop]
     return kept, list(drop.values()), held
 
@@ -267,6 +294,7 @@ def main(argv=None):
     ap.add_argument("--to", dest="d_to", required=True)
     ap.add_argument("--xlsx", help="เขียนไฟล์ไว้ที่นี่")
     ap.add_argument("--to-drive", action="store_true", help="วางไฟล์ลง Drive ข้างไฟล์ประจำสัปดาห์")
+    ap.add_argument("--keep", default="", help="id ที่คนเปิดรูปแล้วเลือกเก็บ ในรหัสที่ค่ารอบไม่ตรงกัน (คั่นด้วยจุลภาค)")
     ap.add_argument("--drop-repeats", action="store_true",
                     help="ฉบับคลีน: รหัสการจองเดียวกันเก็บใบที่อ่านก่อน ตัดที่เหลือ (ไฟล์แยก ไม่แตะฐานข้อมูล)")
     a = ap.parse_args(argv)
@@ -281,7 +309,7 @@ def main(argv=None):
         return 1
     dropped = held = None
     if a.drop_repeats:
-        rows, dropped, held = drop_repeats(rows)
+        rows, dropped, held = drop_repeats(rows, keep={int(x) for x in a.keep.replace(" ", "").split(",") if x})
         for why, k in Counter(w for _r, _k, w in dropped).most_common():
             print(f"    ตัด {k:,} แถว: {why}")
         print("    ไรเดอร์ที่ถูกตัดเพราะงานเดียวกันในคนเดียว: " + " · ".join(
