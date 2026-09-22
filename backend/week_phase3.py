@@ -45,24 +45,177 @@ def drop_repeats(rows):
     another rider (Fiat 2026-09-22: clean the week, one step at a time). `dropped` is [(row, the
     kept row)]. A code whose rows disagree on the base fare is not a repeat anyone can be sure of —
     a misread code looks the same — so all its rows stay, and `held` lists them for a person."""
+    full = {norm_code(r.get("booking_code")) for r in rows
+            if r.get("booking_code") and not cut_short(r["booking_code"])}
     by_code = {}
     for r in rows:
-        code = (r.get("booking_code") or "").strip().upper()
+        code = norm_code(r.get("booking_code"))
+        if code and cut_short(r["booking_code"]):
+            whole = [c for c in full if c.startswith(code)]
+            code = whole[0] if len(whole) == 1 else code + "..."
         if code:
             by_code.setdefault(code, []).append(r)
     drop, held = {}, []
     for g in by_code.values():
         if len(g) < 2:
             continue
-        if len({r.get("base_fare") for r in g}) > 1:
+        if len({r.get("base_fare") for r in g if r.get("base_fare")}) > 1:
             held.append(g)
             continue
-        first = min(g, key=lambda r: r["id"])
+        # the row read first — unless it is a half with no base, when the priced one stands for it
+        first = min(g, key=lambda r: (not r.get("base_fare"), r["id"]))
         for r in g:
             if r is not first:
-                drop[r["id"]] = (r, first)
+                drop[r["id"]] = (r, first, "รหัสการจองซ้ำ")
+    kept = [r for r in rows if r["id"] not in drop]
+    # the same trip twice under one rider, with no code to say so (W34 วรวิทย์, 2026-09-23)
+    for keep, gone in same_trip_groups(kept):
+        for r, why in gone:
+            drop[r["id"]] = (r, keep, why)
     kept = [r for r in rows if r["id"] not in drop]
     return kept, list(drop.values()), held
+
+
+def _num(name):
+    """'วรวิทย์ 12.jpg' / '12.jpg' → 12; None when the name carries no picture number."""
+    import re
+    m = re.findall(r"\d+", (name or "").rsplit(".", 1)[0])
+    return int(m[-1]) if m else None
+
+
+def _minutes(t):
+    """'21:46' → 1306; a time bucket ('18:00-23:59') or nothing → None."""
+    import re
+    m = re.fullmatch(r"\s*(\d{1,2}):(\d{2})\s*", t or "")
+    return int(m.group(1)) * 60 + int(m.group(2)) if m else None
+
+
+def _richness(r):
+    """Which of a trip's rows to keep: the one that says the most — a booking code, both halves
+    (the passenger block), a base fare — and, all else equal, the one read first."""
+    return (bool(r.get("base_fare")), bool((r.get("booking_code") or "").strip()),
+            r.get("passenger_paid") is not None, bool(r.get("pickup_text")), -r["id"])
+
+
+def norm_code(code):
+    """A booking code as the reader's two usual confusions leave it: O for 0 and I for 1, and
+    without the '...' a slip prints when the code is too long for the line. #8210 reads
+    'A-9O3NIXK...' where the same slip uploaded again reads 'A-903NIXK'."""
+    c = (code or "").strip().upper().replace("O", "0").replace("I", "1").replace("…", "...")
+    return c[:-3].rstrip() if c.endswith("...") else c
+
+
+def cut_short(code):
+    return (code or "").strip().endswith(("...", "…"))
+
+
+def codes_agree(a, b):
+    """Two rows' codes can be one slip's: equal, or one cut short and the start of the other."""
+    ca, cb = norm_code(a), norm_code(b)
+    if not ca or not cb:
+        return True
+    if ca == cb:
+        return True
+    return (cut_short(a) and cb.startswith(ca)) or (cut_short(b) and ca.startswith(cb))
+
+
+def same_trip_groups(rows):
+    """[(kept row, [(dropped row, why)])] — rows of ONE rider that are one trip.
+
+    วรวิทย์'s W34 came in twice: an album of halves (1.jpg–63.jpg), where many bottom halves were
+    counted as trips of their own, and a second upload of the same trips already joined. 49 rows,
+    about 28 trips (Fiat 2026-09-23). A booking code only settles the rows that carry one — most of
+    the album's tops do not — so rows of the same rider are also one trip when:
+      * a bottom half with no base (paid and fare only) carries the paid and fare of a row that has
+        a base — the half the reader could not price;
+      * two rows print the same base AND the same คุณได้รับ, and one of them carries nothing the
+        other contradicts: no second booking code, no different passenger figures. Two album tops
+        of the same fare are two trips unless their pictures stand next to each other (the two
+        halves of one slip are shot back to back).
+    Kept is the row that says the most; each dropped row says why."""
+    by_rider = {}
+    for r in rows:
+        by_rider.setdefault((r.get("driver_name"), r.get("category")), []).append(r)
+    out = []
+    for _k, rs in by_rider.items():
+        parent = {r["id"]: r["id"] for r in rs}
+        why = {}
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        def join(a, b, reason):
+            ra, rb = find(a["id"]), find(b["id"])
+            if ra != rb:
+                parent[rb] = ra
+                why.setdefault(b["id"], reason)
+                why.setdefault(a["id"], reason)
+
+        code = lambda r: norm_code(r.get("booking_code"))
+        pt = lambda r: (r.get("passenger_paid"), r.get("passenger_total"))
+        priced = [r for r in rs if r.get("base_fare")]
+        for b in rs:
+            if b.get("base_fare") or None in pt(b):
+                continue
+            match = [a for a in priced if pt(a) == pt(b)]
+            if len({(a.get("base_fare"), a.get("net_earnings")) for a in match}) == 1:
+                join(match[0], b, "ครึ่งล่างของงานนี้ (ไม่มีค่ารอบ ยอดผู้โดยสารตรงกัน)")
+                continue
+            # no priced row carries its passenger figures: its own top half is the one priced row
+            # a few pictures away that has no passenger figures of its own (24.jpg is the bottom of
+            # 22.jpg's ฿247 trip; the second upload that joined them was already set aside)
+            nb = _num(b.get("file_name"))
+            near = [a for a in priced if pt(a) == (None, None) and nb is not None
+                    and _num(a.get("file_name")) is not None and abs(_num(a["file_name"]) - nb) <= 3
+                    and (a.get("file_name") or "")[:1].isdigit() == (b.get("file_name") or "")[:1].isdigit()]
+            # a slip is shot top first: of two tops either side, the one just before is its own
+            before = [a for a in near if _num(a["file_name"]) < nb]
+            pick = (max(before, key=lambda a: _num(a["file_name"])) if before
+                    else near[0] if len(near) == 1 else None)
+            if pick is not None:
+                join(pick, b, "ครึ่งล่างของงานนี้ (ไม่มีค่ารอบ รูปติดกับครึ่งบน)")
+        for b in rs:
+            # a row with nothing on it at all — no base, no คุณได้รับ, no passenger figure — is
+            # not a trip anyone can bill; it joins the picture beside it, where there is one
+            if b.get("base_fare") or b.get("net_earnings") or any(pt(b)):
+                continue
+            nb = _num(b.get("file_name"))
+            near = [a for a in rs if a is not b and nb is not None and _num(a.get("file_name")) is not None
+                    and abs(_num(a["file_name"]) - nb) <= 1]
+            if near:
+                join(max(near, key=_richness), b, "แถวว่างทุกช่อง (รูปติดกับงานนี้)")
+        for i, a in enumerate(priced):
+            for b in priced[i + 1:]:
+                if (a.get("base_fare"), a.get("net_earnings")) != (b.get("base_fare"), b.get("net_earnings")):
+                    continue
+                if not codes_agree(a.get("booking_code"), b.get("booking_code")):
+                    continue
+                if None not in pt(a) and None not in pt(b) and pt(a) != pt(b):
+                    continue
+                full = lambda r: bool(code(r)) or None not in pt(r)
+                na, nb = _num(a.get("file_name")), _num(b.get("file_name"))
+                adjacent = na is not None and nb is not None and abs(na - nb) <= 2 \
+                    and (a.get("file_name") or "")[:1].isdigit() == (b.get("file_name") or "")[:1].isdigit()
+                # pictures apart must also have been shot within the same few minutes: the
+                # second upload keeps the screenshots' own clock, and two different ฿26 Saver
+                # trips of one rider are the common case this must not merge
+                ma, mb = _minutes(a.get("trip_time")), _minutes(b.get("trip_time"))
+                close = ma is not None and mb is not None and abs(ma - mb) <= 3
+                if adjacent or (close and (full(a) != full(b) or (full(a) and full(b)))):
+                    join(a, b, "ค่ารอบและคุณได้รับตรงกัน ไรเดอร์เดียวกัน"
+                         + (" (รูปติดกัน)" if adjacent else " (เวลาในรูปห่างไม่เกิน 3 นาที)"))
+        groups = {}
+        for r in rs:
+            groups.setdefault(find(r["id"]), []).append(r)
+        for g in groups.values():
+            if len(g) < 2:
+                continue
+            keep = max(g, key=_richness)
+            out.append((keep, [(r, why.get(r["id"], "งานเดียวกัน")) for r in g if r is not keep]))
+    return out
 
 
 def removed_sheet(data, dropped, held):
@@ -71,13 +224,14 @@ def removed_sheet(data, dropped, held):
     import io
     import openpyxl
     wb = openpyxl.load_workbook(io.BytesIO(data))
-    cols = ["id ที่ตัดออก", "ไรเดอร์", "Service Type", "วันที่", "รหัสการจอง", "ค่ารอบ", "รูปส่งลูกค้า",
-            "เก็บไว้ที่ id", "ไรเดอร์ที่เก็บไว้", "รูปส่งลูกค้าที่เก็บไว้"]
+    cols = ["id ที่ตัดออก", "ไรเดอร์", "Service Type", "วันที่", "รหัสการจอง", "ค่ารอบ", "รูปส่งลูกค้า", "ไฟล์",
+            "เหตุผล", "เก็บไว้ที่ id", "ไรเดอร์ที่เก็บไว้", "รูปส่งลูกค้าที่เก็บไว้", "ไฟล์ที่เก็บไว้", "ลิงก์รูปที่ตัด"]
     ws = wb.create_sheet("ตัดออก-งานซ้ำ")
     ws.append(cols)
-    for r, k in sorted(dropped, key=lambda x: (x[0].get("trip_date") or "", x[0]["id"])):
+    for r, k, why in sorted(dropped, key=lambda x: (x[2], x[0].get("driver_name") or "", x[0]["id"])):
         ws.append([r["id"], r.get("driver_name"), r.get("service_type"), r.get("trip_date"), r.get("booking_code"),
-                   r.get("base_fare"), r.get("customer_image"), k["id"], k.get("driver_name"), k.get("customer_image")])
+                   r.get("base_fare"), r.get("customer_image"), r.get("file_name"), why, k["id"], k.get("driver_name"),
+                   k.get("customer_image"), k.get("file_name"), r.get("source_url")])
     ws2 = wb.create_sheet("ยังไม่ตัด-ค่ารอบไม่ตรง")
     ws2.append(["ชุด", "id", "ไรเดอร์", "รหัสการจอง", "ค่ารอบ", "รูปส่งลูกค้า", "ไฟล์", "ลิงก์รูป"])
     for i, g in enumerate(held, 1):
@@ -110,7 +264,11 @@ def main(argv=None):
     dropped = held = None
     if a.drop_repeats:
         rows, dropped, held = drop_repeats(rows)
-        print(f"  ฉบับคลีน: ตัดงานซ้ำ {len(dropped):,} แถว (ค่ารอบ ฿{sum(r.get('base_fare') or 0 for r, _k in dropped):,.0f})"
+        for why, k in Counter(w for _r, _k, w in dropped).most_common():
+            print(f"    ตัด {k:,} แถว: {why}")
+        print("    ไรเดอร์ที่ถูกตัดเพราะงานเดียวกันในคนเดียว: " + " · ".join(
+            f"{d} {n}" for d, n in Counter(r.get("driver_name") for r, _k, w in dropped if w != "รหัสการจองซ้ำ").most_common(12)))
+        print(f"  ฉบับคลีน: ตัดงานซ้ำ {len(dropped):,} แถว (ค่ารอบ ฿{sum(r.get('base_fare') or 0 for r, _k, _w in dropped):,.0f})"
               f" · เหลือ {len(rows):,} แถว · รหัสที่ค่ารอบไม่ตรง ยังไม่ตัด {len(held)} รหัส")
         print("  เหลือตาม Service Type: " + " · ".join(f"{k or '?'} {v:,}" for k, v in
                                                        Counter(r.get("service_type") for r in rows).most_common()))

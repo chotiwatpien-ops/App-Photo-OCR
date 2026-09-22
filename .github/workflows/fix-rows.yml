@@ -1,0 +1,50 @@
+name: Fix rows — แก้ตัวเลขที่อ่านผิดในแถวที่ระบุ (เช็กค่าเดิมก่อนเขียน)
+
+# A person opened the slip and saw the reader got a figure wrong. Each fix names the row, the
+# field, the value the row holds now and the value it should hold; a row whose value has changed
+# since is left alone and reported. The reason goes into the row's note. Report-only unless
+# `apply` is ticked.
+
+on:
+  workflow_dispatch:
+    inputs:
+      fix:
+        description: "'id ช่อง ค่าเดิม ค่าใหม่' หลายรายการคั่นด้วย ; เช่น 8725 base_fare 0 99"
+        type: string
+        required: true
+      why:
+        description: "เหตุผล (ลงในโน้ตของแถว)"
+        type: string
+        required: true
+      apply:
+        description: "เขียนจริง (ไม่ติ๊ก = รายงานอย่างเดียว)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: drive-write
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: Fix the rows
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TZ: Asia/Bangkok
+          FIX: ${{ inputs.fix }}
+          WHY: ${{ inputs.why }}
+        run: |
+          echo "ได้รับ: fix='$FIX' apply='${{ inputs.apply }}'"
+          set -- --fix "$FIX" --why "$WHY"
+          if [ "${{ inputs.apply }}" = "true" ]; then set -- "$@" --apply; fi
+          python -u fix_rows.py "$@"
