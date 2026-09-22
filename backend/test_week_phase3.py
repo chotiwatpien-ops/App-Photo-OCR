@@ -114,6 +114,15 @@ check("รหัสที่ถูกตัด '...' และ O/0 ยังเ�
 check("แถวว่างทุกช่องไปรวมกับรูปข้างกัน", 9 not in ids and 10 in ids)
 check("❗ งาน ฿26 สองงานของคนเดียวกันที่เวลาห่างกัน ไม่ถูกรวม", {11, 12} <= ids)
 check("ทุกแถวที่ตัดมีเหตุผล", all(w for _r, _k, w in dropped))
+# the first W34 run joined these — the '-00' and '_0' every such name ends in looked like one number
+M = [row(21, "MyImage-1787829394-00.jpg", 28, 28, 40, 30, t="12:31", rider="พงศ์กฤษณ์"),
+     row(22, "MyImage-1787829600-00.jpg", 28, 28, t="12:34", rider="พงศ์กฤษณ์"),
+     row(23, "48743_0_48744_0.jpg", 26, 26, 30, 26, t="20:01", rider="สนธยา"),
+     row(24, "48757_0_48758_0.jpg", 26, 26, t="20:02", rider="สนธยา"),
+     row(25, "Screenshot 2026-08-28 124028.png", 25, 25, 30, 25, t="12:40", rider="อนุรักษ์"),
+     row(26, "Screenshot 2026-08-28 124219.png", 25, 25, t="12:42", rider="อนุรักษ์")]
+kept, dropped, _ = wp.drop_repeats(M)
+check("❗ ชื่อแบบ MyImage-…-00 / …_0_…_0 / Screenshot ในอัปเดียวกัน ค่ารอบเท่ากัน ไม่ถูกรวม", not dropped)
 
 # --- fix_rows: a figure is changed only where the row still holds what a person saw --------------
 import fix_rows                                                 # noqa: E402

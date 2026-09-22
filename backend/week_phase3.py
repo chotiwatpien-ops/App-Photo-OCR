@@ -39,7 +39,7 @@ def file_name(d_from, clean=False):
 
 
 def drop_repeats(rows):
-    """(kept, dropped, held): one row per booking code — the one read first, as the round keeps.
+    """(kept, dropped, held): one row per booking code — the one that says the most.
 
     W34 carried 293 booking codes on 642 rows, nearly all the same slip sent again and filed under
     another rider (Fiat 2026-09-22: clean the week, one step at a time). `dropped` is [(row, the
@@ -62,8 +62,10 @@ def drop_repeats(rows):
         if len({r.get("base_fare") for r in g if r.get("base_fare")}) > 1:
             held.append(g)
             continue
-        # the row read first — unless it is a half with no base, when the priced one stands for it
-        first = min(g, key=lambda r: (not r.get("base_fare"), r["id"]))
+        # the row that says the most stands for the trip (a joined picture over the half the album
+        # counted on its own: W34's 16.jpg is a top with no passenger figures, 'วรวิทย์ 4.jpg' the
+        # same trip whole); all else equal, the one read first
+        first = max(g, key=_richness)
         for r in g:
             if r is not first:
                 drop[r["id"]] = (r, first, "รหัสการจองซ้ำ")
@@ -77,10 +79,19 @@ def drop_repeats(rows):
 
 
 def _num(name):
-    """'วรวิทย์ 12.jpg' / '12.jpg' → 12; None when the name carries no picture number."""
+    """The picture's number in its album: 'วรวิทย์ 12.jpg' → 12, '48666_0_48667_0.jpg' → 48666,
+    'MyImage-1787829600-00.jpg' → 1787829600 — the longest run of digits, not the last one (the
+    '_0' and '-00' LINE and phones append made every such picture look next to every other)."""
     import re
     m = re.findall(r"\d+", (name or "").rsplit(".", 1)[0])
-    return int(m[-1]) if m else None
+    return int(max(m, key=len)) if m else None
+
+
+def _family(name):
+    """How an upload names its pictures, digits taken out: '41.jpg' and 'วรวิทย์ 14.jpg' are two
+    uploads; 'Screenshot 2026-08-28 124028.png' and '…124219.png' are one."""
+    import re
+    return re.sub(r"\d+", "#", (name or "").rsplit(".", 1)[0]).strip()
 
 
 def _minutes(t):
@@ -193,20 +204,22 @@ def same_trip_groups(rows):
                     continue
                 if not codes_agree(a.get("booking_code"), b.get("booking_code")):
                     continue
-                if None not in pt(a) and None not in pt(b) and pt(a) != pt(b):
-                    continue
-                full = lambda r: bool(code(r)) or None not in pt(r)
+                pa, pb = a.get("passenger_paid") is not None, b.get("passenger_paid") is not None
+                if pa and pb and any(x is not None and y is not None and x != y for x, y in zip(pt(a), pt(b))):
+                    continue                   # both print the passenger's figures, and they differ
+                if not (pa or pb):
+                    continue                   # two tops: two trips, each with a bottom of its own
                 na, nb = _num(a.get("file_name")), _num(b.get("file_name"))
-                adjacent = na is not None and nb is not None and abs(na - nb) <= 2 \
-                    and (a.get("file_name") or "")[:1].isdigit() == (b.get("file_name") or "")[:1].isdigit()
-                # pictures apart must also have been shot within the same few minutes: the
-                # second upload keeps the screenshots' own clock, and two different ฿26 Saver
-                # trips of one rider are the common case this must not merge
+                same_upload = _family(a.get("file_name")) == _family(b.get("file_name"))
+                adjacent = same_upload and na is not None and nb is not None and abs(na - nb) <= 2
+                # shot within a few minutes counts only across two uploads of the same trips: the
+                # second keeps the screenshots' own clock. Within one upload a rider shoots a whole
+                # evening's ฿24 trips minutes apart, and those are different trips.
                 ma, mb = _minutes(a.get("trip_time")), _minutes(b.get("trip_time"))
-                close = ma is not None and mb is not None and abs(ma - mb) <= 3
-                if adjacent or (close and (full(a) != full(b) or (full(a) and full(b)))):
+                close = (not same_upload) and ma is not None and mb is not None and abs(ma - mb) <= 3
+                if adjacent or close:
                     join(a, b, "ค่ารอบและคุณได้รับตรงกัน ไรเดอร์เดียวกัน"
-                         + (" (รูปติดกัน)" if adjacent else " (เวลาในรูปห่างไม่เกิน 3 นาที)"))
+                         + (" (รูปติดกัน)" if adjacent else " (อัปสองรอบ เวลาในรูปห่างไม่เกิน 3 นาที)"))
         groups = {}
         for r in rs:
             groups.setdefault(find(r["id"]), []).append(r)
