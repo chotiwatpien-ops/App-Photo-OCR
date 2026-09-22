@@ -34,8 +34,59 @@ def week_rows(d_from, d_to):
             .order_by(t.trip_date, j.driver_name, t.trip_time, t.id)).mappings().all()]
 
 
-def file_name(d_from):
-    return f"Rider Trips {week_label(d_from)} Phase 3.xlsx"
+def file_name(d_from, clean=False):
+    return f"Rider Trips {week_label(d_from)} Phase 3{' (คลีน)' if clean else ''}.xlsx"
+
+
+def drop_repeats(rows):
+    """(kept, dropped, held): one row per booking code — the one read first, as the round keeps.
+
+    W34 carried 293 booking codes on 642 rows, nearly all the same slip sent again and filed under
+    another rider (Fiat 2026-09-22: clean the week, one step at a time). `dropped` is [(row, the
+    kept row)]. A code whose rows disagree on the base fare is not a repeat anyone can be sure of —
+    a misread code looks the same — so all its rows stay, and `held` lists them for a person."""
+    by_code = {}
+    for r in rows:
+        code = (r.get("booking_code") or "").strip().upper()
+        if code:
+            by_code.setdefault(code, []).append(r)
+    drop, held = {}, []
+    for g in by_code.values():
+        if len(g) < 2:
+            continue
+        if len({r.get("base_fare") for r in g}) > 1:
+            held.append(g)
+            continue
+        first = min(g, key=lambda r: r["id"])
+        for r in g:
+            if r is not first:
+                drop[r["id"]] = (r, first)
+    kept = [r for r in rows if r["id"] not in drop]
+    return kept, list(drop.values()), held
+
+
+def removed_sheet(data, dropped, held):
+    """The clean file with the rows it left out, and the ones it would not decide, on sheets of
+    their own — so anyone can put a row back by hand."""
+    import io
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(data))
+    cols = ["id ที่ตัดออก", "ไรเดอร์", "Service Type", "วันที่", "รหัสการจอง", "ค่ารอบ", "รูปส่งลูกค้า",
+            "เก็บไว้ที่ id", "ไรเดอร์ที่เก็บไว้", "รูปส่งลูกค้าที่เก็บไว้"]
+    ws = wb.create_sheet("ตัดออก-งานซ้ำ")
+    ws.append(cols)
+    for r, k in sorted(dropped, key=lambda x: (x[0].get("trip_date") or "", x[0]["id"])):
+        ws.append([r["id"], r.get("driver_name"), r.get("service_type"), r.get("trip_date"), r.get("booking_code"),
+                   r.get("base_fare"), r.get("customer_image"), k["id"], k.get("driver_name"), k.get("customer_image")])
+    ws2 = wb.create_sheet("ยังไม่ตัด-ค่ารอบไม่ตรง")
+    ws2.append(["ชุด", "id", "ไรเดอร์", "รหัสการจอง", "ค่ารอบ", "รูปส่งลูกค้า", "ไฟล์", "ลิงก์รูป"])
+    for i, g in enumerate(held, 1):
+        for r in g:
+            ws2.append([i, r["id"], r.get("driver_name"), r.get("booking_code"), r.get("base_fare"),
+                        r.get("customer_image"), r.get("file_name"), r.get("source_url")])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def main(argv=None):
@@ -44,6 +95,8 @@ def main(argv=None):
     ap.add_argument("--to", dest="d_to", required=True)
     ap.add_argument("--xlsx", help="เขียนไฟล์ไว้ที่นี่")
     ap.add_argument("--to-drive", action="store_true", help="วางไฟล์ลง Drive ข้างไฟล์ประจำสัปดาห์")
+    ap.add_argument("--drop-repeats", action="store_true",
+                    help="ฉบับคลีน: รหัสการจองเดียวกันเก็บใบที่อ่านก่อน ตัดที่เหลือ (ไฟล์แยก ไม่แตะฐานข้อมูล)")
     a = ap.parse_args(argv)
     sys.stdout.reconfigure(encoding="utf-8")
     db.init_db()
@@ -54,8 +107,17 @@ def main(argv=None):
     print(f"  แถวที่มีบรรทัดส่วนลด/ประกัน/ทางด่วนแยกแล้ว {lines:,}")
     if not rows:
         return 1
+    dropped = held = None
+    if a.drop_repeats:
+        rows, dropped, held = drop_repeats(rows)
+        print(f"  ฉบับคลีน: ตัดงานซ้ำ {len(dropped):,} แถว (ค่ารอบ ฿{sum(r.get('base_fare') or 0 for r, _k in dropped):,.0f})"
+              f" · เหลือ {len(rows):,} แถว · รหัสที่ค่ารอบไม่ตรง ยังไม่ตัด {len(held)} รหัส")
+        print("  เหลือตาม Service Type: " + " · ".join(f"{k or '?'} {v:,}" for k, v in
+                                                       Counter(r.get("service_type") for r in rows).most_common()))
     data = excel_writer.build_fare_lines_workbook(rows, every_week=True)
-    name = file_name(a.d_from)
+    if dropped is not None:
+        data = removed_sheet(data, dropped, held)
+    name = file_name(a.d_from, clean=a.drop_repeats)
     if a.xlsx:
         open(a.xlsx, "wb").write(data)
         print(f"เขียนไฟล์แล้ว: {a.xlsx}")

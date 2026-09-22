@@ -20,6 +20,10 @@ on:
         description: "วางไฟล์ลง Drive (ไม่ติ๊ก = นับอย่างเดียว)"
         type: boolean
         default: false
+      drop_repeats:
+        description: "ฉบับคลีน: รหัสการจองเดียวกันเก็บใบที่อ่านก่อน ตัดที่เหลือ (ไฟล์แยกชื่อ '(คลีน)' ไม่แตะฐานข้อมูล)"
+        type: boolean
+        default: false
 
 concurrency:
   group: drive-write
@@ -51,4 +55,5 @@ jobs:
           echo "ได้รับ: $DFROM..$DTO to_drive='${{ inputs.to_drive }}'"
           set -- --from "$DFROM" --to "$DTO"
           if [ "${{ inputs.to_drive }}" = "true" ]; then set -- "$@" --to-drive; fi
+          if [ "${{ inputs.drop_repeats }}" = "true" ]; then set -- "$@" --drop-repeats; fi
           python -u week_phase3.py "$@"
