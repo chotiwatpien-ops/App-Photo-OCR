@@ -805,7 +805,71 @@ def _card_plus_green(nets, cards, greens):
     return None
 
 
-def _by_fee_card(nets, cards, nums, card_figs, neighbours=False):
+def _passenger_cards(seq):
+    """[(paid, [lines], total)] — the 'ค่าโดยสารของผู้โดยสารทั้งหมด' card, found by its sum.
+
+    It prints what the passenger paid, then the lines taken off it or added back (app fee, carbon
+    donation, insurance, the tip, a discount), then รวมค่าโดยสารของผู้โดยสาร. The reader keeps the
+    figures but not their signs, so a run 'paid, lines…, total' counts when some choice of signs
+    makes it add up — with the total below what was paid, as a tip always takes it down."""
+    out = []
+    for i, paid in enumerate(seq):
+        for k in range(i + 2, min(i + 8, len(seq))):
+            total, lines = seq[k], seq[i + 1:k]
+            if not (0 < total < paid) or any(x <= 0 or x >= paid for x in lines):
+                continue
+            for signs in range(1 << len(lines)):
+                s = sum(-x if signs >> j & 1 else x for j, x in enumerate(lines))
+                if abs(paid + s - total) < 0.01:
+                    out.append((paid, list(lines), total))
+                    break
+    return out
+
+
+def _tip_in_passenger_card(nets, cards, seq):
+    """Tier 3 when what lies between the top's net and the card's income is a line the passenger's
+    card takes off its fare — the tip, printed there as '−20' — and that card's total is the very
+    fare the fee card starts from.
+
+    2W-Home UploadJab (2026-09-22) sent four tipped trips whose bottom half is cut below the
+    driver's extra-income card, so the tip shows once, as the passenger's deduction: ฿58 over a
+    card reading 45 − 38 = 7 with 67 − 1 − 1 − 20 = 45 above it. The three-printings rule of
+    _tip_gap cannot see that, and 58 is more than half as much again as 38, which the weak
+    neighbour rule will not stretch to. The ฿1 fees are never a tip."""
+    chains = _passenger_cards(seq)
+    for net in nets:
+        for fare, inc, _cut in cards:
+            gap = net - inc
+            if gap < 2:
+                continue
+            for _paid, lines, total in chains:
+                if abs(total - fare) < 0.01 and any(abs(gap - x) < 0.01 for x in lines):
+                    return 3
+    return None
+
+
+def _green_is_tip(nets, greens, seq, cards=()):
+    """Tier 3 when the bottom's only green figure is the tip, not the round income.
+
+    A bottom cut just below the round-income card opens on 'รายได้เพิ่มเติมที่ไม่หักค่าธรรมเนียม':
+    ค่าทิป 20, its total ฿20 in green, then the passenger's card with −20 inside it. Read as the
+    income, ฿20 cannot explain a ฿59 top (2W-Home UploadJab 3361 + 3362, 2026-09-22). It is the
+    tip when the slip prints it three times and the passenger's card takes it off; the income is
+    then the top's net less the tip, and it has to sit below the fare the passenger's card ends on
+    by no more than Grab's cut could be."""
+    chains = _passenger_cards(seq)
+    for net in nets:
+        for tip in greens:
+            if tip <= 0 or _printed(seq, tip) < 3 or any(abs(tip - c[1]) < 0.01 for c in cards):
+                continue                       # a green the fee card names as income is the income
+            income = net - tip
+            for _paid, lines, total in chains:
+                if any(abs(tip - x) < 0.01 for x in lines) and 0.6 * total <= income < total:
+                    return 3
+    return None
+
+
+def _by_fee_card(nets, cards, nums, card_figs, neighbours=False, seq=None):
     """Tier 0/1 measured against the income the fee card prints, else tier 4, else None.
 
     The card is 'ค่าโดยสารของผู้โดยสาร − รายได้จากรอบขับ = ค่าบริการที่แกร็บได้รับ', three figures
@@ -828,6 +892,10 @@ def _by_fee_card(nets, cards, nums, card_figs, neighbours=False):
                 best = t
     if best is not None:
         return best
+    if seq is not None:
+        tip = _tip_in_passenger_card(nets, cards, seq)
+        if tip is not None:
+            return tip
     if not neighbours:
         # The caller cannot weigh this verdict, so it must not hear it. ฿229 over a bottom whose
         # card prints รายได้ 221 is 3.6% above the income — the very shape Nun's real pairs have,
@@ -985,11 +1053,17 @@ def match_tier(top, bottom, neighbours=False, same_shot=False):
         # even when it had decided nothing.
         if best is None and cards:
             best = _card_plus_green(nets, cards, greens)
+        if best is None:
+            # (the tip-inside-the-passenger-card rule is for bottoms with NO green figure: one
+            # that shows its green income also shows the extra-income card a tip would sit in,
+            # and _tip_gap reads it there — a passenger line equal to the gap is then a fee or a
+            # discount lining up with an incentive printed nowhere, as on Narumol = 220's ฿81/77)
+            best = _green_is_tip(nets, greens, seq, cards)
         # Two income cards that agree are evidence in their own right, not a tie-breaker: the
         # pair stands even when no arithmetic on the bottom explains the green figure above.
         return best if best is not None else (1 if agreed else None)
     if cards:                                                    # B (tier 4 only for pair_album)
-        t = _by_fee_card(nets, cards, nums, card_figs, neighbours)
+        t = _by_fee_card(nets, cards, nums, card_figs, neighbours, seq)
         return t if t is not None else (1 if agreed else None)
     for net in nets:                                             # C
         t = _tier_one(net, None, nums)
