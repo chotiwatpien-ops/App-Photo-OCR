@@ -1010,7 +1010,8 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
         with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
             downloads = list(ex.map(_dl, group))
         trip_ids = []
-        seen_hashes = db.seen_image_hashes(rider, d_from, d_to)
+        seen_hashes = db.seen_image_hashes_week(d_from, d_to)
+        skipped = []
         albums = db.pool_albums([i["file"]["id"] for i in group])   # ใครส่งรูปนี้มา (ถ้ามาจากกอง)
         n_same = 0
         for i, data, err in downloads:
@@ -1022,10 +1023,15 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
                 continue
             digest = hashlib.sha1(data).hexdigest()
             if digest in seen_hashes:
-                # the very same picture already read for this rider this week (re-upload under a
-                # new Drive id, or the same shot dropped in two folders) — record it as ingested
-                # so it never comes back, but do not pay to read it again
+                # the very same picture already read this week, in whichever folder (re-upload
+                # under a new Drive id, the same shot dropped in two folders, or a copy the pool
+                # paired a round after its original) — record it as ingested so it never comes
+                # back, do not pay to read it again, and put it in the duplicate report
                 db.record_ingested(f["id"], f["name"], job_id, None)
+                skipped.append({"ref": f"ingest:{f['id']}", "week_from": d_from,
+                                "album": albums.get(f["id"]) or rider, "file_name": f["name"],
+                                "drive_id": f["id"], "same_as": seen_hashes[digest],
+                                "kind": "ส่งซ้ำของที่อ่านไปแล้ว"})
                 n_same += 1
                 continue
             seen_hashes[digest] = f["name"]
@@ -1045,6 +1051,10 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
 
         if n_same:
             log(f"  ⏭ ข้ามรูปที่เนื้อหาซ้ำกับที่อ่านไปแล้ว {n_same} ใบ (ไม่เสียค่าอ่านซ้ำ)")
+            try:
+                db.record_skipped_copies(skipped)
+            except Exception as e:  # noqa: BLE001 — the report can miss a line; the round must not stop
+                log(f"  ⚠ จดรูปที่ข้ามลงรายงานรูปซ้ำไม่ได้: {str(e)[:100]}")
 
         if config.INGEST_BATCH and trip_ids:
             # queue the pile and move on — the next round collects the answers and does the

@@ -99,7 +99,7 @@ check("สรุปรวมรายผู้ส่งได้", rep.summary(_
 _x = rep.write_xlsx(os.path.join(WORK, "dup.xlsx"), _cases, _undecided)
 from openpyxl import load_workbook                              # noqa: E402
 _wb = load_workbook(_x)
-check("ไฟล์ Excel มีสามชีต", _wb.sheetnames == ["สรุปรายผู้ส่ง", "รายใบ", "ค้างตัดสิน"])
+check("ไฟล์ Excel มีห้าชีต (สามชีตเดิม + ซ้ำก่อนอ่าน 2 ชีต)", _wb.sheetnames == ["สรุปรายผู้ส่ง", "รายใบ", "ค้างตัดสิน", "ซ้ำก่อนอ่าน-รายอัลบั้ม", "ซ้ำก่อนอ่าน-รายใบ"])
 check("ชีตรายใบมีช่องไว้กรอกผลการตีกลับ",
       {"สถานะเคส", "ผู้ตีกลับ", "คำตอบผู้ส่ง"} <= {c.value for c in _wb["รายใบ"][1]})
 check("รันทั้งสคริปต์แล้วไม่ error", rep.main(["--from", "2026-09-07", "--to", "2026-09-13"]) == 0)
@@ -127,7 +127,7 @@ check("วางไว้ในโฟลเดอร์ของตัวเอ�
       _folder == f"EXPORTS/{rep.DRIVE_DIR}" and ("EXPORTS", "Rider Trips.xlsx") not in _d.files)
 check("ไฟล์ที่วางคือ Excel ที่เปิดได้จริง",
       load_workbook(__import__("io").BytesIO(_d.files[(_folder, "รูปซ้ำ_2026-W37.xlsx")])).sheetnames
-      == ["สรุปรายผู้ส่ง", "รายใบ", "ค้างตัดสิน"])
+      == ["สรุปรายผู้ส่ง", "รายใบ", "ค้างตัดสิน", "ซ้ำก่อนอ่าน-รายอัลบั้ม", "ซ้ำก่อนอ่าน-รายใบ"])
 rep.upload_to_drive(_d, "EXPORTS", "2026-09-07", _data)
 check("รันซ้ำแล้วทับฉบับเดิม ไม่สร้างไฟล์ชื่อซ้ำเพิ่ม", len(_d.files) == 1)
 
@@ -177,6 +177,46 @@ trip(job("ค", "2026-09-07"), "w37-repeat.jpg", status="duplicate", booking_cod
 _c3, _ = rep.build(*rep.load("2026-09-07", "2026-09-13"))
 _rep = [c for c in _c3 if c["ไฟล์ที่ซ้ำ"] == "w37-repeat.jpg"]
 check("มีต้นฉบับทั้ง W36 และ W37 → ชี้ต้นฉบับของ W37", len(_rep) == 1 and _rep[0]["ซ้ำกับไฟล์"] == "w37-first.jpg")
+
+# --- ซ้ำก่อนอ่าน: ไฟล์เหมือนกันเป๊ะที่ถูกตัดทิ้งก่อนเสียค่าอ่าน (เฟียส 2026-09-22) ---------------
+# W38: 2W-Home Jabzaja ส่งอัลบั้ม 48 งานมาสองชุด — รอบเก่าจดไว้แค่ใน pool_runs จึงต้องเติมย้อนหลัง
+import json as _json                                            # noqa: E402
+W38 = ("2026-09-14", "2026-09-20")
+_dups = [{"week": "Week 14-20 Sep", "group": "2W", "file": f"2W-Home Jabzaja/L_{i + 48}_0.jpg",
+          "same_as": f"2W-Home Jabzaja/L_{i}_0.jpg"} for i in range(1, 4)]
+_dups.append({"week": "Week 14-20 Sep", "group": "2W", "file": "2W-Home UploadJab/3503_1.jpg",
+              "same_as": "2W-Home Jabzaja/L_9_0.jpg"})
+_dups.append({"week": "Week 7-13 Sep", "group": "2W", "file": "2W-Win ก/1.jpg", "same_as": "2W-Win ก/2.jpg"})
+for _mode in ("move", "move", "report"):       # สำเนาที่ค้างในกองโผล่ซ้ำทุกรอบ · รอบรายงานเฉย ๆ ไม่นับ
+    db.record_pool_run(_mode, "Week 14-20 Sep", {}, "", {"started_at": "2026-09-22 13:00:00",
+                                                         "duplicates": _dups})
+check("เติมย้อนหลังจากผลของรอบก่อน ๆ: ไฟล์เดียวกันนับครั้งเดียว เฉพาะสัปดาห์นี้",
+      rep.backfill_pre_read(*W38, log=lambda *a: None) == 4)
+check("เติมย้อนหลังครั้งเดียวต่อสัปดาห์", rep.backfill_pre_read(*W38, log=lambda *a: None) == 0)
+_pre = rep.pre_read_cases(W38[0])
+_kinds = {c["ไฟล์ที่ซ้ำ"]: c["ประเภทการซ้ำ"] for c in _pre}
+check("สำเนาในอัลบั้มเดียวกัน กับ ซ้ำข้ามอัลบั้ม แยกกันได้",
+      _kinds["L_49_0.jpg"] == "สำเนาในอัลบั้มเดียวกัน" and _kinds["3503_1.jpg"] == "ซ้ำข้ามอัลบั้ม")
+db.record_skipped_copies([{"ref": "ingest:X1", "week_from": W38[0], "album": "2W-Home Jabzaja",
+                           "file_name": "2W-Home Jabzaja_0+0_฿24.jpg", "drive_id": "X1",
+                           "same_as": "2W-Home Jabzaja_0+0_฿24.jpg", "kind": "ส่งซ้ำของที่อ่านไปแล้ว"}] * 2)
+_pre = rep.pre_read_cases(W38[0])
+check("รอบ ingest จดรูปที่ข้ามไว้ด้วย และจดซ้ำไม่เพิ่ม", len(_pre) == 5)
+_s = rep.summary([], _pre)
+check("❗ นับเข้า 'ใบซ้ำ' ของคนส่ง (ข้อ 2 ข.) และแยกคอลัมน์ ซ้ำก่อนอ่าน ให้เห็น",
+      _s["2W-Home Jabzaja"]["ใบซ้ำ"] == 4 and _s["2W-Home Jabzaja"][rep.KIND_PRE] == 4)
+_by = {r[0]: r for r in rep.pre_read_by_album(_pre)}
+check("สรุปรายอัลบั้มเป็นประโยคที่ใช้ทักคนส่งได้",
+      _by["2W-Home Jabzaja"][1] == 4 and "สำเนาในอัลบั้มเดียวกัน 3 ใบ" in _by["2W-Home Jabzaja"][2])
+check("มีลิงก์รูปเมื่อรู้รหัสไฟล์", any(c["ลิงก์รูป"] and "X1" in c["ลิงก์รูป"] for c in _pre))
+_d4 = _FakeDrive()
+_r4 = rep.refresh_week(_d4, "EXPORTS", *W38, log=lambda *a: None)
+_wb4 = load_workbook(__import__("io").BytesIO(next(iter(_d4.files.values()))))
+check("❗ สัปดาห์ที่มีแต่ซ้ำก่อนอ่าน ก็ได้รายงาน", _r4 and _r4["pre"] == 5 and _d4.files)
+check("ชีตรายอัลบั้มและรายใบมีข้อมูลครบ",
+      _wb4["ซ้ำก่อนอ่าน-รายอัลบั้ม"].max_row == 3 and _wb4["ซ้ำก่อนอ่าน-รายใบ"].max_row == 6)
+_hdr = [c.value for c in _wb4["สรุปรายผู้ส่ง"][1]]
+check("ชีตสรุปรายผู้ส่งมีคอลัมน์ ซ้ำก่อนอ่าน", rep.KIND_PRE in _hdr)
 
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")

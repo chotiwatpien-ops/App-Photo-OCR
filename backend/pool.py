@@ -259,10 +259,12 @@ def analyse(albums, data, workers, cache=None, known_md5=None, forced=None):
                 h = new_md5[img["id"]] = hashlib.md5(raw).hexdigest()
             where = f"{alb['album']}/{img['name']}"
             if h in seen:
+                first, first_id = seen[h]
                 report["duplicates"].append({"week": alb["week"], "group": alb["group"],
-                                             "file": where, "same_as": seen[h]})
+                                             "album": alb["album"], "id": img["id"],
+                                             "file": where, "same_as": first, "same_as_id": first_id})
                 continue
-            seen[h] = where
+            seen[h] = (where, img["id"])
             hashes[img["id"]] = pairing.cache_key(h)   # dedupe on the bytes, cache on the reader too
             alb["_keep"].append(img)
             todo.append((ai, img))
@@ -563,6 +565,52 @@ def half_tag(file_name):
     return m.group(1) if m else (re.sub(r"[^0-9A-Za-z]+", "", stem)[:8] or "x")
 
 
+def park_duplicates(drive, albums, report, log=log):
+    """Exact copies leave the pool with the originals: into Pool/_ใช้แล้ว/<album>/, never deleted.
+
+    A copy used to be skipped and left where it was. Once its original had been paired and moved,
+    the next round met the copy with nothing to be a copy OF, and paired it as new work:
+    2W-Home Jabzaja sent its 48-picture album twice, and round #329 (2026-09-22) paired the second
+    set into 24 more trips, stopped only because the round's own hash check still saw the first."""
+    by_key = {(a["week"], a["album"]): a for a in albums}
+    used, n = {}, 0
+    for d in report.get("duplicates") or []:
+        alb = by_key.get((d.get("week"), d.get("album")))
+        if not alb or not d.get("id"):
+            continue
+        try:
+            key = (alb["pool_id"], d["album"])
+            if key not in used:
+                used[key] = drive.ensure_folder(drive.ensure_folder(alb["pool_id"], USED_DIR), d["album"])
+            drive.move_file(d["id"], used[key])
+            d["moved"] = f"{USED_DIR}/{d['album']}"
+            n += 1
+        except Exception as e:  # noqa: BLE001 — the copy stays; it is met again and skipped again
+            report["errors"].append(f"ย้ายรูปซ้ำออกจากกองไม่สำเร็จ {d['file']}: {str(e)[:100]}")
+    if n:
+        log(f"  🗂 ย้ายรูปซ้ำเป๊ะ {n} ใบออกจากกองไป {USED_DIR} (ไม่ให้วนกลับมาจับคู่ซ้ำรอบหน้า)")
+    report["totals"]["n_duplicates_parked"] = n
+    return n
+
+
+def duplicate_rows(report):
+    """The pool's exact copies as skipped_copies rows, for the duplicate report."""
+    import ingest
+    out = []
+    for d in report.get("duplicates") or []:
+        rng = ingest.parse_range(d.get("week") or "")
+        if not rng:
+            continue
+        album = d.get("album") or (d.get("file") or "").split("/")[0]
+        first_album = (d.get("same_as") or "").split("/")[0]
+        out.append({"ref": f"pool:{d['week']}/{d['file']}", "week_from": rng[0].isoformat(),
+                    "album": album, "file_name": (d.get("file") or "").split("/", 1)[-1],
+                    "drive_id": d.get("id"), "same_as": d.get("same_as"),
+                    "same_as_album": first_album,
+                    "kind": "สำเนาในอัลบั้มเดียวกัน" if first_album == album else "ซ้ำข้ามอัลบั้ม"})
+    return out
+
+
 def apply_moves(drive, albums, data, report, log=log, allocators=None, issues=None):
     """Paired trips → one stitched image in Week/<category>/<rider>/; their two originals →
     Pool/_ใช้แล้ว/<album>/ (moved, never deleted). Long screenshots → the same rider folder.
@@ -847,6 +895,13 @@ def run_pool(drive, albums, move, preview=True, use_db=True, started=None, label
     log(f"ตรวจและจับคู่เสร็จใน {time.time() - t0:.0f} วิ" + (f" · ใช้ผล OCR เดิม {report['ocr_cached']} รูป" if report.get("ocr_cached") else ""))
     if move:
         apply_moves(drive, albums, data, report, log=log, issues=issues)
+        park_duplicates(drive, albums, report, log=log)
+        if use_db:
+            try:
+                import db
+                db.record_skipped_copies(duplicate_rows(report))
+            except Exception as e:  # noqa: BLE001 — the report can miss a line; the round must not
+                report["errors"].append(f"จดรูปซ้ำลงรายงานไม่ได้: {str(e)[:100]}")
     summary = render(report)
     log(summary)
     if move:                                                  # the stitched files ARE the output; keep the text log

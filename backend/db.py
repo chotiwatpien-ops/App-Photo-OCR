@@ -245,6 +245,24 @@ pool_runs = Table(
     Column("report", Text),                   # JSON
 )
 
+# Pictures dropped BEFORE anything paid to read them, because their bytes are a copy of one
+# already in hand — the pool's exact duplicates, and the round's re-sends of a picture read before.
+# The duplicate report lists them beside the repeats found after reading, so Ops can ask the
+# sender about both (Fiat 2026-09-22: counted into the sender's ใบซ้ำ). One row per picture: `ref`
+# is 'pool:<week>/<album>/<file>' or 'ingest:<drive id>', so a copy met again is not counted twice.
+skipped_copies = Table(
+    "skipped_copies", meta,
+    Column("ref", String(400), primary_key=True),
+    Column("week_from", String(10), nullable=False),
+    Column("album", Text),                    # who sent it: the album, else the folder it sat in
+    Column("file_name", Text),
+    Column("drive_id", String(128)),
+    Column("same_as", Text),                  # the copy that was kept: 'album/file' or a trip's file
+    Column("same_as_album", Text),
+    Column("kind", String(40), nullable=False),
+    Column("found_at", String(19), nullable=False),
+)
+
 # what the free OCR concluded about an image, keyed by its bytes — a half that stays in the pool
 # is met again every run, and the verdict for identical bytes never changes
 pool_ocr_cache = Table(
@@ -1138,6 +1156,54 @@ def seen_image_hashes(driver_name, date_from, date_to):
                                 jobs.c.date_from == date_from, jobs.c.date_to == date_to,
                                 trips.c.image_hash.isnot(None))).all()
         return {r[0]: r[1] for r in rows}
+
+
+def seen_image_hashes_week(date_from, date_to):
+    """sha1 -> file_name of every picture already read in the week, whoever's folder it is in.
+
+    Per rider was not enough once pictures are read in _พร้อมอ่าน and filed afterwards: a copy that
+    reached the round after its original had been filed sat under '(รออ่าน)' while the original
+    sat under a rider, and the two never met. 2W-Home Jabzaja's 24 copied pairs were caught on
+    2026-09-22 only because their originals had not been filed yet."""
+    with engine.begin() as c:
+        rows = c.execute(select(trips.c.image_hash, trips.c.file_name)
+                         .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+                         .where(jobs.c.date_from == date_from, jobs.c.date_to == date_to,
+                                trips.c.image_hash.isnot(None))).all()
+        return {r[0]: r[1] for r in rows}
+
+
+def record_skipped_copies(rows):
+    """rows: dicts with the skipped_copies columns except found_at. A ref already recorded is
+    left as it was. Returns how many were new."""
+    rows = [r for r in rows if r.get("ref")]
+    if not rows:
+        return 0
+    with engine.begin() as c:
+        have = set()
+        refs = list({r["ref"] for r in rows})
+        for i in range(0, len(refs), 500):
+            have |= {x[0] for x in c.execute(select(skipped_copies.c.ref)
+                                             .where(skipped_copies.c.ref.in_(refs[i:i + 500]))).all()}
+        new, seen = [], set()
+        for r in rows:
+            if r["ref"] in have or r["ref"] in seen:
+                continue
+            seen.add(r["ref"])
+            new.append({**{k: r.get(k) for k in ("ref", "week_from", "album", "file_name", "drive_id",
+                                                  "same_as", "same_as_album", "kind")},
+                        "found_at": _now()})
+        if new:
+            c.execute(insert(skipped_copies), new)
+        return len(new)
+
+
+def skipped_copies_for_week(date_from):
+    with engine.begin() as c:
+        return [dict(r) for r in c.execute(select(skipped_copies)
+                                           .where(skipped_copies.c.week_from == date_from)
+                                           .order_by(skipped_copies.c.album, skipped_copies.c.file_name))
+                .mappings().all()]
 
 
 def name_shared_in_group(driver_name, date_from, date_to, category, job_id):

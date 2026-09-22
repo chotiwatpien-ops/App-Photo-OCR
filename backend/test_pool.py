@@ -104,8 +104,13 @@ print(f"7) ย้ายจริง: rc={rc3} mode={r3['mode']} · รูปต�
       f"ต้นฉบับใน _ใช้แล้ว {len(used_files)} · เหลือในอัลบั้ม {len(album_left)}")
 n_moved = __import__("json").loads(r3["report"])["totals"].get("n_moved")
 ok = ok and rc3 == 0 and r3["mode"] == "move" and len(stitched) == n_moved
-ok = ok and len(stitched) >= 4 and len(used_files) == 2 * len([f for f in stitched if "+" in f]) \
-     and len(album_left) == 13 - 2 * len([f for f in stitched if "Dl-boy4" in f])
+# the exact copy leaves with the originals (2026-09-22): left behind, the next round met it with
+# nothing to be a copy of and paired it as new work
+parked = __import__("json").loads(r3["report"])["totals"].get("n_duplicates_parked")
+print(f"7c) สำเนาเป๊ะย้ายออกจากกองไป _ใช้แล้ว {parked} ใบ (ต้อง 1)")
+ok = ok and len(stitched) >= 4 and parked == 1 \
+     and len(used_files) == 2 * len([f for f in stitched if "+" in f]) + parked \
+     and len(album_left) == 13 - 2 * len([f for f in stitched if "Dl-boy4" in f]) - parked
 # rider folders, not loose files in the category folder — ingest only ever walks folders
 homes = sorted({os.path.basename(dp) for c in cats
                 for dp, _, fs in os.walk(os.path.join(week_dir, c))
