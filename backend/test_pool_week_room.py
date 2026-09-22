@@ -78,6 +78,27 @@ room = pool.week_room("Week 7-13 Sep")
 check("กลุ่มที่ครบเป้าแล้ว: ที่ว่างเป็น 0 — งานถัดไปต้องลงสัปดาห์หน้าตั้งแต่แรก",
       room["2 W Standard"] == 0 and room["2 W Saver"] == target)
 
+# --- นับตาม Service Type บนสลิป ไม่ใช่ตามโฟลเดอร์ (W38, 2026-09-21) --------------------------------------
+W38, W38_END = "2026-09-14", "2026-09-20"
+saver = db.create_job("จิตร Win", "Trips", W38, W38_END, category="2 W Saver")
+hold = db.create_job("(รออ่าน)", "Trips", W38, W38_END)
+with db.engine.begin() as c:
+    for i in range(5):
+        c.execute(insert(db.trips).values(job_id=saver, file_name=f"s{i}.jpg", status="done",
+                                          service_type="Saver Bike", committed=1))
+    for i in range(3):     # สลิปบอก Standard Bike แต่ค้างอยู่ในโฟลเดอร์ Saver
+        c.execute(insert(db.trips).values(job_id=saver, file_name=f"b{i}.jpg", status="done",
+                                          service_type="Standard Bike", committed=1))
+    c.execute(insert(db.trips).values(job_id=saver, file_name="u.jpg", status="done",
+                                      service_type=None, committed=1))
+    for i in range(4):     # อ่านแล้วรอลงที่ — ตัวลงที่หักที่ว่างเอง
+        c.execute(insert(db.trips).values(job_id=hold, file_name=f"h{i}.jpg", status="done",
+                                          service_type="Saver Bike", committed=0))
+counts = db.week_group_counts(W38, W38_END)
+check("❗ แถว Standard Bike ในโฟลเดอร์ Saver นับเข้า 2 W Standard ตามที่ลูกค้านับ",
+      counts.get("2 W Standard") == 3 and counts.get("2 W Saver") == 6)
+check("แถวที่ไม่รู้ประเภทนับตามโฟลเดอร์ของมัน · แถวในกองพักไม่ถูกนับ", sum(counts.values()) == 9)
+
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

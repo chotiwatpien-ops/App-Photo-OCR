@@ -7,7 +7,7 @@ so the database stays small enough for a free Postgres tier.
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import (Column, Float, Integer, LargeBinary, MetaData, String, Table, Text,
-                        case, create_engine, delete, func, insert, select, text, update)
+                        case, create_engine, delete, func, insert, or_, select, text, update)
 
 from config import DATABASE_URL
 
@@ -1938,15 +1938,29 @@ def week_group_counts(date_from, date_to):
     """{vehicle group: finished rows} for one week — what the week already owes the customer.
 
     Repeats and voided rows are left out: they are on nobody's bill, so they must not make a
-    group look full to the pool."""
+    group look full to the pool.
+
+    A row counts in the group its Service Type names, as the customer and the scorecard count
+    it, not in its job's folder: W38 had 4 Standard Bike rows in 2 W Saver folders, so the pool
+    saw Saver full at 1,466 and sent 4 of the 20 trips Ops uploaded to fill it into W39
+    (2026-09-21). A row with no known service counts by its folder. Rows still waiting in
+    _พร้อมอ่าน are not counted here: file_after_read files them against this room."""
+    from pipeline import car_is_standard
+    group_of = {"Saver Bike": "2 W Saver", "Standard Bike": "2 W Standard",
+                "Standard Car": "4 W Standard", "Saver Car": "4 W Standard"}
     with engine.begin() as c:
         rows = c.execute(
-            select(jobs.c.category, func.count())
+            select(trips.c.service_type, jobs.c.category, func.count())
             .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
             .where(jobs.c.date_from == date_from, jobs.c.date_to == date_to,
-                   trips.c.status == "done")
-            .group_by(jobs.c.category)).all()
-    return {(r[0] or "").strip(): r[1] for r in rows}
+                   trips.c.status == "done",
+                   or_(jobs.c.driver_name.is_(None), jobs.c.driver_name != "(รออ่าน)"))
+            .group_by(trips.c.service_type, jobs.c.category)).all()
+    out = {}
+    for svc, cat, n in rows:
+        g = group_of.get(car_is_standard((svc or "").strip())) or (cat or "").strip()
+        out[g] = out.get(g, 0) + n
+    return out
 
 
 def week_scorecard(date_from, date_to, target=None):
