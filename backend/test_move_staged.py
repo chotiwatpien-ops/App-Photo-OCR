@@ -108,6 +108,39 @@ check("รันซ้ำ: ไม่มีอะไรต้องย้าย�
 check("กองพักสัปดาห์หน้ามีอยู่แล้ว: ใช้ job เดิม ไม่เปิดซ้ำ",
       ms.apply(drive, str(inbox), *W38, [], log=lambda *_: None)[1] == jid)
 
+# --- the way back: rows the pool sent to next week while this week still had room -------------
+rider39 = inbox / "Week 21-27 Sep" / "2 W Saver" / "พัดชา Win"
+rider39.mkdir(parents=True)
+exp39 = inbox / "Export Pic" / "2026-W39" / "2 W Saver"
+exp39.mkdir(parents=True)
+j39 = db.create_job("พัดชา Win", "Trips", *W39, category="2 W Saver", drive_folder_id=str(rider39))
+back = {}
+with db.engine.begin() as c:
+    for i, day in enumerate(("2026-09-21", "2026-09-23")):
+        f = rider39 / f"ploy{i}.jpg"
+        f.write_bytes(b"p")
+        (exp39 / f"WK39-พัดชา Win{i + 1}.jpg").write_bytes(b"c")
+        tid = c.execute(insert(db.trips).values(job_id=j39, file_name=f.name, status="done", committed=1,
+                                                service_type="Saver Bike", trip_date=day,
+                                                customer_image=f"WK39-พัดชา Win{i + 1}.jpg")).inserted_primary_key[0]
+        back[i] = tid
+        c.execute(insert(db.ingested_files).values(drive_id=str(f), name=f.name, job_id=j39,
+                                                   trip_id=tid, ingested_at="2026-09-21 00:00:00"))
+rows, bad = ms.rows_to_bring_back(*W38, [back[0], back[1], ids["saver"]])
+check("แถวที่ไม่ได้อยู่สัปดาห์หน้าถูกปฏิเสธ ไม่ดึงมั่ว", len(rows) == 2 and len(bad) == 1)
+done, jb = ms.bring_back(drive, str(inbox), *W38, rows, log=lambda *_: None)
+with db.engine.begin() as c:
+    got = {r["id"]: dict(r) for r in c.execute(select(db.trips).where(db.trips.c.id.in_(list(back.values()))))
+           .mappings().all()}
+check("❗ ดึงกลับเข้ากองพักของสัปดาห์นี้", all(got[t]["job_id"] == j_hold for t in back.values()) and jb == j_hold)
+check("วันที่กลับมาอยู่ในสัปดาห์นี้", all(W38[0] <= got[t]["trip_date"] <= W38[1] for t in back.values()))
+check("ชื่อรูปส่งลูกค้าเดิมถูกล้าง (รอบหน้าตั้งชื่อ WK38 ให้ใหม่)",
+      all(got[t]["customer_image"] is None for t in back.values()))
+check("รูปรวมร่างย้ายเข้า _พร้อมอ่าน ของสัปดาห์นี้", {"ploy0.jpg", "ploy1.jpg"} <= {p.name for p in hold38.glob("*.jpg")})
+check("รูปส่งลูกค้าของสัปดาห์หน้าย้ายไป _แทนที่แล้ว ไม่ถูกลบ",
+      not list(exp39.glob("*.jpg")) and len(list((inbox / "Export Pic" / "2026-W39" / "_แทนที่แล้ว").glob("*.jpg"))) == 2)
+check("ตัวลงที่หลังอ่านเห็นแถวที่ดึงกลับ", {back[0], back[1]} <= {r["id"] for r in far.staged_rows(*W38)})
+
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

@@ -6,6 +6,9 @@ name: Move staged — ย้ายแถวที่ค้างในกอง�
 # round files them) and moves the rest, picture and all, into next week's _พร้อมอ่าน, dated across
 # next week with the slip's day in the note. Rows no group takes are left alone and reported.
 #
+# With `back` (row ids of next week) it runs the other way: those rows come back into this
+# week's _พร้อมอ่าน, to be filed by the next round.
+#
 # Report-only unless `apply` is ticked.
 
 on:
@@ -19,6 +22,10 @@ on:
         description: "สัปดาห์ที่มีแถวค้าง: วันสุดท้าย"
         type: string
         default: "2026-09-20"
+      back:
+        description: "ดึงกลับ: เลขแถวของสัปดาห์หน้า คั่นด้วยจุลภาค (ว่าง = ย้ายของค้างไปสัปดาห์หน้าตามปกติ)"
+        type: string
+        default: ""
       apply:
         description: "ย้ายจริง (ไม่ติ๊ก = รายงานอย่างเดียว)"
         type: boolean
@@ -49,8 +56,10 @@ jobs:
           TZ: Asia/Bangkok
           WFROM: ${{ inputs.week_from }}
           WTO: ${{ inputs.week_to }}
+          BACK: ${{ inputs.back }}
         run: |
-          echo "ได้รับ: week=$WFROM..$WTO apply='${{ inputs.apply }}'"
+          echo "ได้รับ: week=$WFROM..$WTO back='$BACK' apply='${{ inputs.apply }}'"
           set -- --from "$WFROM" --to "$WTO"
+          if [ -n "$BACK" ]; then set -- "$@" --back "$BACK"; fi
           if [ "${{ inputs.apply }}" = "true" ]; then set -- "$@" --apply; fi
           python -u move_staged.py "$@"
