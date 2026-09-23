@@ -138,6 +138,35 @@ check("❗ รันแผนซ้ำ: ไม่มีอะไรจะเต�
 check("ชื่อโฟลเดอร์สัปดาห์", rw.weeks_folder_name("2026-08-17") == "Week 17-23 Aug"
       and rw.weeks_folder_name("2026-08-31") == "Week 31 Aug-6 Sep")
 
+# a rider named "1": 'WK34-11.jpg' is their first trip, not trip 11 — numbers alone would reuse it
+used = {"WK34-11.jpg", "WK34-12.jpg"}
+check("❗ ไรเดอร์ชื่อเป็นตัวเลข: ชื่อรูปถัดไปไม่ชนชื่อที่มีอยู่", rw.next_name("1", "WK34", set(), used) == "WK34-13.jpg"
+      and rw.next_name("1", "WK34", set(), used) == "WK34-14.jpg")
+
+one = db.create_job("1", "Trips", A, rw.week_end(A), category="2 W Standard")
+grp = root / "exports" / "2026-W34" / "2 W Standard"
+(grp / "WK34-11.jpg").write_bytes(b"old delivered")
+src = root / "staged" / "clash.jpg"
+src.write_bytes(b"jpeg:clash")
+with db.engine.begin() as c:
+    old_row = c.execute(insert(db.trips).values(job_id=one, status="done", committed=1, check_status="pass",
+                                                trip_date=A, file_name="o.jpg", service_type="Standard Bike",
+                                                booking_code="A-ONE1", base_fare=39, net_earnings=39,
+                                                distance_km=3.9, customer_image="WK34-11.jpg")).inserted_primary_key[0]
+    clash = c.execute(insert(db.trips).values(job_id=one, status="done", committed=1, check_status="pass",
+                                              trip_date=A, file_name="c.jpg", service_type="Standard Bike",
+                                              booking_code="A-ONE2", base_fare=32, net_earnings=32,
+                                              distance_km=3.2, customer_image="WK34-11.jpg",
+                                              source_url=f"https://drive.google.com/file/d/{src}/view",
+                                              note=f"{rw.MARK}: test/clash.jpg")).inserted_primary_key[0]
+n = rw.renumber(drive, str(root / "exports"), [A], log=lambda *_: None)
+check("❗ ซ่อมชื่อชน: เฉพาะแถวที่เติม ได้ชื่อใหม่ที่ว่าง แถวเดิมและรูปเดิมไม่ถูกแตะ",
+      n == 1 and db.get_trip(clash)["customer_image"] == "WK34-12.jpg"
+      and db.get_trip(old_row)["customer_image"] == "WK34-11.jpg"
+      and (grp / "WK34-11.jpg").read_bytes() == b"old delivered"
+      and (grp / "WK34-12.jpg").read_bytes() == b"jpeg:clash")
+check("ซ่อมซ้ำ: ไม่มีอะไรต้องแก้แล้ว", rw.renumber(drive, str(root / "exports"), [A], log=lambda *_: None) == 0)
+
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

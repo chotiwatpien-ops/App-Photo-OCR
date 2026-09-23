@@ -17,9 +17,9 @@ on:
         type: string
         default: "2026-08-17,2026-08-24"
       mode:
-        description: "read = จับคู่และอ่านรูป · plan = ดูแผน · apply = ลงงานจริง"
+        description: "read = จับคู่และอ่านรูป · plan = ดูแผน · apply = ลงงานจริง · renumber = ซ่อมชื่อรูปที่ชนกัน"
         type: choice
-        options: [plan, read, apply]
+        options: [plan, read, apply, renumber]
         default: plan
       report:
         description: "โฟลเดอร์ใน Exports ที่วางไฟล์แผนรายเที่ยว (ว่าง = ไม่เขียน)"
@@ -64,4 +64,5 @@ jobs:
           set -- --source "$SOURCE" --weeks "$WEEKS" --report "$REPORT"
           if [ "$MODE" = "read" ]; then set -- "$@" --read; fi
           if [ "$MODE" = "apply" ]; then set -- "$@" --apply; fi
+          if [ "$MODE" = "renumber" ]; then set -- "$@" --renumber; fi
           python -u refill_weeks.py "$@"

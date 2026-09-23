@@ -292,18 +292,17 @@ def apply(drive, exports_id, planned, log=print):
     have = Counter(r["job_id"] for d in {p[1] for p in placed} for r in week_rows(d, week_end(d)))
     # the next picture number for each rider in each week, after the last one in use
     taken = {}
+    used = {}
     folders = {}
     n = 0
     for r, d, group, jid, _why in placed:
         rider, wk = jobs[jid]["driver_name"], week_label(d)
         wkn = f"WK{date.fromisoformat(d).isocalendar()[1]:02d}"
+        if d not in used:
+            used[d] = set(db.customer_images_in_week(d, week_end(d)))
         if (d, rider) not in taken:
-            taken[(d, rider)] = {k for k in (_number_in(x, rider, wkn)
-                                             for x in db.customer_images_in_week(d, week_end(d))) if k}
-        nums = taken[(d, rider)]
-        k = max(nums, default=0) + 1
-        nums.add(k)
-        name = stitch.customer_name(rider, k, wkn)
+            taken[(d, rider)] = {k for k in (_number_in(x, rider, wkn) for x in used[d]) if k}
+        name = next_name(rider, wkn, taken[(d, rider)], used[d])
         if (wk, group) not in folders:
             folders[(wk, group)] = drive.ensure_folder(drive.ensure_folder(exports_id, wk), group)
         m = re.search(r"/d/([^/]+)", r.get("source_url") or "")
@@ -319,6 +318,57 @@ def apply(drive, exports_id, planned, log=print):
         n += 1
     for jid in {p[3] for p in placed}:
         db.refresh_job_status(jid)
+    return n
+
+
+def next_name(rider, wkn, nums, used):
+    """The rider's next picture name: after the highest number of theirs in use, and never a name
+    the week already holds. A rider named '1' reads 'WK34-11.jpg' (their first trip) as trip 11 of
+    somebody else, so the numbers alone handed out 'WK34-11.jpg' a second time (W34, 2026-09-23)."""
+    k = max(nums, default=0) + 1
+    while stitch.customer_name(rider, k, wkn) in used:
+        k += 1
+    nums.add(k)
+    name = stitch.customer_name(rider, k, wkn)
+    used.add(name)
+    return name
+
+
+def renumber(drive, exports_id, weeks, log=print):
+    """Rename every topped-up picture whose name another row of its week and group also has.
+    The delivered copy of the other row stays; ours is uploaded again under a free name and the
+    clashing upload moves to the week's _แทนที่แล้ว. Returns how many were renamed."""
+    import hashlib
+    n = 0
+    for d in weeks:
+        rows = week_rows(d, week_end(d))
+        per = Counter((r.get("category"), r.get("customer_image")) for r in rows if r.get("customer_image"))
+        used = {r.get("customer_image") for r in rows if r.get("customer_image")}
+        wk = week_label(d)
+        wkn = f"WK{date.fromisoformat(d).isocalendar()[1]:02d}"
+        taken = {}
+        for r in rows:
+            key = (r.get("category"), r.get("customer_image"))
+            if per[key] < 2 or not (r.get("note") or "").startswith(MARK):
+                continue
+            rider = r["driver_name"]
+            if rider not in taken:
+                taken[rider] = {k for k in (_number_in(x, rider, wkn) for x in used) if k}
+            folder = drive.ensure_folder(drive.ensure_folder(exports_id, wk), r["category"])
+            m = re.search(r"/d/([^/]+)", r.get("source_url") or "")
+            data = drive.download(m.group(1))
+            # apply() uploaded the staged bytes as they were: ours is the same-named file holding them
+            same = [f for f in drive.list_images(folder) if f["name"] == r["customer_image"]]
+            ours = [f for f in same if hashlib.sha1(drive.download(f["id"])).digest() == hashlib.sha1(data).digest()]
+            name = next_name(rider, wkn, taken[rider], used)
+            drive.upload_file(folder, name, data, "image/jpeg")
+            if ours and len(same) > 1:
+                drive.move_file(ours[0]["id"], drive.ensure_folder(drive.ensure_folder(exports_id, wk), "_แทนที่แล้ว"))
+            db.update_trip(r["id"], {"customer_image": name,
+                                     "note": f"{r['note']} | ชื่อรูปชน {r['customer_image']} → {name}"})
+            per[key] -= 1
+            log(f"  #{r['id']} {rider}: {r['customer_image']} → {name}")
+            n += 1
     return n
 
 
@@ -382,6 +432,7 @@ def main(argv=None):
     ap.add_argument("--skip", default=SKIP_DEFAULT, help="regex ชื่อไฟล์ที่ไม่เอา")
     ap.add_argument("--read", action="store_true", help="จับคู่และอ่านรูปใหม่เข้าที่พัก")
     ap.add_argument("--apply", action="store_true", help="ลงงานตามแผนจริง")
+    ap.add_argument("--renumber", action="store_true", help="ตั้งชื่อรูปใหม่ให้แถวที่เติมแล้วชื่อชนกับแถวอื่นในกลุ่มเดียวกัน")
     ap.add_argument("--report", default="", help="โฟลเดอร์ใน Exports ที่จะวางไฟล์แผนรายเที่ยว (ว่าง = ไม่เขียน)")
     a = ap.parse_args(argv)
     sys.stdout.reconfigure(encoding="utf-8")
@@ -392,6 +443,11 @@ def main(argv=None):
         print(f"{week_label(d)} ({d}..{week_end(d)}){' · ปิดสัปดาห์แล้ว' if d in shut else ''} · "
               + " · ".join(f"{g} ว่าง {max(0, v)}" for g, v in sorted(room_left(d, week_end(d)).items())))
     drive = None
+    if a.renumber:
+        import roster
+        n = renumber(roster._drive(), config.DRIVE_EXPORTS_FOLDER_ID, weeks)
+        print(f"✓ ตั้งชื่อรูปใหม่ {n} แถว")
+        return 0
     if a.read or a.apply:
         import roster
         drive = roster._drive()
