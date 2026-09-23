@@ -150,6 +150,23 @@ def waiting_rows(d_from):
     return [dict(r) for r in rows]
 
 
+PAGE_ALBUM = re.compile(r"\d+\s*Aug$|_p\d+$")      # one of Ops' collage or PDF pages, cut into screens
+
+
+def source_of(r):
+    """(album, label) this row was read from — kept at the start of its note by read_rows."""
+    m = re.match(rf"{MARK}: (.*?)/([^|]*?)(?: \||$)", r.get("note") or "")
+    return (m.group(1), m.group(2).strip()) if m else (None, None)
+
+
+def half_of_page(r):
+    """A screen of a cut page that the pool took for a whole picture is half a trip: a page's
+    trips are two screens each, and only a pair (or two screens joined by their place on the
+    page) is whole. The two pages whose grid the cutter misread did this (สัญญา/ชุมสิน 6 Aug)."""
+    album, label = source_of(r)
+    return bool(album and PAGE_ALBUM.search(album) and "+" not in (label or ""))
+
+
 def _fingerprint(r):
     """A slip without a booking code (the old app screen) is one trip by its money and distance."""
     if r.get("base_fare") in (None, 0) or r.get("distance_km") in (None, 0):
@@ -214,6 +231,9 @@ def plan(weeks):
             continue
         if not group:
             out.append((r, None, group, None, f"ไม่ใช่งานรับคน/ไม่รู้ประเภท ({r.get('service_type') or '-'})"))
+            continue
+        if half_of_page(r):
+            out.append((r, None, group, None, "จอเดียวจากหน้ารวมรูป/PDF — ไม่ครบเที่ยว"))
             continue
         if r.get("check_status") != "pass":
             out.append((r, None, group, None, "ตัวเลขไม่ลงตัว — รอคนดู"))
@@ -291,6 +311,48 @@ def summary(planned, log=print):
         log(f"  ไรเดอร์ที่ได้งานเพิ่ม {len(riders_used)} คน · มากสุดคนละ {max(riders_used.values())} เที่ยว")
 
 
+PLAN_COLS = ["id", "ที่มา", "Service Type", "ค่ารอบ", "คุณได้รับ", "ผู้โดยสารจ่าย", "รหัสการจอง",
+             "ระยะทาง", "ผล", "สัปดาห์", "กลุ่ม", "ไรเดอร์", "เหตุผล"]
+
+
+def plan_workbook(planned):
+    """Every waiting row, what the plan does with it and why — for a person to read before --apply."""
+    import io
+
+    import openpyxl
+    from openpyxl.styles import Font
+    jobs = {j["id"]: j for js in db.jobs_by_week().values() for j in js}
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "สรุป"
+    ws.append(["สัปดาห์", "กลุ่ม", "เติม"])
+    for (d, g), k in sorted(Counter((p[1], p[2]) for p in planned if p[1]).items()):
+        ws.append([week_label(d), g, k])
+    ws.append([])
+    ws.append(["ไม่เติม — เหตุผล", "", "จำนวน"])
+    for why, k in Counter(re.sub(r" \(#.*\)$", "", p[4]) for p in planned if not p[1]).most_common():
+        ws.append([why, "", k])
+    ws.column_dimensions["A"].width = 44
+    ws.column_dimensions["B"].width = 14
+    for title, rows in (("เติม", [p for p in planned if p[1]]), ("ไม่เติม", [p for p in planned if not p[1]])):
+        sh = wb.create_sheet(title)
+        sh.append(PLAN_COLS)
+        for c in sh[1]:
+            c.font = Font(bold=True)
+        for r, d, g, jid, why in rows:
+            album, label = source_of(r)
+            sh.append([r["id"], f"{album}/{label}", r.get("service_type"), r.get("base_fare"),
+                       r.get("net_earnings"), r.get("passenger_paid"), r.get("booking_code"),
+                       r.get("distance_km"), "เติม" if d else "ไม่เติม", week_label(d) if d else None,
+                       g, jobs[jid]["driver_name"] if jid in jobs else None, why])
+        for col, w in zip("ABCDEFGHIJKLM", (8, 40, 14, 8, 9, 11, 20, 9, 8, 10, 13, 18, 44)):
+            sh.column_dimensions[col].width = w
+        sh.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="เติมงานสัปดาห์ที่ส่งแล้ว จากโฟลเดอร์ที่ Ops ให้ — เฉพาะกลุ่มที่ยังขาด")
     ap.add_argument("--source", default="", help="id โฟลเดอร์รูป (คั่นด้วยจุลภาค)")
@@ -298,6 +360,7 @@ def main(argv=None):
     ap.add_argument("--skip", default=SKIP_DEFAULT, help="regex ชื่อไฟล์ที่ไม่เอา")
     ap.add_argument("--read", action="store_true", help="จับคู่และอ่านรูปใหม่เข้าที่พัก")
     ap.add_argument("--apply", action="store_true", help="ลงงานตามแผนจริง")
+    ap.add_argument("--report", default="", help="โฟลเดอร์ใน Exports ที่จะวางไฟล์แผนรายเที่ยว (ว่าง = ไม่เขียน)")
     a = ap.parse_args(argv)
     sys.stdout.reconfigure(encoding="utf-8")
     db.init_db()
@@ -322,6 +385,15 @@ def main(argv=None):
     planned = plan(weeks)
     print(f"\nแผน: แถวที่อ่านแล้วรอเติม {len(planned)}")
     summary(planned)
+    if a.report:
+        import roster
+        drive = drive or roster._drive()
+        exp = config.DRIVE_EXPORTS_FOLDER_ID
+        folder = next((f["id"] for f in drive.list_folders(exp) if f["name"].strip() == a.report), None) \
+            or drive.ensure_folder(exp, a.report)
+        name = f"แผนเติมงาน {'-'.join(week_label(d)[-3:] for d in weeks)}.xlsx"
+        drive.upload_xlsx(folder, name, plan_workbook(planned))
+        print(f"📋 แผนรายเที่ยว → Exports/{a.report}/{name}")
     if not a.apply:
         print("\n(รายงานอย่างเดียว — ใส่ --apply เพื่อลงงานจริง)")
         return 0

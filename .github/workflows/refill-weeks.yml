@@ -21,6 +21,10 @@ on:
         type: choice
         options: [plan, read, apply]
         default: plan
+      report:
+        description: "โฟลเดอร์ใน Exports ที่วางไฟล์แผนรายเที่ยว (ว่าง = ไม่เขียน)"
+        type: string
+        default: "งานแก้ W34-W35"
 
 concurrency:
   group: drive-write
@@ -54,9 +58,10 @@ jobs:
           SOURCE: ${{ inputs.source }}
           WEEKS: ${{ inputs.weeks }}
           MODE: ${{ inputs.mode }}
+          REPORT: ${{ inputs.report }}
         run: |
           echo "ได้รับ: source='$SOURCE' weeks='$WEEKS' mode='$MODE'"
-          set -- --source "$SOURCE" --weeks "$WEEKS"
+          set -- --source "$SOURCE" --weeks "$WEEKS" --report "$REPORT"
           if [ "$MODE" = "read" ]; then set -- "$@" --read; fi
           if [ "$MODE" = "apply" ]; then set -- "$@" --apply; fi
           python -u refill_weeks.py "$@"
