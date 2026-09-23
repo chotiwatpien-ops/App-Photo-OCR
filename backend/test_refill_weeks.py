@@ -85,12 +85,15 @@ with db.engine.begin() as c:
                net_earnings=46, distance_km=7.4, note=f"{rw.MARK}: สัญญา 6 Aug/03.jpg | จากตัวอ่าน")
     paired_page = wait("p1.jpg", service_type="Standard Bike", booking_code=None, base_fare=47,
                        net_earnings=47, distance_km=7.5)
+    two_cars = row(job_id=hold, committed=0, service_type="Standard Car", booking_code="A-CAR1",
+                   base_fare=174, net_earnings=174, distance_km=5.3,
+                   note=f"{rw.MARK}: 4 W Standard/3 AUG (1).jpg+3 AUG (2).jpg")
     old_wait = row(job_id=hold, committed=0, service_type="Standard Bike", booking_code="A-PARKED",
                    base_fare=33, net_earnings=33, distance_km=3.3, note="พักไว้จากรอบก่อน")
 
 planned = rw.plan([A, B])
 by = {p[0]["id"]: p for p in planned}
-check("อ่านเฉพาะแถวของการเติมงาน — แถวที่พักอยู่เดิมไม่แตะ", old_wait not in by and len(planned) == 11)
+check("อ่านเฉพาะแถวของการเติมงาน — แถวที่พักอยู่เดิมไม่แตะ", old_wait not in by and len(planned) == 12)
 check("❗ ซ้ำรหัสการจอง (O/0) กับงานที่มีอยู่ → ไม่เติม", by[rep_code][1] is None and "ซ้ำ" in by[rep_code][4])
 check("❗ สลิปไม่มีรหัส ยอด+ระยะตรงกับงานของอีกสัปดาห์ → ไม่เติม",
       by[rep_print][1] is None and "ซ้ำ" in by[rep_print][4])
@@ -100,6 +103,7 @@ check("GrabExpress ไม่ใช่งานรับคน → ไม่เ�
 check("ตัวเลขไม่ลงตัว → รอคนดู ไม่เติม", by[bad][1] is None and "ไม่ลงตัว" in by[bad][4])
 check("❗ จอเดียวจากหน้ารวมรูป (ไม่มี +) → ไม่เติม", by[half][1] is None and "จอเดียว" in by[half][4])
 check("รูปจากอัลบั้มอื่นที่ไม่มี + (รูปทั้งใบ/ต่อแล้ว) ยังเติมได้ตามปกติ", rw.half_of_page(db.get_trip(paired_page)) is False)
+check("❗ รูปทั้งใบ 4W สองรูปถูกจับเป็นคู่ → ไม่เติม", by[two_cars][1] is None and "สองเที่ยว" in by[two_cars][4])
 check("ที่มาอ่านจากโน้ต", rw.source_of({"note": f"{rw.MARK}: มารุต 3 Aug/01.jpg+02.jpg | x"}) == ("มารุต 3 Aug", "01.jpg+02.jpg"))
 wbytes = rw.plan_workbook(planned)
 import io as _io, openpyxl as _ox

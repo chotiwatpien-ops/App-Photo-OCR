@@ -47,6 +47,10 @@ from week_phase3 import codes_agree, norm_code, week_rows
 MARK = "เติมงาน Ops"                 # every row this reads carries it at the start of its note
 SKIP_DEFAULT = r"\d+\s*Aug\.jpg$"     # Ops' page-sized collages — cut apart and sent separately
 READ_PARALLEL = 16
+# Albums whose every picture is a whole trip on one screen. Ops' 4W folder is: map, chip, income
+# and the passenger's block in one screenshot, but not tall enough for the pool to call it long,
+# so the pool paired two trips into one picture eight times (read #1, 2026-09-23).
+WHOLE_ALBUMS = {"4 W Standard"}
 
 
 def week_end(d_from):
@@ -73,9 +77,18 @@ def trips_in(drive, albums, workers=12, log=print):
     """[(album, label, jpeg bytes)] — one per trip: a stitched pair or a whole picture."""
     import pool
     errors = []
+    out = []
+    whole = [a for a in albums if a["album"] in WHOLE_ALBUMS]
+    for a in whole:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            got = list(ex.map(lambda i: (i["name"], drive.download(i["id"])), a["images"]))
+        out += [(a["album"], name, stitch.stitch(data)) for name, data in got]
+        log(f"  {a['album']}: {len(got)} รูป → ทั้งใบทุกรูป (ไม่จับคู่)")
+    albums = [a for a in albums if a["album"] not in WHOLE_ALBUMS]
+    if not albums:
+        return out
     data = pool.Images({}, fetch_one=drive.download, workers=workers, errors=errors)
     report = pool.analyse(albums, data, workers)
-    out = []
     for e in report["albums"]:
         for p in e["pairs"]:
             out.append((e["album"], f"{p['top']}+{p['bottom']}",
@@ -167,6 +180,12 @@ def half_of_page(r):
     return bool(album and PAGE_ALBUM.search(album) and "+" not in (label or ""))
 
 
+def joined_wholes(r):
+    """Two whole-trip pictures the pool joined as if they were halves."""
+    album, label = source_of(r)
+    return album in WHOLE_ALBUMS and "+" in (label or "")
+
+
 def _fingerprint(r):
     """A slip without a booking code (the old app screen) is one trip by its money and distance."""
     if r.get("base_fare") in (None, 0) or r.get("distance_km") in (None, 0):
@@ -234,6 +253,9 @@ def plan(weeks):
             continue
         if half_of_page(r):
             out.append((r, None, group, None, "จอเดียวจากหน้ารวมรูป/PDF — ไม่ครบเที่ยว"))
+            continue
+        if joined_wholes(r):
+            out.append((r, None, group, None, "รูปทั้งใบสองเที่ยวถูกจับเป็นคู่ — อ่านใหม่ทีละรูป"))
             continue
         if r.get("check_status") != "pass":
             out.append((r, None, group, None, "ตัวเลขไม่ลงตัว — รอคนดู"))
