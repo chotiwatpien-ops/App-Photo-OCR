@@ -62,15 +62,26 @@ t_car = staged("c.jpg", "Standard Car")
 t_savercar = staged("d.jpg", "Saver Car")          # รถยนต์มีกลุ่มเดียว
 t_unknown = staged("e.jpg", None)                  # อ่านประเภทไม่ออก
 staged("f.jpg", "Standard Bike", status="pending")  # ยังไม่ได้อ่าน ต้องไม่ถูกหยิบ
+# ชิปอ่านได้แค่คำแรก ('Standard | Women driver' → 'Standard') — ชื่ออัลบั้มบอกว่ารถกี่ล้อ
+t_women = staged("4W-Taxi Jai = 55_48455700+48455701_฿90.jpg", "Standard")
+t_2w_tier = staged("2W-Home Jab_101+102_฿30.jpg", "Saver")
+t_no_album = staged("zz-no-album.jpg", "Standard")          # ไม่มีชื่ออัลบั้มให้ดู ต้องค้างไว้ให้คนดู
 
 rows = far.staged_rows(W, WE)
-check("หยิบเฉพาะแถวที่อ่านแล้ว", sorted(r["file_name"] for r in rows) == ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg"])
+check("หยิบเฉพาะแถวที่อ่านแล้ว", sorted(r["file_name"] for r in rows) == sorted(
+    ["a.jpg", "b.jpg", "c.jpg", "d.jpg", "e.jpg", "zz-no-album.jpg", "4W-Taxi Jai = 55_48455700+48455701_฿90.jpg",
+     "2W-Home Jab_101+102_฿30.jpg"]))
 check("เรียงตามวันที่ขับ", rows[0]["file_name"] == "b.jpg")
 
 res = far.file_rows(drive, WEEK, W, WE, log=lambda *a: None)
-check("ลงที่ได้ 4 แถว (ที่เหลืออ่านประเภทไม่ออก)", res["filed"] == 4 and res["left"] == 1)
+check("ลงที่ได้ 6 แถว (ที่เหลืออ่านประเภทไม่ออก 2)", res["filed"] == 6 and res["left"] == 2)
 check("แยกกลุ่มตามประเภทงานบนสลิป",
-      res["by_group"] == {"2 W Standard": 1, "2 W Saver": 1, "4 W Standard": 2})
+      res["by_group"] == {"2 W Standard": 1, "2 W Saver": 2, "4 W Standard": 3})
+check("❗ ชิปได้แค่ 'Standard' + อัลบั้ม 4W → Standard Car ลงกลุ่มรถยนต์ พร้อมโน้ตบอกที่มา",
+      db.get_trip(t_women)["service_type"] == "Standard Car" and "ชื่ออัลบั้ม" in (db.get_trip(t_women)["note"] or ""))
+check("ชิปได้แค่ 'Saver' + อัลบั้ม 2W → Saver Bike", db.get_trip(t_2w_tier)["service_type"] == "Saver Bike")
+check("ไม่มีชื่ออัลบั้ม → ไม่เดา ค้างไว้เหมือนเดิม", db.get_trip(t_no_album)["service_type"] == "Standard"
+      and db.get_trip(t_no_album)["job_id"] == hold_job)
 
 with db.engine.begin() as c:
     now = {r["file_name"]: dict(r) for r in c.execute(
@@ -86,8 +97,10 @@ check("โน้ตบอกว่าลงที่เพราะอะไร"
 
 moved = {f for _root, _dirs, files in os.walk(WEEK) if far.HOLDING_DIR not in _root
          for f in files}
-check("รูปถูกย้ายออกจากที่พักไปอยู่กับไรเดอร์", moved == {"a.jpg", "b.jpg", "c.jpg", "d.jpg"}
-      and sorted(os.listdir(HOLD)) == ["e.jpg", "f.jpg"])   # e = อ่านประเภทไม่ออก · f = ยังไม่ได้อ่าน
+check("รูปถูกย้ายออกจากที่พักไปอยู่กับไรเดอร์", moved == {"a.jpg", "b.jpg", "c.jpg", "d.jpg",
+                                                     "4W-Taxi Jai = 55_48455700+48455701_฿90.jpg",
+                                                     "2W-Home Jab_101+102_฿30.jpg"}
+      and sorted(os.listdir(HOLD)) == ["e.jpg", "f.jpg", "zz-no-album.jpg"])   # อ่านประเภทไม่ออก · ยังไม่ได้อ่าน
 check("ไรเดอร์ที่ได้งานเป็นชื่อจากลิสต์ Ops",
       all(jobs[now[f]["job_id"]]["driver_name"].split()[0] in ("สมชาย", "สมหญิง", "สมหมาย", "ดวงใจ")
           for f in ("a.jpg", "b.jpg", "c.jpg", "d.jpg")))

@@ -32,6 +32,25 @@ GROUP_OF = {"Saver Bike": "2 W Saver", "Standard Bike": "2 W Standard",
             "Standard Car": "4 W Standard", "Saver Car": "4 W Standard"}
 
 
+def settle_wheel(r):
+    """'Standard Car' for a row whose slip gave only the tier, when its album says 4W.
+
+    The reader sometimes answers the chip with its first word alone: 'Standard | Women driver'
+    came back as 'Standard' (W39, 2026-09-26, ฿90 from 4W-Taxi Jai = 55) and sat unfiled in
+    _พร้อมอ่าน, warned about every round, because no group takes a tier with no vehicle. The
+    album the pool stitched it from is named 2W or 4W by Ops, and the stitched file keeps that
+    name in front. Returns the settled service, or None when the row is fine or cannot be told."""
+    svc = (r.get("service_type") or "").strip()
+    if svc not in ("Standard", "Saver"):
+        return None
+    wheel = distribute.wheel_of(r.get("file_name") or "")
+    if wheel == "4W":
+        return "Standard Car"          # one car group, whatever the tier (car_is_standard)
+    if wheel == "2W":
+        return f"{svc} Bike"
+    return None
+
+
 def holding_job_ids(d_from, d_to):
     """Jobs that hold pictures nobody owns yet — one per week, made by the round."""
     return [j["id"] for j in db.jobs_by_week().get((d_from, d_to), [])
@@ -73,6 +92,13 @@ def file_rows(drive, week_id, d_from, d_to, rows=None, target=None, log=print):
     pics = db.drive_ids_for_trips([r["id"] for r in rows])
     jobs_seen, by_group = set(), Counter()
     for r in rows:
+        settled = settle_wheel(r)
+        if settled:
+            db.update_trip(r["id"], {"service_type": settled})
+            r["note"] = (f"ประเภทรถจากชื่ออัลบั้ม: สลิปอ่านได้แค่ '{r['service_type']}' → {settled}"
+                         + (f" | {r['note']}" if r.get("note") else ""))
+            db.update_trip(r["id"], {"note": r["note"]})
+            r["service_type"] = settled
         svc = car_is_standard((r.get("service_type") or "").strip())
         group = GROUP_OF.get(svc)
         if not group:
