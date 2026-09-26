@@ -235,7 +235,8 @@ def riders(d_from):
 
 
 def plan(weeks):
-    """[(row, week or None, group, job id or None, why)] for every waiting row, in reading order."""
+    """[(row, week or None, group, job id or None, why)] for every waiting row, in reading order.
+    The first week in `weeks` with room for a row's group takes it."""
     existing = []
     for d_from in weeks:
         existing += week_rows(d_from, week_end(d_from))
@@ -243,7 +244,10 @@ def plan(weeks):
     room = {d: room_left(d, week_end(d)) for d in weeks}
     who = {d: riders(d) for d in weeks}
     out = []
-    for r in waiting_rows(weeks[0]):
+    # the order of `weeks` is the order they are filled in; the waiting rows may sit under any of
+    # them (read in one order, filled in another — W35 first for Ops' W35 album, 2026-09-26)
+    waiting = {r["id"]: r for d in weeks for r in waiting_rows(d)}
+    for r in (waiting[k] for k in sorted(waiting)):
         group = GROUP_OF.get(car_is_standard((r.get("service_type") or "").strip()))
         if r["status"] != "done":
             out.append((r, None, group, None, "อ่านไม่สำเร็จ"))

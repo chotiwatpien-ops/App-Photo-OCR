@@ -117,6 +117,10 @@ check("❗ W34 เติม Standard Bike ได้ 1 (ว่าง 1) ที่
 check("❗ ได้ไรเดอร์ที่ทำงานสัปดาห์นี้อยู่แล้ว — job ว่าง (แดง) ไม่นับเป็นคนทำงาน",
       by[new1][3] == somchai)
 
+rev = {p[0]["id"]: p for p in rw.plan([B, A])}
+check("❗ สลับลำดับ (W35 ก่อน): ยังเห็นแถวที่รออยู่ในที่พักของ W34 และ W35 ได้ก่อน",
+      len(rev) == len(planned) and rev[new1][1] == B and rev[new2][1] == B and rev[new3][1] == A)
+
 drive = LocalDrive(root)
 n = rw.apply(drive, str(root / "exports"), planned, log=lambda *_: None)
 check("ลงงานจริง 3 เที่ยว", n == 3)
