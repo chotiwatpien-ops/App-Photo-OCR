@@ -171,6 +171,58 @@ check("❗ ซ่อมชื่อชน: เฉพาะแถวที่เ�
       and (grp / "WK34-12.jpg").read_bytes() == b"jpeg:clash")
 check("ซ่อมซ้ำ: ไม่มีอะไรต้องแก้แล้ว", rw.renumber(drive, str(root / "exports"), [A], log=lambda *_: None) == 0)
 
+# --take-from: W39's Standard Bike finishes a short week (Ops 2026-09-27)
+C, D = "2026-09-21", "2026-08-10"
+muang = db.create_job("ม่วง", "Trips", D, rw.week_end(D), category="2 W Standard")
+big = db.create_job("ใหญ่", "Trips", C, rw.week_end(C), category="2 W Standard")
+mid = db.create_job("กลาง", "Trips", C, rw.week_end(C), category="2 W Standard")
+cgrp = root / "exports" / "2026-W39" / "2 W Standard"
+cgrp.mkdir(parents=True)
+with db.engine.begin() as c:
+    def crow(job, code, fare, day, pic, **kw):
+        src = root / "staged" / f"c-{pic}"
+        src.write_bytes(b"jpeg:" + pic.encode())
+        (cgrp / pic).write_bytes(b"delivered " + pic.encode())
+        return c.execute(insert(db.trips).values(
+            job_id=job, status="done", committed=1, check_status="pass", trip_date=day,
+            file_name=pic, service_type="Standard Bike", booking_code=code, base_fare=fare,
+            net_earnings=fare, distance_km=fare / 10, customer_image=pic,
+            source_url=f"https://drive.google.com/file/d/{src}/view", **kw)).inserted_primary_key[0]
+    c.execute(insert(db.trips).values(job_id=muang, status="done", committed=1, check_status="pass",
+                                      trip_date=D, file_name="m.jpg", service_type="Standard Bike",
+                                      booking_code="D-M1", base_fare=70, net_earnings=70, distance_km=7.0,
+                                      customer_image="WK33-ม่วง1.jpg"))
+    b1 = crow(big, "C-B1", 71, "2026-09-21", "WK39-ใหญ่1.jpg")
+    b2 = crow(big, "C-B2", 72, "2026-09-22", "WK39-ใหญ่2.jpg")
+    b3 = crow(big, "C-B3", 73, "2026-09-23", "WK39-ใหญ่3.jpg")
+    b_rep = crow(big, "D-M1", 70, "2026-09-24", "WK39-ใหญ่4.jpg")        # the same slip D already has
+    dup1 = crow(big, "C-DUP", 75, "2026-09-25", "WK39-ใหญ่5.jpg")       # W39 holds this code twice
+    dup2 = crow(mid, "C-DUP", 75, "2026-09-25", "WK39-กลาง1.jpg")
+    m2 = crow(mid, "C-M2", 76, "2026-09-26", "WK39-กลาง2.jpg")
+
+taken = rw.take_from(C, {"2 W Standard"})
+check("❗ โยก: รหัสที่ W39 มีสองแถวไม่โยก", not {dup1, dup2} & {r["id"] for r in taken})
+check("❗ โยก: เริ่มจากไรเดอร์ที่มีงานมากที่สุด เที่ยวล่าสุดก่อน",
+      [r["id"] for r in taken][:2] == [b_rep, b3] and taken[0]["from_week"] == C
+      and taken[0]["note"].startswith("โยกจาก 2026-W39: ใหญ่/WK39-ใหญ่4.jpg"))
+tp = rw.plan([D], taken)
+tby = {p[0]["id"]: p for p in tp}
+check("❗ โยก: แถวที่ซ้ำกับสัปดาห์ที่เติมไม่ลง และบอกว่าซ้ำ", tby[b_rep][1] is None and "ซ้ำ" in tby[b_rep][4])
+check("❗ โยก: เติมเท่าที่ว่าง (2) แถวที่เหลืออยู่ W39 ตามเดิม ไม่อยู่ในรายการ",
+      sum(1 for p in tp if p[1]) == 2 and tby[b3][1] == D and len(tp) == 3)
+n = rw.apply(drive, str(root / "exports"), tp, log=lambda *_: None)
+t = db.get_trip(b3)
+check("❗ โยก: แถวไปอยู่กับม่วง วันที่ใน W33 ชื่อรูปใหม่ต่อเลขของม่วง",
+      n == 2 and t["job_id"] == muang and D <= t["trip_date"] <= rw.week_end(D)
+      and t["customer_image"] in {"WK33-ม่วง2.jpg", "WK33-ม่วง3.jpg"}
+      and (root / "exports" / "2026-W33" / "2 W Standard" / t["customer_image"]).read_bytes() == "jpeg:WK39-ใหญ่3.jpg".encode())
+check("❗ โยก: รูปที่ส่ง W39 ไปแล้วย้ายออกไป _โยกไปงานแก้ ไม่ค้างในกลุ่ม",
+      not (cgrp / "WK39-ใหญ่3.jpg").exists()
+      and (root / "exports" / "2026-W39" / rw.TAKEN_DIR / "WK39-ใหญ่3.jpg").exists()
+      and (cgrp / "WK39-ใหญ่1.jpg").exists() and (cgrp / "WK39-ใหญ่4.jpg").exists())
+check("โยก: โน้ตบอกที่มา", db.get_trip(b3)["note"].startswith("โยกจาก 2026-W39: ใหญ่/WK39-ใหญ่3.jpg"))
+check("โยก: แถวที่ไม่ได้โยกยังอยู่ W39", all(db.get_trip(x)["job_id"] in (big, mid) for x in (b1, b_rep, dup1, dup2)))
+
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

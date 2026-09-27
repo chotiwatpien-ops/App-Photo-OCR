@@ -25,6 +25,10 @@ Three steps, each its own run:
     python refill_weeks.py --source <folder id>[,<folder id>] --weeks 2026-08-17,2026-08-24 --read
     python refill_weeks.py --source ... --weeks ...                 # the plan
     python refill_weeks.py --source ... --weeks ... --apply
+
+--take-from <Monday> fills the same gaps with trips already filed in another week (Ops 2026-09-27:
+W39's Standard Bike finishes W34). The plan and the rules are the same; the rows come from that
+week's riders instead of the waiting job, and their delivered pictures leave its Exports folder.
 """
 import argparse
 import hashlib
@@ -234,9 +238,44 @@ def riders(d_from):
     return out
 
 
-def plan(weeks):
+TAKEN_DIR = "_โยกไปงานแก้"
+
+
+def take_from(d_from, groups):
+    """[row] finished in week `d_from` in one of `groups`, in the order they would be taken.
+
+    One trip at a time from whichever rider still has the most, so no rider's week empties while
+    another keeps all of theirs. A booking code that week holds twice stays where it is — moving
+    one copy would leave the trip in both weeks."""
+    rows = [r for r in week_rows(d_from, week_end(d_from))
+            if GROUP_OF.get(car_is_standard((r.get("service_type") or "").strip())) in groups
+            and (r.get("driver_name") or "") != HOLDING_RIDER]
+    codes = Counter(norm_code(r.get("booking_code")) for r in rows if r.get("booking_code"))
+    rows = [r for r in rows if not r.get("booking_code") or codes[norm_code(r["booking_code"])] < 2]
+    per = defaultdict(list)
+    for r in rows:
+        per[r["job_id"]].append(r)
+    order = []
+    for jid, rs in per.items():
+        rs.sort(key=lambda r: (r.get("trip_date") or "", r.get("trip_time") or "", r["id"]), reverse=True)
+        order += [(len(rs) - k, str(r.get("driver_name")), r["id"], r) for k, r in enumerate(rs)]
+    order.sort(key=lambda x: (-x[0], x[1], x[2]))
+    wk = week_label(d_from)
+    out = []
+    for *_, r in order:
+        r = dict(r)
+        r["from_week"] = d_from
+        r["note"] = (f"โยกจาก {wk}: {r.get('driver_name')}/{r.get('customer_image') or '-'}"
+                     + (f" | {r['note']}" if r.get("note") else ""))
+        out.append(r)
+    return out
+
+
+def plan(weeks, extra=()):
     """[(row, week or None, group, job id or None, why)] for every waiting row, in reading order.
-    The first week in `weeks` with room for a row's group takes it."""
+    The first week in `weeks` with room for a row's group takes it. `extra` rows (take_from) come
+    after the waiting ones, and one whose group no week has room for left is not listed at all:
+    it stays in its own week."""
     existing = []
     for d_from in weeks:
         existing += week_rows(d_from, week_end(d_from))
@@ -247,8 +286,10 @@ def plan(weeks):
     # the order of `weeks` is the order they are filled in; the waiting rows may sit under any of
     # them (read in one order, filled in another — W35 first for Ops' W35 album, 2026-09-26)
     waiting = {r["id"]: r for d in weeks for r in waiting_rows(d)}
-    for r in (waiting[k] for k in sorted(waiting)):
+    for r in [waiting[k] for k in sorted(waiting)] + list(extra):
         group = GROUP_OF.get(car_is_standard((r.get("service_type") or "").strip()))
+        if r.get("from_week") and not any(room[d].get(group, 0) > 0 for d in weeks):
+            continue
         if r["status"] != "done":
             out.append((r, None, group, None, "อ่านไม่สำเร็จ"))
             continue
@@ -281,7 +322,8 @@ def plan(weeks):
                 break
         if not placed:
             out.append((r, None, group, None, f"{group} ครบเป้าแล้วทั้ง {len(weeks)} สัปดาห์"))
-    return out
+    # a taken row that cannot go stays in its week unmentioned — unless it repeats the weeks topped up
+    return [p for p in out if not p[0].get("from_week") or p[1] or p[4].startswith("ซ้ำ")]
 
 
 # ---------------------------------------------------------------- applying -----------------------
@@ -298,6 +340,7 @@ def apply(drive, exports_id, planned, log=print):
     taken = {}
     used = {}
     folders = {}
+    left = {}                                # (week, group) → {picture name: file} a row leaves behind
     n = 0
     for r, d, group, jid, _why in placed:
         rider, wk = jobs[jid]["driver_name"], week_label(d)
@@ -314,15 +357,37 @@ def apply(drive, exports_id, planned, log=print):
         i = have[jid] + per_job[jid]
         per_job[jid] += 1
         day = (date.fromisoformat(d) + timedelta(days=i % 7)).isoformat()
+        if r.get("from_week"):
+            leave_picture(drive, exports_id, r, left, log)
         db.move_trips_to_job([r["id"]], jid)
         db.update_trip(r["id"], {"trip_date": day, "customer_image": name,
                                  "note": f"{r['note']} | ลงให้ {rider} · {group} · {wk}"})
         with db.engine.begin() as c:            # approval is not a field a person edits
             c.execute(update(db.trips).where(db.trips.c.id == r["id"]).values(committed=1, auto_approved=1))
         n += 1
-    for jid in {p[3] for p in placed}:
+    for jid in {p[3] for p in placed} | {p[0]["job_id"] for p in placed if p[0].get("from_week")}:
         db.refresh_job_status(jid)
     return n
+
+
+def leave_picture(drive, exports_id, r, left, log=print):
+    """Move a taken row's delivered picture out of its old week's group folder, into that week's
+    _โยกไปงานแก้, so the week it left no longer shows it and a later trip given the freed number
+    uploads into an empty place."""
+    name, wk = r.get("customer_image"), week_label(r["from_week"])
+    if not name or not r.get("category"):
+        return
+    key = (wk, r["category"])
+    if key not in left:
+        top = next((f["id"] for f in drive.list_folders(exports_id) if f["name"].strip() == wk), None)
+        grp = top and next((f["id"] for f in drive.list_folders(top) if f["name"].strip() == r["category"]), None)
+        left[key] = ({i["name"]: i["id"] for i in drive.list_images(grp)} if grp else {}, top)
+    files, top = left[key]
+    fid = files.pop(name, None)
+    if fid:
+        drive.move_file(fid, drive.ensure_folder(top, TAKEN_DIR))
+    else:
+        log(f"  ⚠ #{r['id']}: ไม่เจอรูป {wk}/{r['category']}/{name} ให้ย้ายออก")
 
 
 def next_name(rider, wkn, nums, used):
@@ -417,7 +482,8 @@ def plan_workbook(planned):
             c.font = Font(bold=True)
         for r, d, g, jid, why in rows:
             album, label = source_of(r)
-            sh.append([r["id"], f"{album}/{label}", r.get("service_type"), r.get("base_fare"),
+            origin = f"{album}/{label}" if album else (r.get("note") or "").split(" | ")[0]
+            sh.append([r["id"], origin, r.get("service_type"), r.get("base_fare"),
                        r.get("net_earnings"), r.get("passenger_paid"), r.get("booking_code"),
                        r.get("distance_km"), "เติม" if d else "ไม่เติม", week_label(d) if d else None,
                        g, jobs[jid]["driver_name"] if jid in jobs else None, why])
@@ -438,6 +504,7 @@ def main(argv=None):
     ap.add_argument("--apply", action="store_true", help="ลงงานตามแผนจริง")
     ap.add_argument("--renumber", action="store_true", help="ตั้งชื่อรูปใหม่ให้แถวที่เติมแล้วชื่อชนกับแถวอื่นในกลุ่มเดียวกัน")
     ap.add_argument("--report", default="", help="โฟลเดอร์ใน Exports ที่จะวางไฟล์แผนรายเที่ยว (ว่าง = ไม่เขียน)")
+    ap.add_argument("--take-from", default="", help="วันจันทร์ของสัปดาห์ที่จะโยกงานมาเติม (แทนรูปจาก Ops)")
     a = ap.parse_args(argv)
     sys.stdout.reconfigure(encoding="utf-8")
     db.init_db()
@@ -464,8 +531,14 @@ def main(argv=None):
                    if f["name"].strip() == weeks_folder_name(weeks[0])), None)
         parent = wk["id"] if wk else ids[0]
         read_rows(drive, ids, weeks, drive.ensure_folder(parent, f"_{MARK}"), a.skip)
-    planned = plan(weeks)
-    print(f"\nแผน: แถวที่อ่านแล้วรอเติม {len(planned)}")
+    extra = []
+    if a.take_from:
+        short = {g for d in weeks for g, v in room_left(d, week_end(d)).items() if v > 0}
+        extra = take_from(a.take_from.strip(), short)
+        print(f"โยกจาก {week_label(a.take_from.strip())}: กลุ่มที่ยังขาด {', '.join(sorted(short)) or '-'} · "
+              f"แถวที่โยกได้ {len(extra)}")
+    planned = plan(weeks, extra)
+    print(f"\nแผน: แถวที่รอเติม {len(planned)}")
     summary(planned)
     if a.report:
         import roster
