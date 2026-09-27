@@ -54,8 +54,17 @@ with db.engine.begin() as c:
                                           service_type=svc, customer_image=f"WK36-มนันตรา Win{n}.jpg",
                                           committed=1, note="ประเภทตามชิปบนสลิป" if n > 1 else None))
 
+# a row waiting in '(รออ่าน)' has no group and counts nowhere — never moved onto the bill
+held = db.create_job(db.HOLDING_RIDER, "Trips", D_FROM, D_TO)
+with db.engine.begin() as c:
+    c.execute(insert(db.trips).values(job_id=held, file_name="wait.jpg", status="done",
+                                      service_type="Saver Bike", committed=0))
+
 # --- what needs moving --------------------------------------------------------------------------
 moves, _jobs = rh.rows_needing_move(D_FROM, D_TO)
+check("❗ แถวที่รออยู่ใน (รออ่าน) ไม่ถูกย้าย", all(j["id"] != held for _r, j, _w in moves))
+with db.engine.begin() as c:                                      # the checks below list every row
+    c.execute(db.trips.delete().where(db.trips.c.job_id == held))
 check("เจอ 2 แถวที่ประเภทไม่ตรงกลุ่มของ job (ไม่ใช่ 3)", len(moves) == 2)
 check("ทั้งสองต้องไป 2 W Saver", {w for _r, _j, w in moves} == {"2 W Saver"})
 

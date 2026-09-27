@@ -43,6 +43,11 @@ CUSTOMER_ID_RE = re.compile(r"[-\w]{25,}")
 def rows_needing_move(d_from, d_to):
     """[(row, job, target group)] for finished rows whose service names another group."""
     jobs = {j["id"]: j for j in db.jobs_by_week().get((d_from, d_to), [])}
+    # a job with no group holds rows not filed yet ('(รออ่าน)': the pool's _พร้อมอ่าน, the top-up's
+    # unused trips) — they count nowhere, and moving them would put them on the bill (W34, 2026-09-27:
+    # 660 of the 675 rows the report listed were Ops' unused top-up trips)
+    held = {k for k, j in jobs.items() if not (j.get("category") or "").strip()
+            or (j.get("driver_name") or "") == db.HOLDING_RIDER}
     if not jobs:
         return [], jobs
     t = db.trips.c
@@ -52,6 +57,8 @@ def rows_needing_move(d_from, d_to):
             .where(t.job_id.in_(list(jobs)), t.status == "done").order_by(t.id)).mappings().all()]
     out = []
     for r in rows:
+        if r["job_id"] in held:
+            continue
         j = jobs[r["job_id"]]
         want = GROUP_OF.get((r["service_type"] or "").strip())
         if want and want != (j.get("category") or "").strip():
