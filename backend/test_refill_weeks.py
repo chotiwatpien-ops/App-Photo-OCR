@@ -222,6 +222,11 @@ check("❗ โยก: รูปที่ส่ง W39 ไปแล้วย้�
       and (cgrp / "WK39-ใหญ่1.jpg").exists() and (cgrp / "WK39-ใหญ่4.jpg").exists())
 check("โยก: โน้ตบอกที่มา", db.get_trip(b3)["note"].startswith("โยกจาก 2026-W39: ใหญ่/WK39-ใหญ่3.jpg"))
 check("โยก: แถวที่ไม่ได้โยกยังอยู่ W39", all(db.get_trip(x)["job_id"] in (big, mid) for x in (b1, b_rep, dup1, dup2)))
+rep = rw.repeats_between(C, [D])
+check("❗ นับงานซ้ำข้ามสัปดาห์: เจอแถวที่รหัสตรงกับ W33 แถวเดียว และบอกว่าซ้ำกับสัปดาห์ไหน",
+      [x[0]["id"] for x in rep] == [b_rep] and rep[0][1]["_week"] == "2026-W33" and rep[0][2] == "รหัสการจอง")
+wbr = _ox.load_workbook(_io.BytesIO(rw.repeats_report(C, rep, 5, log=lambda *_: None)))
+check("รายงานงานซ้ำ: ชีตสรุป/รายเที่ยว", wbr.sheetnames == ["สรุป", "รายเที่ยว"] and wbr["รายเที่ยว"].max_row == 2)
 
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")

@@ -441,6 +441,74 @@ def renumber(drive, exports_id, weeks, log=print):
     return n
 
 
+def repeats_between(d_from, weeks):
+    """[(row, other, how)] — every finished row of week `d_from` that is a slip `weeks` already
+    hold: the same booking code (O/0, I/1, a cut '...' agree), or for a slip with no code the same
+    group, fare, net and distance. Read only. W39 had August slips in it (2026-09-27)."""
+    existing = []
+    for d in weeks:
+        existing += [{**x, "_week": week_label(d)} for x in week_rows(d, week_end(d))]
+    seen = Seen(existing)
+    out = []
+    for r in week_rows(d_from, week_end(d_from)):
+        other = seen.repeat_of(r)
+        if other:
+            out.append((r, other, "รหัสการจอง" if norm_code(r.get("booking_code")) else "ยอด+ระยะ (ไม่มีรหัส)"))
+    return out
+
+
+REPEAT_COLS = ["id", "ไรเดอร์", "กลุ่ม", "Service Type", "วันที่", "รหัสการจอง", "ค่ารอบ", "คุณได้รับ",
+               "ระยะทาง", "รูปส่งลูกค้า", "อัลบั้มที่ส่งมา", "ซ้ำกับ (สัปดาห์)", "ซ้ำกับ id", "ไรเดอร์เดิม",
+               "รูปเดิม", "เทียบด้วย"]
+
+
+def repeats_report(d_from, found, total, log=print):
+    """Print the counts and return the workbook."""
+    import io
+
+    import openpyxl
+    from openpyxl.styles import Font
+    wk = week_label(d_from)
+    grp = lambda r: GROUP_OF.get(car_is_standard((r.get("service_type") or "").strip())) or r.get("category")
+    log(f"\n{wk}: {total:,} แถว · ซ้ำกับงานที่มีอยู่ {len(found):,} แถว ({len(found) / max(total, 1):.1%})")
+    for how, k in Counter(h for _r, _o, h in found).most_common():
+        log(f"  เทียบด้วย{how}: {k:,}")
+    all_by_group = Counter(grp(r) for r in week_rows(d_from, week_end(d_from)))
+    for g, k in sorted(Counter(grp(r) for r, _o, _h in found).items(), key=lambda x: str(x[0])):
+        log(f"  {g}: ซ้ำ {k:,} จาก {all_by_group.get(g, 0):,}")
+    log("  ไรเดอร์ใน " + wk + " ที่มีงานซ้ำมากสุด: " + " · ".join(
+        f"{n} {k}" for n, k in Counter(r.get("driver_name") for r, _o, _h in found).most_common(12)))
+    log("  อัลบั้มที่ส่งมา: " + " · ".join(
+        f"{n or '-'} {k}" for n, k in Counter(r.get("source_album") for r, _o, _h in found).most_common(12)))
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "สรุป"
+    ws.append(["กลุ่ม", "แถวทั้งหมด", "ซ้ำ"])
+    for g in sorted(all_by_group, key=str):
+        ws.append([g, all_by_group[g], sum(1 for r, _o, _h in found if grp(r) == g)])
+    ws.append(["รวม", total, len(found)])
+    ws.append([])
+    ws.append(["ไรเดอร์", "ซ้ำ"])
+    for n, k in Counter(r.get("driver_name") for r, _o, _h in found).most_common():
+        ws.append([n, k])
+    ws.column_dimensions["A"].width = 30
+    sh = wb.create_sheet("รายเที่ยว")
+    sh.append(REPEAT_COLS)
+    for c in sh[1]:
+        c.font = Font(bold=True)
+    for r, o, how in sorted(found, key=lambda x: (str(x[0].get("driver_name")), x[0].get("trip_date") or "", x[0]["id"])):
+        sh.append([r["id"], r.get("driver_name"), r.get("category"), r.get("service_type"), r.get("trip_date"),
+                   r.get("booking_code"), r.get("base_fare"), r.get("net_earnings"), r.get("distance_km"),
+                   r.get("customer_image"), r.get("source_album"), o.get("_week"), o["id"],
+                   o.get("driver_name"), o.get("customer_image"), how])
+    for col, w in zip("ABCDEFGHIJKLMNOP", (8, 18, 13, 14, 11, 20, 8, 9, 8, 22, 26, 11, 8, 18, 22, 18)):
+        sh.column_dimensions[col].width = w
+    sh.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def summary(planned, log=print):
     by = Counter((p[1], p[2]) for p in planned if p[1])
     for (d, g), k in sorted(by.items()):
@@ -505,6 +573,8 @@ def main(argv=None):
     ap.add_argument("--renumber", action="store_true", help="ตั้งชื่อรูปใหม่ให้แถวที่เติมแล้วชื่อชนกับแถวอื่นในกลุ่มเดียวกัน")
     ap.add_argument("--report", default="", help="โฟลเดอร์ใน Exports ที่จะวางไฟล์แผนรายเที่ยว (ว่าง = ไม่เขียน)")
     ap.add_argument("--take-from", default="", help="วันจันทร์ของสัปดาห์ที่จะโยกงานมาเติม (แทนรูปจาก Ops)")
+    ap.add_argument("--repeats", action="store_true",
+                    help="อ่านอย่างเดียว: นับแถวของสัปดาห์ --take-from ที่เป็นสลิปเดียวกับงานใน --weeks")
     a = ap.parse_args(argv)
     sys.stdout.reconfigure(encoding="utf-8")
     db.init_db()
@@ -514,6 +584,24 @@ def main(argv=None):
         print(f"{week_label(d)} ({d}..{week_end(d)}){' · ปิดสัปดาห์แล้ว' if d in shut else ''} · "
               + " · ".join(f"{g} ว่าง {max(0, v)}" for g, v in sorted(room_left(d, week_end(d)).items())))
     drive = None
+    if a.repeats:
+        src = a.take_from.strip()
+        if not src:
+            print("✗ ต้องระบุ --take-from")
+            return 2
+        found = repeats_between(src, weeks)
+        total = len(week_rows(src, week_end(src)))
+        data = repeats_report(src, found, total)
+        if a.report:
+            import roster
+            drive = roster._drive()
+            exp = config.DRIVE_EXPORTS_FOLDER_ID
+            folder = next((f["id"] for f in drive.list_folders(exp) if f["name"].strip() == a.report), None) \
+                or drive.ensure_folder(exp, a.report)
+            name = f"งาน {week_label(src)} ที่ซ้ำกับ {'-'.join(week_label(d)[-3:] for d in weeks)}.xlsx"
+            drive.upload_xlsx(folder, name, data)
+            print(f"📋 รายเที่ยว → Exports/{a.report}/{name}")
+        return 0
     if a.renumber:
         import roster
         n = renumber(roster._drive(), config.DRIVE_EXPORTS_FOLDER_ID, weeks)
