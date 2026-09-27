@@ -9,6 +9,10 @@ fix written against yesterday's data cannot overwrite today's. The note says who
 
     python fix_rows.py --fix "8725 base_fare 0 99" --why "ค่ารอบอ่านพลาด: สลิปพิมพ์ 99"          # report
     python fix_rows.py --fix "8725 base_fare 0 99" --why "..." --apply
+
+A text field takes its words joined by '_': "11373 service_type Standard_Bike Standard_Car" — the
+car slips whose chip reads 'Standard | Women driver' came back as Standard Bike (W34/W35,
+2026-09-27) and were counted as bikes.
 """
 import argparse
 import sys
@@ -18,18 +22,27 @@ from sqlalchemy import select
 import db
 
 
+TEXT_FIELDS = {"service_type"}
+
+
 def parse(spec):
     """'8725 base_fare 0 99; 8726 turbo None 5' → [(8725, 'base_fare', 0.0, 99.0), ...]"""
     out = []
     for part in [p for p in spec.split(";") if p.strip()]:
         tid, field, old, new = part.split()
-        num = lambda v: None if v.lower() in ("none", "null", "-") else float(v)
-        out.append((int(tid), field, num(old), num(new)))
+        empty = lambda v: v.lower() in ("none", "null", "-")
+        if field in TEXT_FIELDS:
+            val = lambda v: None if empty(v) else v.replace("_", " ")
+        else:
+            val = lambda v: None if empty(v) else float(v)
+        out.append((int(tid), field, val(old), val(new)))
     return out
 
 
 def same(cur, old):
     """An empty field and a 0 are the same thing to a person reading the file."""
+    if isinstance(old, str):
+        return (cur or "").strip() == old
     if not old:
         return not cur
     return cur is not None and abs(cur - old) < 0.005
@@ -71,7 +84,8 @@ def main(argv=None):
         print(f"\n(รายงานอย่างเดียว — แก้ได้ {len(good)} จาก {len(result)} · ใส่ --apply เพื่อเขียนจริง)")
         return 0
     for (tid, field, old, new), r in good:
-        note = f"แก้ {field} {old:g} → {new:g}: {a.why}" if old is not None else f"แก้ {field} ว่าง → {new:g}: {a.why}"
+        show = lambda v: "ว่าง" if v is None else (v if isinstance(v, str) else f"{v:g}")
+        note = f"แก้ {field} {show(old)} → {show(new)}: {a.why}"
         db.update_trip(tid, {field: new, "note": f"{note} | {r['note']}" if r.get("note") else note})
     print(f"\n✓ แก้แล้ว {len(good)} แถว · ข้าม {len(result) - len(good)}")
     return 0 if len(good) == len(result) else 1
