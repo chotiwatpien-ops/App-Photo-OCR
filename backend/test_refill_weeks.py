@@ -228,6 +228,38 @@ check("❗ นับงานซ้ำข้ามสัปดาห์: เจ�
 wbr = _ox.load_workbook(_io.BytesIO(rw.repeats_report(C, rep, 5, log=lambda *_: None)))
 check("รายงานงานซ้ำ: ชีตสรุป/รายเที่ยว", wbr.sheetnames == ["สรุป", "รายเที่ยว"] and wbr["รายเที่ยว"].max_row == 2)
 
+# --rename-rider: W34's riders named by their folder's number ('1-อรุณ' → '1'), Ops 2026-09-28
+E = "2026-08-03"
+zero1 = db.create_job("01", "Trips", E, rw.week_end(E), category="2 W Saver")
+one_e = db.create_job("1", "Trips", E, rw.week_end(E), category="2 W Standard")
+egrp_s = root / "exports" / "2026-W32" / "2 W Saver"
+egrp_b = root / "exports" / "2026-W32" / "2 W Standard"
+egrp_s.mkdir(parents=True)
+egrp_b.mkdir(parents=True)
+with db.engine.begin() as c:
+    def erow(job, pic, code, cat_dir):
+        (cat_dir / pic).write_bytes(b"pic " + pic.encode())
+        return c.execute(insert(db.trips).values(job_id=job, status="done", committed=1, check_status="pass",
+                                                 trip_date=E, file_name="e.jpg", service_type="Saver Bike",
+                                                 booking_code=code, base_fare=20, net_earnings=20,
+                                                 customer_image=pic)).inserted_primary_key[0]
+    z1 = erow(zero1, "WK32-011.jpg", "E-1", egrp_s)
+    z2 = erow(zero1, "WK32-0112.jpg", "E-2", egrp_s)
+    o1 = erow(one_e, "WK32-12.jpg", "E-3", egrp_b)
+n = rw.rename_riders(drive, str(root / "exports"), [E], {"01": "นภสิทธิ์", "1": "อรุณ"}, log=lambda *_: None)
+check("❗ เปลี่ยนชื่อไรเดอร์ตัวเลข: '01' ใบที่ 1 และ 12 ได้เลขเดิม (ไม่อ่าน 011 เป็นใบที่ 11)",
+      n == 3 and db.get_trip(z1)["customer_image"] == "WK32-นภสิทธิ์1.jpg"
+      and db.get_trip(z2)["customer_image"] == "WK32-นภสิทธิ์12.jpg"
+      and db.get_trip(o1)["customer_image"] == "WK32-อรุณ2.jpg")
+check("❗ รูปบน Drive เปลี่ยนชื่อที่เดิม ไม่มีชื่อเก่าค้าง",
+      sorted(x.name for x in egrp_s.iterdir()) == ["WK32-นภสิทธิ์1.jpg", "WK32-นภสิทธิ์12.jpg"]
+      and (egrp_s / "WK32-นภสิทธิ์1.jpg").read_bytes() == "pic WK32-011.jpg".encode()
+      and [x.name for x in egrp_b.iterdir()] == ["WK32-อรุณ2.jpg"])
+check("job ได้ชื่อจริง", db.get_job_meta(zero1)["driver_name"] == "นภสิทธิ์" if "driver_name" in (db.get_job_meta(zero1) or {})
+      else any(j["driver_name"] == "นภสิทธิ์" for j in db.jobs_by_week()[(E, rw.week_end(E))]))
+check("เปลี่ยนซ้ำ: ไม่มีอะไรให้เปลี่ยนแล้ว",
+      rw.rename_riders(drive, str(root / "exports"), [E], {"01": "นภสิทธิ์"}, log=lambda *_: None) == 0)
+
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

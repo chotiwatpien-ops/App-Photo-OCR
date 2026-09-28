@@ -509,6 +509,63 @@ def repeats_report(d_from, found, total, log=print):
     return buf.getvalue()
 
 
+def rename_riders(drive, exports_id, weeks, names, log=print):
+    """Put riders' real names on jobs that carry a bare number, and on their delivered pictures.
+
+    W34's first round (Aug) named four riders by their folder's number: '1-อรุณ' became '1',
+    '01 - นภสิทธิ์' became '01' — 98 rows, and pictures 'WK34-11.jpg' that say nobody (Ops,
+    2026-09-28). `names` is {old: new}. Each picture keeps its number under the new name
+    ('WK34-11.jpg' → 'WK34-อรุณ1.jpg') unless the week already holds that name, and is renamed
+    where it is on Drive — the same file. Returns how many rows were renamed."""
+    n = 0
+    for d in weeks:
+        wk = week_label(d)
+        wkn = f"WK{date.fromisoformat(d).isocalendar()[1]:02d}"
+        rows = week_rows(d, week_end(d))
+        used = {r.get("customer_image") for r in rows if r.get("customer_image")}
+        folders = {}
+        for j in db.jobs_by_week().get((d, week_end(d)), []):
+            new = names.get((j.get("driver_name") or "").strip())
+            if not new:
+                continue
+            old = j["driver_name"].strip()
+            mine = sorted((r for r in rows if r["job_id"] == j["id"]), key=lambda r: r["id"])
+            nums = set()
+            renamed = []
+            for r in mine:
+                pic = r.get("customer_image")
+                # the number after the old name — _number_in reads every trailing digit, so for a
+                # rider called '01' it takes 'WK34-011.jpg' as trip 11
+                m = re.fullmatch(re.escape(f"{wkn}-{old}") + r"(\d+)\.jpe?g", pic or "", re.IGNORECASE)
+                k = int(m.group(1)) if m else None
+                name = stitch.customer_name(new, k, wkn) if k else None
+                if not name or name in used:
+                    name = next_name(new, wkn, nums, used)
+                else:
+                    nums.add(k)
+                    used.add(name)
+                if pic:
+                    used.discard(pic)
+                cat = r.get("category") or j.get("category")
+                if (wk, cat) not in folders:
+                    top = next((f["id"] for f in drive.list_folders(exports_id) if f["name"].strip() == wk), None)
+                    grp = top and next((f["id"] for f in drive.list_folders(top) if f["name"].strip() == cat), None)
+                    folders[(wk, cat)] = {i["name"]: i["id"] for i in drive.list_images(grp)} if grp else {}
+                fid = folders[(wk, cat)].pop(pic, None) if pic else None
+                if fid:
+                    drive.rename_file(fid, name)
+                    folders[(wk, cat)][name] = fid
+                else:
+                    log(f"  ⚠ #{r['id']}: ไม่เจอรูป {wk}/{cat}/{pic} ให้เปลี่ยนชื่อ")
+                db.update_trip(r["id"], {"customer_image": name})
+                renamed.append((pic, name))
+                n += 1
+            db.rename_job(j["id"], new)
+            log(f"  {wk} job #{j['id']} '{old}' → {new}: {len(renamed)} แถว"
+                + (f" · เช่น {renamed[0][0]} → {renamed[0][1]}" if renamed else ""))
+    return n
+
+
 def summary(planned, log=print):
     by = Counter((p[1], p[2]) for p in planned if p[1])
     for (d, g), k in sorted(by.items()):
@@ -573,6 +630,8 @@ def main(argv=None):
     ap.add_argument("--renumber", action="store_true", help="ตั้งชื่อรูปใหม่ให้แถวที่เติมแล้วชื่อชนกับแถวอื่นในกลุ่มเดียวกัน")
     ap.add_argument("--report", default="", help="โฟลเดอร์ใน Exports ที่จะวางไฟล์แผนรายเที่ยว (ว่าง = ไม่เขียน)")
     ap.add_argument("--take-from", default="", help="วันจันทร์ของสัปดาห์ที่จะโยกงานมาเติม (แทนรูปจาก Ops)")
+    ap.add_argument("--rename-rider", default="",
+                    help="'เลขเดิม=ชื่อจริง;…' เปลี่ยนชื่อไรเดอร์ที่เป็นตัวเลข พร้อมชื่อรูปที่ส่งลูกค้า")
     ap.add_argument("--repeats", action="store_true",
                     help="อ่านอย่างเดียว: นับแถวของสัปดาห์ --take-from ที่เป็นสลิปเดียวกับงานใน --weeks")
     a = ap.parse_args(argv)
@@ -601,6 +660,13 @@ def main(argv=None):
             name = f"งาน {week_label(src)} ที่ซ้ำกับ {'-'.join(week_label(d)[-3:] for d in weeks)}.xlsx"
             drive.upload_xlsx(folder, name, data)
             print(f"📋 รายเที่ยว → Exports/{a.report}/{name}")
+        return 0
+    if a.rename_rider:
+        import roster
+        names = dict(p.split("=", 1) for p in a.rename_rider.split(";") if "=" in p)
+        names = {k.strip(): v.strip() for k, v in names.items() if k.strip() and v.strip()}
+        n = rename_riders(roster._drive(), config.DRIVE_EXPORTS_FOLDER_ID, weeks, names)
+        print(f"✓ เปลี่ยนชื่อ {n} แถว")
         return 0
     if a.renumber:
         import roster

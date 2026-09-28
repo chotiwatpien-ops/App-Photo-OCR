@@ -173,6 +173,11 @@ class DriveClient:
         r = self._retry(_get)
         return {"id": r["id"], "name": r.get("name"), "parents": r.get("parents", [])}
 
+    def rename_file(self, file_id, new_name) -> None:
+        """Give a file another name, where it is — same id, same folder, same bytes."""
+        self._retry(lambda: self.svc.files().update(fileId=file_id, body={"name": new_name},
+                                                    fields="id", supportsAllDrives=True).execute())
+
     def move_file(self, file_id, new_parent_id) -> None:
         """Re-parent a file (no copy, no delete — the same file id ends up in the new folder)."""
         def _mv():
@@ -264,6 +269,10 @@ class LocalDrive:
     def file_meta(self, file_id) -> dict:
         p = Path(file_id)
         return {"id": str(p), "name": p.name, "parents": [str(p.parent)]}
+
+    def rename_file(self, file_id, new_name) -> None:
+        src = Path(file_id)
+        src.rename(src.with_name(new_name))
 
     def move_file(self, file_id, new_parent_id) -> None:
         src = Path(file_id)

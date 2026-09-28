@@ -19,12 +19,16 @@ on:
       mode:
         description: "read = จับคู่และอ่านรูป · plan = ดูแผน · apply = ลงงานจริง · renumber = ซ่อมชื่อรูปที่ชนกัน · repeats = นับงานของสัปดาห์ take_from ที่ซ้ำกับ weeks (อ่านอย่างเดียว)"
         type: choice
-        options: [plan, read, apply, renumber, repeats]
+        options: [plan, read, apply, renumber, repeats, rename]
         default: plan
       report:
         description: "โฟลเดอร์ใน Exports ที่วางไฟล์แผนรายเที่ยว (ว่าง = ไม่เขียน)"
         type: string
         default: "งานแก้ W34-W35"
+      rename:
+        description: "mode=rename: 'เลขเดิม=ชื่อจริง;…' เช่น 1=อรุณ;2=สุนิล"
+        type: string
+        default: ""
       take_from:
         description: "วันจันทร์ของสัปดาห์ที่จะโยกงานมาเติมแทนรูปจาก Ops เช่น 2026-09-21 (ว่าง = ไม่โยก)"
         type: string
@@ -64,6 +68,7 @@ jobs:
           MODE: ${{ inputs.mode }}
           REPORT: ${{ inputs.report }}
           TAKE_FROM: ${{ inputs.take_from }}
+          RENAME: ${{ inputs.rename }}
         run: |
           echo "ได้รับ: source='$SOURCE' weeks='$WEEKS' mode='$MODE'"
           set -- --source "$SOURCE" --weeks "$WEEKS" --report "$REPORT"
@@ -72,4 +77,5 @@ jobs:
           if [ "$MODE" = "apply" ]; then set -- "$@" --apply; fi
           if [ "$MODE" = "renumber" ]; then set -- "$@" --renumber; fi
           if [ "$MODE" = "repeats" ]; then set -- "$@" --repeats; fi
+          if [ "$MODE" = "rename" ]; then set -- "$@" --rename-rider "$RENAME"; fi
           python -u refill_weeks.py "$@"
