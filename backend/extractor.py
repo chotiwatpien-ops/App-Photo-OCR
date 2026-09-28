@@ -68,6 +68,10 @@ SCHEMA = types.Schema(
             type=types.Type.NUMBER, nullable=True,
             description="'ค่าบริการที่แกร็บได้รับ' — Grab's cut in THB. Null if collapsed/not shown.",
         ),
+        "receipt_total": types.Schema(
+            type=types.Type.NUMBER, nullable=True,
+            description="OLD screen only: the bold 'Total' at the bottom of the 'ค่าธรรมเนียมของผู้โดยสาร' card (the fare plus the app fee, tip, tolls and international fee, less any ส่วนลด) — what the passenger paid. Null on the new screen, or if that card is folded or not shown.",
+        ),
         "booking_code": types.Schema(
             type=types.Type.STRING, nullable=True,
             description="รหัสการจอง booking code, ~15-16 chars like 'A-9L4WFXMGXXXFAV', usually ending 'AV'. On screen it often WRAPS onto a second line — read BOTH lines and join them with no space; never stop at the end of the first line. Null if not visible.",
@@ -274,6 +278,32 @@ def fix_passenger_total(data: dict) -> dict:
     return data
 
 
+def settle_old_receipt(data: dict) -> dict:
+    """What the passenger paid on the OLD screen, and its fee lines in the NEW screen's signs.
+
+    The old screen has no 'ยอดที่ผู้โดยสารชำระ'; what the passenger paid is the bold Total of its
+    'ค่าธรรมเนียมของผู้โดยสาร' card, which runs upward from the fare — the app fee printed +20
+    where the new screen prints −20. Sheet1's Passenger Fare and Total Commission (= Grab Service
+    − app fee) are built on the new screen's signs, so W39's old slips went out with Passenger
+    Fare empty and Total Commission ฿40 short on a car (Fiat 2026-09-28). The lines are flipped and
+    the Total becomes passenger_paid only when they add up to the fare exactly; otherwise the
+    reading is left as it was. Mutates and returns data."""
+    total, fare = _n(data.get("receipt_total")), _n(data.get("passenger_total"))
+    if total is None or fare is None or data.get("passenger_paid") is not None:
+        return data
+    flip = lambda v: None if _n(v) is None else -_n(v)           # noqa: E731
+    lines = {k: flip(data.get(k)) for k in ("app_fee", "discount", "insurance_fee", "passenger_tolls",
+                                             "other_adjustments")}
+    intl = abs(_n(data.get("intl_fee")) or 0)
+    # a tip the passenger paid is inside the receipt too (the new screen's 'ค่าทิป' line)
+    got = total - intl + sum(v for v in lines.values() if v is not None) - (_n(data.get("tip")) or 0)
+    if abs(got - fare) >= 0.51:
+        return data
+    data.update(lines)
+    data["passenger_paid"] = total
+    return data
+
+
 def arithmetic_check(data: dict) -> str:
     """Cross-check extracted numbers against each other: 'pass' | 'fail' | 'no_data'.
 
@@ -383,7 +413,7 @@ def _call_gemini(img, model: str = None, drop=(), lines=None) -> dict:
     resp = client().models.generate_content(
         model=model, contents=[prompt(lines), img], config=_gen_config(model, drop, lines),
     )
-    data = fix_passenger_total(json.loads(resp.text))
+    data = settle_old_receipt(fix_passenger_total(json.loads(resp.text)))
     u = resp.usage_metadata
     data["_usage"] = {
         "model": model,

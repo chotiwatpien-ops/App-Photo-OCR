@@ -104,5 +104,22 @@ check("ส่วนเสริมของใบเสร็จ = ค่าแ�
       extractor.receipt_extras(sompong13) == 43)
 check("ค่าแอปติดลบ (จอใหม่) ไม่นับเป็นส่วนเสริม", extractor.receipt_extras(prapan1) == 0)
 
+# --- หน้าจอเก่า: ยอดที่ผู้โดยสารจ่าย = Total ของการ์ดค่าธรรมเนียม (W39, 2026-09-28) ----------
+def settle(d):
+    return extractor.settle_old_receipt(dict(d))
+# WK39-ณัฐวรรธน์ Home2: fare 101, ค่าแอป 20, ส่วนลด −19, Total 102
+r = settle({"passenger_total": 101, "receipt_total": 102, "app_fee": 20, "discount": -19, "tip": 0})
+check("❗ จอเก่า: Total 102 → ยอดจ่าย · ค่าแอป 20 → −20 · ส่วนลด −19 → 19",
+      r["passenger_paid"] == 102 and r["app_fee"] == -20 and r["discount"] == 19)
+# WK39-ยอดยิ่ง Taxi10: 83 + ค่าแอป 20 + ค่าธุรกรรม 3 = 106
+r = settle({"passenger_total": 83, "receipt_total": 106, "app_fee": 20, "intl_fee": 3, "tip": 0})
+check("จอเก่ามีค่าธุรกรรมต่างประเทศ: ลงตัว", r["passenger_paid"] == 106 and r["app_fee"] == -20)
+r = settle({"passenger_total": 83, "receipt_total": 110, "app_fee": 20, "tip": 0})
+check("❗ บวกลบไม่ลงตัว → ไม่เติม ไม่กลับเครื่องหมาย", r.get("passenger_paid") is None and r["app_fee"] == 20)
+r = settle({"passenger_total": 209, "passenger_paid": 229, "receipt_total": None, "app_fee": -20})
+check("จอใหม่: ไม่แตะ", r["passenger_paid"] == 229 and r["app_fee"] == -20)
+r = settle({"passenger_total": 100, "receipt_total": 140, "app_fee": 20, "tip": 20})
+check("ทิปที่ผู้โดยสารจ่ายอยู่ใน Total ด้วย: ลงตัว", r["passenger_paid"] == 140)
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

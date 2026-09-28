@@ -137,7 +137,8 @@ def _parse(response, model):
     text = response.text
     if not text:
         raise RuntimeError("คำตอบว่าง")
-    out = json.loads(text)
+    # the same settling a live read gets (extractor._call_gemini) — batch reads skipped it
+    out = extractor.settle_old_receipt(extractor.fix_passenger_total(json.loads(text)))
     u = response.usage_metadata
     out["_usage"] = {"model": (model or "").split("/")[-1],
                      "tok_in": getattr(u, "prompt_token_count", 0) or 0,
@@ -151,7 +152,7 @@ def _parse_dict(response: dict, model: str):
     text = "".join(p.get("text", "") for p in parts)
     if not text:
         raise RuntimeError("คำตอบว่าง")
-    out = json.loads(text)
+    out = extractor.settle_old_receipt(extractor.fix_passenger_total(json.loads(text)))
     u = response.get("usageMetadata") or {}
     out["_usage"] = {"model": (model or "").split("/")[-1],
                      "tok_in": u.get("promptTokenCount", 0) or 0,
