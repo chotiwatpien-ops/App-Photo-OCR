@@ -47,6 +47,9 @@ SCHEMA = types.Schema(type=types.Type.OBJECT, properties={
     "passenger_tolls": NUM("'ค่าทางด่วน' / 'ค่าผ่านทาง' as printed in THIS card, with its sign."),
     "insurance_fee": NUM("'ค่าธรรมเนียมซื้อประกันภัยการเดินทางเพิ่มเติม' as printed, with its sign."),
     "other": NUM("Sum of any OTHER line in this card (e.g. 'บริจาคเพื่อชดเชยคาร์บอน', 'อื่นๆ'), sign as printed."),
+    "grab_fare": NUM("In the card 'ค่าบริการที่แกร็บได้รับ': the line 'ค่าโดยสารของผู้โดยสาร'."),
+    "grab_ride": NUM("In the card 'ค่าบริการที่แกร็บได้รับ': the line 'รายได้จากรอบขับ'."),
+    "grab_cut": NUM("In the card 'ค่าบริการที่แกร็บได้รับ': its bold total (Grab's cut)."),
 }, required=["screen"])
 
 PROMPT = """This is a Grab driver's trip-detail screenshot (Thai). Read ONLY the passenger's fee card.
@@ -97,13 +100,37 @@ def as_new_screen(card):
     }
 
 
+def grab_card_agrees(t, card):
+    """Grab's own card ties the fare to this row: fare − Grab's cut = the base fare the row holds."""
+    fare = card.get("grab_fare") if card.get("grab_fare") is not None else card.get("fare")
+    if fare is None or t.get("base_fare") is None:
+        return False
+    if card.get("grab_ride") is not None and abs(_f(card["grab_ride"]) - _f(t["base_fare"])) < TOL:
+        return True
+    return card.get("grab_cut") is not None and abs(_f(fare) - _f(card["grab_cut"]) - _f(t["base_fare"])) < TOL
+
+
 def decide(t, card):
-    """(fields to write, why). Never moves the fare; keeps nothing that does not add up."""
+    """(fields to write, why). Keeps nothing that does not add up.
+
+    The fare is taken from the slip only where the row has none (the file showed an estimate off
+    the base fare) or differs by at most ฿1, and only when Grab's own card ties it to the row's
+    base fare. Any other difference means another trip or a misreading, and the row is left."""
     if card.get("screen") == "none" or card.get("total") is None:
         return None, "ไม่เห็นบล็อกค่าธรรมเนียมของผู้โดยสาร"
-    if card.get("fare") is not None and abs(_f(card["fare"]) - _f(t.get("passenger_total"))) >= TOL:
-        return None, f"ค่าโดยสารบนสลิป {_f(card['fare']):g} ≠ Ride Fare เดิม {_f(t.get('passenger_total')):g}"
-    fields = as_new_screen(card)
+    fare = card.get("fare") if card.get("fare") is not None else card.get("grab_fare")
+    if fare is None:
+        return None, "ไม่เห็นค่าโดยสารบนสลิป"
+    fields = {}
+    have = t.get("passenger_total")
+    if have is None or abs(_f(fare) - _f(have)) >= TOL:
+        if have is not None and abs(_f(fare) - _f(have)) > 1.01:
+            return None, f"ค่าโดยสารบนสลิป {_f(fare):g} ≠ Ride Fare เดิม {_f(have):g}"
+        if not grab_card_agrees(t, card):
+            return None, f"ค่าโดยสารบนสลิป {_f(fare):g} ผูกกับค่ารอบ {_f(t.get('base_fare')):g} ไม่ได้"
+        fields["passenger_total"] = _f(fare)
+        t = {**t, "passenger_total": _f(fare)}
+    fields.update(as_new_screen(card))
     if card.get("tip") and abs(abs(_f(card["tip"])) - _f(t.get("tip"))) >= TOL:
         return None, f"บล็อกมีค่าทิป {abs(_f(card['tip'])):g} แต่แถวมี {_f(t.get('tip')):g}"
     g = gap({**t, **fields})
@@ -114,8 +141,7 @@ def decide(t, card):
 
 def rows_needing(week):
     """Delivered rows of a week with no paid figure — the old screen."""
-    return [t for t in rows_of_week(week)
-            if t.get("committed") == 1 and t.get("passenger_paid") is None and t.get("passenger_total")]
+    return [t for t in rows_of_week(week) if t.get("committed") == 1 and t.get("passenger_paid") is None]
 
 
 def run(weeks, apply=False, limit=None, model=None, workers=16, log=print):
@@ -133,11 +159,25 @@ def run(weeks, apply=False, limit=None, model=None, workers=16, log=print):
     drive = roster._drive()
 
     def one(t):
-        fid = _file_id(t.get("_picture"))
-        if not fid:
+        # the half that was tracked as the passenger block first, then the row's own picture:
+        # W34's test read found no fee card on 16 of 30 tracked halves
+        fids = []
+        for u in (t.get("_picture"), t.get("source_url")):
+            f = _file_id(u)
+            if f and f not in fids:
+                fids.append(f)
+        if not fids:
             return t, None, "ไม่มีรูปบน Drive ให้ตามไปอ่าน"
+        card, spent = None, {"tok_in": 0, "tok_out": 0, "tok_think": 0}
         try:
-            return t, read_card(drive.download(fid), model), None
+            for fid in fids:
+                card = read_card(drive.download(fid), model)
+                for k in spent:
+                    spent[k] += card["_usage"][k]
+                if card.get("screen") != "none" and card.get("total") is not None:
+                    break
+            card["_usage"] = spent
+            return t, card, None
         except Exception as e:                                     # noqa: BLE001
             return t, None, f"อ่านไม่สำเร็จ: {str(e)[:100]}"
 
@@ -160,7 +200,11 @@ def run(weeks, apply=False, limit=None, model=None, workers=16, log=print):
     log(f"  ✓ ลงตัวและเก็บได้ {len(took):,} แถว")
     for t, f, c in took[:8]:
         log(f"      #{t['id']} {t.get('driver_name') or ''} {t.get('customer_image') or ''}: จ่าย {f['passenger_paid']:g}"
-            f" · ค่าแอป {_f(f['app_fee']):g} · ค่าโดยสาร {_f(t.get('passenger_total')):g} ({c.get('screen')})")
+            f" · ค่าแอป {_f(f['app_fee']):g} · ค่าโดยสาร {_f(f.get('passenger_total', t.get('passenger_total'))):g}"
+            f"{' (ใหม่ เดิมไม่มี)' if t.get('passenger_total') is None else (' (เดิม ' + format(_f(t['passenger_total']), 'g') + ')' if 'passenger_total' in f else '')} ({c.get('screen')})")
+    fare_new = sum(1 for t, f, _c in took if "passenger_total" in f and t.get("passenger_total") is None)
+    fare_fix = sum(1 for t, f, _c in took if "passenger_total" in f and t.get("passenger_total") is not None)
+    log(f"    Ride Fare ที่เคยเป็นค่าประมาณ ได้ค่าจริง {fare_new:,} · ต่าง ฿1 แก้ตามสลิป {fare_fix:,}")
     left = sum(len(v) for v in why.values())
     log(f"  ✗ ไม่เก็บ ปล่อยไว้ให้คนดู {left:,} แถว")
     for reason, ts in sorted(why.items(), key=lambda kv: -len(kv[1])):

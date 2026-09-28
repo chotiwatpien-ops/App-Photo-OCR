@@ -45,6 +45,16 @@ f, why = ro.decide({"passenger_total": 195, "tip": 0}, {"screen": "old", "fare":
 check("❗ บวกลบไม่ลงตัว → ไม่เก็บ", f is None and "ไม่ลงตัว" in why)
 f, why = ro.decide({"passenger_total": 195, "tip": 0}, {"screen": "old", "fare": 187, "total": 213, "app_fee": 20, "intl_fee": 6})
 check("❗ ค่าโดยสารบนสลิปไม่ตรง Ride Fare เดิม (คนละเที่ยว/อ่านผิด) → ไม่เก็บ", f is None and "≠" in why)
+f, why = ro.decide({"passenger_total": None, "base_fare": 151, "tip": 0},
+                   {"screen": "old", "fare": 195, "total": 221, "app_fee": 20, "intl_fee": 6, "grab_fare": 195, "grab_ride": 151, "grab_cut": 44})
+check("❗ แถวที่ไม่มีค่าโดยสาร (ไฟล์ประมาณเอา): ได้ค่าจริงเมื่อการ์ด Grab ผูกกับค่ารอบ",
+      why == "ลงตัว" and f["passenger_total"] == 195 and f["passenger_paid"] == 221)
+f, why = ro.decide({"passenger_total": None, "base_fare": 120, "tip": 0},
+                   {"screen": "old", "fare": 195, "total": 221, "app_fee": 20, "intl_fee": 6, "grab_fare": 195, "grab_ride": 151, "grab_cut": 44})
+check("❗ การ์ด Grab ไม่ตรงค่ารอบของแถว (รูปคนละเที่ยว) → ไม่เก็บ", f is None and "ผูก" in why)
+f, why = ro.decide({"passenger_total": 50, "base_fare": 40, "tip": 0},
+                   {"screen": "old", "fare": 49, "total": 51, "app_fee": 1, "intl_fee": 1, "grab_fare": 49, "grab_ride": 40, "grab_cut": 9})
+check("ต่าง ฿1 และการ์ดผูกกับค่ารอบ → ใช้ค่าตามสลิป", why == "ลงตัว" and f["passenger_total"] == 49)
 f, why = ro.decide({"passenger_total": 100, "tip": 0}, {"screen": "old", "fare": 100, "total": 140, "app_fee": 20, "tip": 20})
 check("❗ บล็อกมีค่าทิปที่แถวไม่มี → ไม่เก็บ (ไม่แตะทิป/คุณได้รับ)", f is None and "ทิป" in why)
 f, why = ro.decide({"passenger_total": 100, "tip": 20}, {"screen": "old", "fare": 100, "total": 140, "app_fee": 20, "tip": 20})
