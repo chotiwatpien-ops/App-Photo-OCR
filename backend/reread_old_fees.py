@@ -219,15 +219,43 @@ def run(weeks, apply=False, limit=None, model=None, workers=16, log=print):
     return {"read": len(todo), "took": len(took), "left": left, **tok}
 
 
+def fare_by_arithmetic(weeks, apply=False, log=print):
+    """Ride Fare for rows whose file showed an estimate (no fare read), from what the row already
+    holds: Grab's card prints ค่าโดยสารของผู้โดยสาร = รายได้จากรอบขับ + ค่าบริการที่แกร็บได้รับ, so the
+    fare is the base plus Grab's cut. No reading. The paid figure is not worked out this way: the
+    lines between it and the fare sit on the same card the rider left folded (Fiat 2026-09-28)."""
+    took, skipped = [], 0
+    for w in weeks:
+        for t in rows_of_week(w):
+            if t.get("committed") != 1 or t.get("passenger_total") is not None or t.get("passenger_paid") is not None:
+                continue
+            if t.get("base_fare") and t.get("grab_commission") is not None and _f(t["grab_commission"]) > 0:
+                took.append((t, {"passenger_total": round(_f(t["base_fare"]) + _f(t["grab_commission"]), 2)}))
+            else:
+                skipped += 1
+    log(f"Ride Fare จากค่ารอบ + ส่วนที่ Grab ได้: เติมได้ {len(took):,} แถว · ไม่มีส่วนที่ Grab ได้ให้คิด {skipped:,} แถว")
+    for t, f in took[:6]:
+        log(f"      #{t['id']} {t.get('driver_name') or ''} {t.get('customer_image') or ''}: "
+            f"{_f(t['base_fare']):g} + {_f(t['grab_commission']):g} = {f['passenger_total']:g}")
+    if apply:
+        _write((t["id"], f) for t, f in took)
+        log(f"✓ เขียนแล้ว {len(took):,} แถว")
+    return len(took)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="เติม Passenger Fare ของสลิปจอเก่า และกลับเครื่องหมายบรรทัดค่าธรรมเนียมให้เหมือนจอใหม่")
     ap.add_argument("--weeks", required=True, help="วันจันทร์ของแต่ละสัปดาห์ คั่นด้วยจุลภาค")
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--model", default=None)
+    ap.add_argument("--arith", action="store_true", help="ไม่อ่านรูป: Ride Fare = ค่ารอบ + ส่วนที่ Grab ได้ ให้แถวที่ไฟล์ประมาณเอา")
     a = ap.parse_args(argv)
     sys.stdout.reconfigure(encoding="utf-8")
     db.init_db()
+    if a.arith:
+        fare_by_arithmetic([w.strip() for w in a.weeks.split(",") if w.strip()], apply=a.apply)
+        return 0
     run([w.strip() for w in a.weeks.split(",") if w.strip()], apply=a.apply, limit=a.limit, model=a.model)
     return 0
 

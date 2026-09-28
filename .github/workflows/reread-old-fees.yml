@@ -16,6 +16,10 @@ on:
         description: "อ่านไม่เกินกี่แถว (ว่าง = ทุกแถว)"
         type: string
         default: ""
+      arith:
+        description: "ไม่อ่านรูป: Ride Fare = ค่ารอบ + ส่วนที่ Grab ได้ ให้แถวที่เป็นค่าประมาณ"
+        type: boolean
+        default: false
       apply:
         description: "เขียนจริง (ไม่ติ๊ก = รายงานอย่างเดียว)"
         type: boolean
@@ -53,4 +57,5 @@ jobs:
           set -- --weeks "$WEEKS"
           if [ -n "$LIMIT" ]; then set -- "$@" --limit "$LIMIT"; fi
           if [ "${{ inputs.apply }}" = "true" ]; then set -- "$@" --apply; fi
+          if [ "${{ inputs.arith }}" = "true" ]; then set -- "$@" --arith; fi
           python -u reread_old_fees.py "$@"
