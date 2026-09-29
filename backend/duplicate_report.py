@@ -227,7 +227,8 @@ def album_overview(d_from, d_to, cases, pre=()):
         a = c_["ไรเดอร์ผู้ส่ง"]
         row[a]["pre"] += 1
         seen(a, c_.get("เจอเมื่อ"))
-        row[a]["with"].add(c_.get("ของอัลบั้ม") or "")
+        # a re-send of a picture read before names no album — say what it is instead of nothing
+        row[a]["with"].add(c_.get("ของอัลบั้ม") or "(รูปที่เคยส่งและอ่านไปแล้ว)")
     for c_ in cases:
         a = c_["ไรเดอร์ผู้ส่ง"]
         row[a]["post"] += 1
