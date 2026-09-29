@@ -1134,6 +1134,10 @@ if config.FRONTEND_DIST.exists():
             f = (root / path).resolve()
         except (OSError, ValueError):          # a name the filesystem will not even parse
             f = None
+        # index.html names this build's hashed bundle, so a browser that keeps an old copy keeps
+        # the old app — the งานซ้ำ tab was live for an hour before Fiat's desktop showed it
+        # (2026-09-29). The bundles themselves are hashed and may be cached forever.
+        fresh = {"Cache-Control": "no-cache"}
         if path and f is not None and f.is_file() and root in f.parents:
-            return FileResponse(f)
-        return FileResponse(root / "index.html")
+            return FileResponse(f, headers=fresh if f.name == "index.html" else None)
+        return FileResponse(root / "index.html", headers=fresh)
