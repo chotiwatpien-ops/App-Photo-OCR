@@ -243,10 +243,10 @@ check("❗ เรียงตามเวลาที่เข้าระบบ
       _names.index("2W-Home Kanchana=264") < _names.index("2W-Home Bear = 29") < _names.index("2W-Win Kachana=260"))
 _row = {r[1]: r for r in _al}
 check("❗ อัลบั้มที่ซ้ำบอกว่าซ้ำกับอัลบั้มไหน",
-      _row["2W-Win Kachana=260"][-1] == "ซ้ำ" and "2W-Home Kanchana=264" in _row["2W-Win Kachana=260"][10])
+      _row["2W-Win Kachana=260"][-1] == "ซ้ำ" and "2W-Home Kanchana=264" in _row["2W-Win Kachana=260"][9])
 check("อัลบั้มที่ไม่ซ้ำขึ้นว่าไม่ซ้ำ และนับที่ลงงาน",
       _row["2W-Home Bear = 29"][-1] == "ไม่ซ้ำ" and _row["2W-Home Bear = 29"][4] == 1)
-check("ครึ่งรูปค้างในกองมาจากรอบ pool ล่าสุด", _row["4W-Taxi Meen=64"][11] == 2)
+check("ครึ่งรูปค้างในกองมาจากรอบ pool ล่าสุด", _row["4W-Taxi Meen=64"][10] == 2)
 _wb5 = load_workbook(__import__("io").BytesIO(rep.build_xlsx(_cw, _uw, [], _al)))
 check("❗ ชีตรายอัลบั้มอยู่หน้าแรกของไฟล์", _wb5.sheetnames[0] == "รายอัลบั้ม" and _wb5.active.title == "รายอัลบั้ม")
 

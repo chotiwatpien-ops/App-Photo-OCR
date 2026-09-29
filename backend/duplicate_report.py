@@ -188,7 +188,7 @@ def backfill_pre_read(d_from, d_to, log=print):
 
 
 ALBUM_COLS = ["ลำดับ", "อัลบั้ม", "เข้าระบบครั้งแรก", "เที่ยวที่อ่าน", "ลงงาน", "ซ้ำก่อนอ่าน",
-              "ซ้ำหลังอ่าน", "ยอดที่ซ้ำ", "ซ้ำรวม", "% ซ้ำ", "ซ้ำกับอัลบั้ม", "ครึ่งรูปค้างในกอง", "สถานะ"]
+              "ซ้ำหลังอ่าน", "ซ้ำรวม", "% ซ้ำ", "ซ้ำกับอัลบั้ม", "ครึ่งรูปค้างในกอง", "สถานะ"]
 
 
 def album_overview(d_from, d_to, cases, pre=()):
@@ -212,7 +212,7 @@ def album_overview(d_from, d_to, cases, pre=()):
                                                             db.pool_runs.c.started_at >= d_from)
                          .order_by(db.pool_runs.c.id.desc()).limit(1)).scalar()
     row = collections.defaultdict(lambda: {"first": None, "read": set(), "filed": set(),
-                                           "pre": 0, "post": 0, "money": 0.0, "with": set(), "left": 0})
+                                           "pre": 0, "post": 0, "with": set(), "left": 0})
 
     def seen(a, when):
         if when and (row[a]["first"] is None or when < row[a]["first"]):
@@ -232,7 +232,6 @@ def album_overview(d_from, d_to, cases, pre=()):
     for c_ in cases:
         a = c_["ไรเดอร์ผู้ส่ง"]
         row[a]["post"] += 1
-        row[a]["money"] += c_.get("ยอด") or 0
         row[a]["with"].add(c_.get("ของไรเดอร์") or "")
     try:
         import ingest
@@ -250,7 +249,7 @@ def album_overview(d_from, d_to, cases, pre=()):
         with_ = " · ".join((["ในอัลบั้มเดียวกัน"] if same else []) + others)
         base = len(v["read"]) + v["pre"]
         out.append([None, a, v["first"], len(v["read"]), len(v["filed"]), v["pre"], v["post"],
-                    round(v["money"], 2), dup, round(dup / base, 3) if base else None, with_,
+                    dup, round(dup / base, 3) if base else None, with_,
                     v["left"] or None, "ซ้ำ" if dup else "ไม่ซ้ำ"])
     out.sort(key=lambda r: (r[2] is None, r[2] or "", r[1]))
     for i, r in enumerate(out, 1):
@@ -412,7 +411,7 @@ def write_xlsx(path, cases, undecided, pre=(), albums=None):
             ws.cell(i, ALBUM_COLS.index("% ซ้ำ") + 1).number_format = "0.0%"
         ws.column_dimensions["B"].width = 34
         ws.column_dimensions["C"].width = 20
-        ws.column_dimensions["K"].width = 40
+        ws.column_dimensions["J"].width = 40
         wb.active = 0
     sheet(wb.create_sheet("รายใบ"), COLS, [[c.get(k) for k in COLS] for c in cases])
     sheet(wb.create_sheet("ค้างตัดสิน"), COLS, [[c.get(k) for k in COLS] for c in undecided])
@@ -448,8 +447,8 @@ def main(argv=None):
     albums = album_overview(a.d_from, a.d_to, cases, pre)
     print(f"\nรายอัลบั้ม {len(albums)} อัลบั้ม (เรียงตามเวลาที่เข้าระบบ) · ซ้ำ {sum(1 for r in albums if r[-1] == 'ซ้ำ')}")
     for r in albums:
-        print(f"  {r[0]:>3}. {str(r[2] or '')[:16]:<17}{str(r[1])[:30]:<32}อ่าน {r[3]:>4} · ซ้ำ {r[8]:>3}  {r[-1]}"
-              + (f" · กับ {r[10]}" if r[10] else ""))
+        print(f"  {r[0]:>3}. {str(r[2] or '')[:16]:<17}{str(r[1])[:30]:<32}อ่าน {r[3]:>4} · ซ้ำ {r[7]:>3}  {r[-1]}"
+              + (f" · กับ {r[9]}" if r[9] else ""))
     if cases:
         print(f"\n{'ไรเดอร์ผู้ส่ง':<26}{'ใบซ้ำ':>7}{'ยอดรวม':>10}  ประเภทที่เจอ")
         for k, v in sorted(summary(cases).items(), key=lambda kv: -kv[1]["ใบซ้ำ"]):
