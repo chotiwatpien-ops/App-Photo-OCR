@@ -218,6 +218,38 @@ check("ชีตรายอัลบั้มและรายใบมีข�
 _hdr = [c.value for c in _wb4["สรุปรายผู้ส่ง"][1]]
 check("ชีตสรุปรายผู้ส่งมีคอลัมน์ ซ้ำก่อนอ่าน", rep.KIND_PRE in _hdr)
 
+# --- รายอัลบั้ม: ทุกอัลบั้มของสัปดาห์ เรียงตามเวลาที่เข้าระบบ ซ้ำหรือไม่ซ้ำ (เฟียส 2026-09-29) -----
+W39 = ("2026-09-21", "2026-09-27")
+jx = job("ธีรพล Win", "2026-09-21")
+_k1 = trip(jx, "2W-Home Kanchana=264_1+2_฿30.jpg", committed=1, source_album="2W-Home Kanchana=264",
+           booking_code="K" * 16, net_earnings=30.0)
+_k2 = trip(jx, "2W-Win Kachana=260_3+4_฿30.jpg", status="duplicate", source_album="2W-Win Kachana=260",
+           booking_code="K" * 16, net_earnings=30.0)
+_b1 = trip(jx, "2W-Home Bear = 29_5+6_฿40.jpg", committed=1, source_album="2W-Home Bear = 29",
+           booking_code="B" * 16, net_earnings=40.0)
+with db.engine.begin() as c:
+    for tid, when in ((_k1, "2026-09-26 10:00:00"), (_k2, "2026-09-29 04:20:00"), (_b1, "2026-09-29 04:18:00")):
+        c.execute(db.ingested_files.insert().values(drive_id=f"d{tid}", name="x", job_id=jx, trip_id=tid,
+                                                    ingested_at=when))
+db.record_pool_run("move", "Week 21-27 Sep", {}, "", {
+    "started_at": "2026-09-29 04:10:00", "duplicates": [],
+    "albums": [{"week": "Week 21-27 Sep", "album": "4W-Taxi Meen=64", "leftovers": [{}, {}]}]})
+_cw, _uw = rep.build(*rep.load(*W39))
+_al = rep.album_overview(*W39, _cw, [])
+_names = [r[1] for r in _al]
+check("❗ รายอัลบั้มมีทุกอัลบั้ม รวมที่ไม่ซ้ำ และที่มีแต่ครึ่งรูปค้างในกอง",
+      {"2W-Home Kanchana=264", "2W-Win Kachana=260", "2W-Home Bear = 29", "4W-Taxi Meen=64"} <= set(_names))
+check("❗ เรียงตามเวลาที่เข้าระบบ เก่าสุดก่อน",
+      _names.index("2W-Home Kanchana=264") < _names.index("2W-Home Bear = 29") < _names.index("2W-Win Kachana=260"))
+_row = {r[1]: r for r in _al}
+check("❗ อัลบั้มที่ซ้ำบอกว่าซ้ำกับอัลบั้มไหน",
+      _row["2W-Win Kachana=260"][-1] == "ซ้ำ" and "2W-Home Kanchana=264" in _row["2W-Win Kachana=260"][10])
+check("อัลบั้มที่ไม่ซ้ำขึ้นว่าไม่ซ้ำ และนับที่ลงงาน",
+      _row["2W-Home Bear = 29"][-1] == "ไม่ซ้ำ" and _row["2W-Home Bear = 29"][4] == 1)
+check("ครึ่งรูปค้างในกองมาจากรอบ pool ล่าสุด", _row["4W-Taxi Meen=64"][11] == 2)
+_wb5 = load_workbook(__import__("io").BytesIO(rep.build_xlsx(_cw, _uw, [], _al)))
+check("❗ ชีตรายอัลบั้มอยู่หน้าแรกของไฟล์", _wb5.sheetnames[0] == "รายอัลบั้ม" and _wb5.active.title == "รายอัลบั้ม")
+
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

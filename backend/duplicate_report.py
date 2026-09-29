@@ -185,6 +185,76 @@ def backfill_pre_read(d_from, d_to, log=print):
     return n
 
 
+ALBUM_COLS = ["ลำดับ", "อัลบั้ม", "เข้าระบบครั้งแรก", "เที่ยวที่อ่าน", "ลงงาน", "ซ้ำก่อนอ่าน",
+              "ซ้ำหลังอ่าน", "ยอดที่ซ้ำ", "ซ้ำรวม", "% ซ้ำ", "ซ้ำกับอัลบั้ม", "ครึ่งรูปค้างในกอง", "สถานะ"]
+
+
+def album_overview(d_from, d_to, cases, pre=()):
+    """One row for EVERY album of the week, in the order it came in — repeats or not (Fiat
+    2026-09-29: "ทุก album ที่อัพ ... เรียงตามวันที่ที่ถูกอัพโหลด จะได้รู้ว่า Album ไหนซ้ำ ไม่ซ้ำ").
+
+    'เข้าระบบครั้งแรก' is when a round first took one of its pictures in (ingested_files), the
+    nearest thing to an upload time the database holds; an album of copies only takes the time
+    its first copy was dropped. Half pictures still waiting in the pool come from the latest pool
+    run of the week."""
+    import json
+    t, j, f = db.trips.c, db.jobs.c, db.ingested_files.c
+    src = db.trips.join(db.jobs, j.id == t.job_id).outerjoin(db.ingested_files, f.trip_id == t.id)
+    with db.engine.begin() as c:
+        trips = [dict(r) for r in c.execute(
+            select(t.id, t.file_name, t.status, t.committed, t.source_album, j.driver_name,
+                   j.folder_name, f.ingested_at)
+            .select_from(src)
+            .where(j.date_from >= d_from, j.date_from <= d_to, t.status != "merged")).mappings().all()]
+        last = c.execute(select(db.pool_runs.c.report).where(db.pool_runs.c.mode == "move",
+                                                            db.pool_runs.c.started_at >= d_from)
+                         .order_by(db.pool_runs.c.id.desc()).limit(1)).scalar()
+    row = collections.defaultdict(lambda: {"first": None, "read": set(), "filed": set(),
+                                           "pre": 0, "post": 0, "money": 0.0, "with": set(), "left": 0})
+
+    def seen(a, when):
+        if when and (row[a]["first"] is None or when < row[a]["first"]):
+            row[a]["first"] = when
+    for r in trips:
+        a = album_of(r["file_name"], r.get("folder_name"), r.get("driver_name"), r.get("source_album"))
+        row[a]["read"].add(r["id"])
+        if r.get("committed") == 1:
+            row[a]["filed"].add(r["id"])
+        seen(a, r.get("ingested_at"))
+    for c_ in pre:
+        a = c_["ไรเดอร์ผู้ส่ง"]
+        row[a]["pre"] += 1
+        seen(a, c_.get("เจอเมื่อ"))
+        row[a]["with"].add(c_.get("ของอัลบั้ม") or "")
+    for c_ in cases:
+        a = c_["ไรเดอร์ผู้ส่ง"]
+        row[a]["post"] += 1
+        row[a]["money"] += c_.get("ยอด") or 0
+        row[a]["with"].add(c_.get("ของไรเดอร์") or "")
+    try:
+        import ingest
+        for e in (json.loads(last or "{}").get("albums") or []):
+            rng = ingest.parse_range(e.get("week") or "")
+            if rng and rng[0].isoformat() == d_from and e.get("leftovers"):
+                row[e["album"]]["left"] += len(e["leftovers"])
+    except Exception:  # noqa: BLE001 — a report that cannot be read leaves the column empty
+        pass
+    out = []
+    for a, v in row.items():
+        dup = v["pre"] + v["post"]
+        others = sorted(x for x in v["with"] if x and x != a)
+        same = any(x == a for x in v["with"])
+        with_ = " · ".join((["ในอัลบั้มเดียวกัน"] if same else []) + others)
+        base = len(v["read"]) + v["pre"]
+        out.append([None, a, v["first"], len(v["read"]), len(v["filed"]), v["pre"], v["post"],
+                    round(v["money"], 2), dup, round(dup / base, 3) if base else None, with_,
+                    v["left"] or None, "ซ้ำ" if dup else "ไม่ซ้ำ"])
+    out.sort(key=lambda r: (r[2] is None, r[2] or "", r[1]))
+    for i, r in enumerate(out, 1):
+        r[0] = i
+    return out
+
+
 def summary(cases, pre=()):
     """สรุปรายไรเดอร์ผู้ส่ง — แถวที่ลูกค้าใช้คุยกับคนส่ง"""
     by = collections.defaultdict(collections.Counter)
@@ -272,13 +342,14 @@ def refresh_week(drive, exports_id, d_from, d_to, log=print):
     pre = pre_read_cases(d_from)
     if not cases and not undecided and not pre:
         return None
+    albums = album_overview(d_from, d_to, cases, pre)
     sure = sum(1 for c in cases if c.get("ผู้ส่งแน่ชัด") and c.get("ต้นฉบับแน่ชัด"))
     # The same report twice is one upload too many: a week's repeats settle once it is read,
     # and every round after that wrote an identical file back to Drive (and paid Drive and Neon
     # transfer for it). The fingerprint is of what the file says, so any change still goes out.
     import hashlib
     import json
-    sig = hashlib.sha1(json.dumps([cases, undecided, pre], ensure_ascii=False, sort_keys=True,
+    sig = hashlib.sha1(json.dumps([cases, undecided, pre, albums], ensure_ascii=False, sort_keys=True,
                                   default=str).encode("utf-8")).hexdigest()
     key = f"{FINGERPRINT_KEY}:{d_from}"
     if db.state_get(key) == sig:
@@ -286,7 +357,7 @@ def refresh_week(drive, exports_id, d_from, d_to, log=print):
             f" · ซ้ำก่อนอ่าน {len(pre)}) — ไม่ต้องเขียนใหม่")
         return {"cases": len(cases), "undecided": len(undecided), "pre": len(pre), "sure": sure,
                 "file_id": None, "unchanged": True}
-    folder, fid = upload_to_drive(drive, exports_id, d_from, build_xlsx(cases, undecided, pre))
+    folder, fid = upload_to_drive(drive, exports_id, d_from, build_xlsx(cases, undecided, pre, albums))
     db.state_set(key, sig)
     log(f"📋 รายงานรูปซ้ำ {report_name(d_from)}: ใบซ้ำ {len(cases)} · ซ้ำก่อนอ่าน {len(pre)}"
         f" · รอคนตัดสิน {len(undecided)} · ระบุตัวคนส่งได้ {sure}"
@@ -295,14 +366,14 @@ def refresh_week(drive, exports_id, d_from, d_to, log=print):
             "file_id": fid}
 
 
-def build_xlsx(cases, undecided, pre=()) -> bytes:
+def build_xlsx(cases, undecided, pre=(), albums=None) -> bytes:
     import io
     buf = io.BytesIO()
-    write_xlsx(buf, cases, undecided, pre)
+    write_xlsx(buf, cases, undecided, pre, albums)
     return buf.getvalue()
 
 
-def write_xlsx(path, cases, undecided, pre=()):
+def write_xlsx(path, cases, undecided, pre=(), albums=None):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
     wb = Workbook()
@@ -326,6 +397,20 @@ def write_xlsx(path, cases, undecided, pre=()):
             v[KIND_OTHER_WEEK], v[KIND_BOTTOM], v[KIND_PRE], v["ซ้ำใต้ชื่อคนอื่น"]]
            for k, v in sorted(summary(cases, pre).items(), key=lambda kv: -kv[1]["ใบซ้ำ"])])
     wb.active.title = "สรุปรายผู้ส่ง"
+    if albums is not None:
+        # every album of the week first, oldest upload on top — the sheet Ops follows
+        ws = wb.create_sheet("รายอัลบั้ม", 0)
+        sheet(ws, ALBUM_COLS, albums)
+        dup_fill = PatternFill("solid", fgColor="FDE8E8")
+        for i, r in enumerate(albums, 2):
+            if r[-1] == "ซ้ำ":
+                for cell in ws[i]:
+                    cell.fill = dup_fill
+            ws.cell(i, ALBUM_COLS.index("% ซ้ำ") + 1).number_format = "0.0%"
+        ws.column_dimensions["B"].width = 34
+        ws.column_dimensions["C"].width = 20
+        ws.column_dimensions["K"].width = 40
+        wb.active = 0
     sheet(wb.create_sheet("รายใบ"), COLS, [[c.get(k) for k in COLS] for c in cases])
     sheet(wb.create_sheet("ค้างตัดสิน"), COLS, [[c.get(k) for k in COLS] for c in undecided])
     # ซ้ำก่อนอ่าน: ไม่มีรหัสการจอง ไม่มียอด — ตัดทิ้งก่อนเสียค่าอ่าน บอกได้แค่ว่าไฟล์เหมือนกันเป๊ะ
@@ -357,6 +442,11 @@ def main(argv=None):
     if not cases and not undecided and not pre:
         print("ไม่พบรูปซ้ำในสัปดาห์นี้")
         return 0
+    albums = album_overview(a.d_from, a.d_to, cases, pre)
+    print(f"\nรายอัลบั้ม {len(albums)} อัลบั้ม (เรียงตามเวลาที่เข้าระบบ) · ซ้ำ {sum(1 for r in albums if r[-1] == 'ซ้ำ')}")
+    for r in albums:
+        print(f"  {r[0]:>3}. {str(r[2] or '')[:16]:<17}{str(r[1])[:30]:<32}อ่าน {r[3]:>4} · ซ้ำ {r[8]:>3}  {r[-1]}"
+              + (f" · กับ {r[10]}" if r[10] else ""))
     if cases:
         print(f"\n{'ไรเดอร์ผู้ส่ง':<26}{'ใบซ้ำ':>7}{'ยอดรวม':>10}  ประเภทที่เจอ")
         for k, v in sorted(summary(cases).items(), key=lambda kv: -kv[1]["ใบซ้ำ"]):
@@ -387,12 +477,12 @@ def main(argv=None):
             print(f"{'':>7}  ซ้ำกับ {str(c['ซ้ำกับไฟล์'])[:48]} ของ {c['ของไรเดอร์']}"
                   f" · รูปที่ส่งลูกค้า {c['รูปที่ส่งลูกค้า'] or '—'}")
     if a.xlsx:
-        print(f"\nเขียนไฟล์แล้ว: {write_xlsx(a.xlsx, cases, undecided, pre)}")
+        print(f"\nเขียนไฟล์แล้ว: {write_xlsx(a.xlsx, cases, undecided, pre, albums)}")
     if a.to_drive:
         import config
         import roster
         folder, fid = upload_to_drive(roster._drive(), config.DRIVE_EXPORTS_FOLDER_ID, a.d_from,
-                                      build_xlsx(cases, undecided, pre))
+                                      build_xlsx(cases, undecided, pre, albums))
         print(f"\nวางลง Drive แล้ว: Exports/{DRIVE_DIR}/{report_name(a.d_from)}")
         print(f"  เปิดไฟล์: https://drive.google.com/file/d/{fid}/view")
         print(f"  โฟลเดอร์: https://drive.google.com/drive/folders/{folder}")
