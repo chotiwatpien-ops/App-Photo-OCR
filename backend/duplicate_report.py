@@ -163,11 +163,13 @@ def backfill_pre_read(d_from, d_to, log=print):
 
     รอบก่อนหน้านั้นไม่ได้จดรหัสไฟล์ไว้ ลิงก์รูปของแถวเหล่านี้จึงว่าง และสำเนาที่เคยถูกทิ้งไว้ในกอง
     โผล่ซ้ำทุกรอบ — แถวของไฟล์เดียวกันนับครั้งเดียว"""
-    import json
-    import pool
     key = f"pre_read_backfill:{d_from}"
     if db.state_get(key):
         return 0
+    # after the check: pool pulls in the pairing stack (numpy, OCR), which the report workflow
+    # does not install — a week already filled never needs it (W39 report run, 2026-09-29)
+    import json
+    import pool
     rows = []
     with db.engine.begin() as c:
         for (rep,) in c.execute(select(db.pool_runs.c.report)
