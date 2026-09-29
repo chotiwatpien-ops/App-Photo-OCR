@@ -444,7 +444,7 @@ def collect_batches_now():
 # delivered before the pool noted which album a picture came from.
 DUP_TAB_FROM = "2026-09-21"
 DUP_ALBUM_KEYS = ["no", "album", "first", "read", "filed", "pre", "post", "dup", "pct", "with",
-                  "left", "status"]
+                  "left", "waiting", "status"]
 _dup_cache = {}          # week -> (time, payload): a phone reopening the tab does not re-query
 
 

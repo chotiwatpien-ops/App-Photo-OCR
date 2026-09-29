@@ -34,6 +34,11 @@ function AlbumRow({ a }) {
       {dup && a.with && (
         <p className="text-xs text-red-700 mt-1 break-words">ซ้ำกับ {a.with}</p>
       )}
+      {a.waiting ? (
+        <p className="text-xs text-amber-800 mt-1 inline-block rounded bg-amber-50 px-2 py-0.5 tabular-nums">
+          รออ่าน {fmt(a.waiting)} · ตัวเลขซ้ำอาจเพิ่ม
+        </p>
+      ) : null}
     </li>
   )
 }
@@ -55,6 +60,7 @@ export default function DupAlbums() {
 
   const albums = [...data.albums].reverse()            // newest first
   const nDup = albums.filter((a) => a.status === 'ซ้ำ').length
+  const nWait = albums.filter((a) => a.waiting).length
   const shown = onlyDup ? albums.filter((a) => a.status === 'ซ้ำ') : albums
 
   return (
@@ -79,6 +85,7 @@ export default function DupAlbums() {
             {fmt(albums.length)} อัลบั้ม ·{' '}
             <span className="text-red-700 font-semibold">ซ้ำ {fmt(nDup)}</span> ·{' '}
             <span className="text-emerald-700">ไม่ซ้ำ {fmt(albums.length - nDup)}</span>
+            {nWait > 0 && <> · <span className="text-amber-700">ยังอ่านไม่ครบ {fmt(nWait)}</span></>}
           </p>
           <div className="flex gap-2 mt-2">
             {[[false, 'ทั้งหมด'], [true, 'เฉพาะที่ซ้ำ']].map(([v, label]) => (

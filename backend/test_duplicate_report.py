@@ -247,6 +247,11 @@ check("❗ อัลบั้มที่ซ้ำบอกว่าซ้ำก
 check("อัลบั้มที่ไม่ซ้ำขึ้นว่าไม่ซ้ำ และนับที่ลงงาน",
       _row["2W-Home Bear = 29"][-1] == "ไม่ซ้ำ" and _row["2W-Home Bear = 29"][4] == 1)
 check("ครึ่งรูปค้างในกองมาจากรอบ pool ล่าสุด", _row["4W-Taxi Meen=64"][10] == 2)
+_w1 = trip(jx, "2W-Win Kachana1=57_7+8_฿20.jpg", status="pending", source_album="2W-Win Kachana1=57")
+_w2 = trip(jx, "2W-Win Kachana1=57_9+10_฿25.jpg", source_album="2W-Win Kachana1=57", committed=1)
+_rw = {r[1]: r for r in rep.album_overview(*W39, _cw, [])}
+check("❗ ส่งอ่านแล้วแต่ผลยังไม่กลับ นับเป็นรออ่าน ไม่นับเป็นอ่านแล้ว",
+      _rw["2W-Win Kachana1=57"][11] == 1 and _rw["2W-Win Kachana1=57"][3] == 1)
 _wb5 = load_workbook(__import__("io").BytesIO(rep.build_xlsx(_cw, _uw, [], _al)))
 check("❗ ชีตรายอัลบั้มอยู่หน้าแรกของไฟล์", _wb5.sheetnames[0] == "รายอัลบั้ม" and _wb5.active.title == "รายอัลบั้ม")
 

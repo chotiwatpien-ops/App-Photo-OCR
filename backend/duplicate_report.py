@@ -188,7 +188,7 @@ def backfill_pre_read(d_from, d_to, log=print):
 
 
 ALBUM_COLS = ["ลำดับ", "อัลบั้ม", "เข้าระบบครั้งแรก", "เที่ยวที่อ่าน", "ลงงาน", "ซ้ำก่อนอ่าน",
-              "ซ้ำหลังอ่าน", "ซ้ำรวม", "% ซ้ำ", "ซ้ำกับอัลบั้ม", "ครึ่งรูปค้างในกอง", "สถานะ"]
+              "ซ้ำหลังอ่าน", "ซ้ำรวม", "% ซ้ำ", "ซ้ำกับอัลบั้ม", "ครึ่งรูปค้างในกอง", "รออ่าน", "สถานะ"]
 
 
 def album_overview(d_from, d_to, cases, pre=()):
@@ -198,7 +198,8 @@ def album_overview(d_from, d_to, cases, pre=()):
     'เข้าระบบครั้งแรก' is when a round first took one of its pictures in (ingested_files), the
     nearest thing to an upload time the database holds; an album of copies only takes the time
     its first copy was dropped. Half pictures still waiting in the pool come from the latest pool
-    run of the week."""
+    run of the week. 'รออ่าน' is what was sent to be read and has not come back (a batch returns
+    in the next round): its repeats can still add to 'ซ้ำหลังอ่าน' (Fiat 2026-09-29)."""
     import json
     t, j, f = db.trips.c, db.jobs.c, db.ingested_files.c
     src = db.trips.join(db.jobs, j.id == t.job_id).outerjoin(db.ingested_files, f.trip_id == t.id)
@@ -211,7 +212,7 @@ def album_overview(d_from, d_to, cases, pre=()):
         last = c.execute(select(db.pool_runs.c.report).where(db.pool_runs.c.mode == "move",
                                                             db.pool_runs.c.started_at >= d_from)
                          .order_by(db.pool_runs.c.id.desc()).limit(1)).scalar()
-    row = collections.defaultdict(lambda: {"first": None, "read": set(), "filed": set(),
+    row = collections.defaultdict(lambda: {"first": None, "read": set(), "filed": set(), "waiting": set(),
                                            "pre": 0, "post": 0, "with": set(), "left": 0})
 
     def seen(a, when):
@@ -219,7 +220,7 @@ def album_overview(d_from, d_to, cases, pre=()):
             row[a]["first"] = when
     for r in trips:
         a = album_of(r["file_name"], r.get("folder_name"), r.get("driver_name"), r.get("source_album"))
-        row[a]["read"].add(r["id"])
+        row[a]["waiting" if r.get("status") == "pending" else "read"].add(r["id"])
         if r.get("committed") == 1:
             row[a]["filed"].add(r["id"])
         seen(a, r.get("ingested_at"))
@@ -247,10 +248,10 @@ def album_overview(d_from, d_to, cases, pre=()):
         others = sorted(x for x in v["with"] if x and x != a)
         same = any(x == a for x in v["with"])
         with_ = " · ".join((["ในอัลบั้มเดียวกัน"] if same else []) + others)
-        base = len(v["read"]) + v["pre"]
+        base = len(v["read"]) + len(v["waiting"]) + v["pre"]
         out.append([None, a, v["first"], len(v["read"]), len(v["filed"]), v["pre"], v["post"],
                     dup, round(dup / base, 3) if base else None, with_,
-                    v["left"] or None, "ซ้ำ" if dup else "ไม่ซ้ำ"])
+                    v["left"] or None, len(v["waiting"]) or None, "ซ้ำ" if dup else "ไม่ซ้ำ"])
     out.sort(key=lambda r: (r[2] is None, r[2] or "", r[1]))
     for i, r in enumerate(out, 1):
         r[0] = i
