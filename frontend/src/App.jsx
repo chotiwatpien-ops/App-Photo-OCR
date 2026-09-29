@@ -3,6 +3,7 @@ import { api, exportUrl } from './api.js'
 import Dashboard from './Dashboard.jsx'
 import Home from './Home.jsx'
 import DataView from './DataView.jsx'
+import DupAlbums from './DupAlbums.jsx'
 import Login from './Login.jsx'
 import NewJobForm from './NewJobForm.jsx'
 import ReviewGrid from './ReviewGrid.jsx'
@@ -57,7 +58,7 @@ export default function App() {
   const [health, setHealth] = useState(null)
   const [jobList, setJobList] = useState([])
   const [activeJob, setActiveJob] = useState(null)
-  const [view, setView] = useState('home') // home | jobs | dashboard | data | queue
+  const [view, setView] = useState('home') // home | jobs | dashboard | data | queue | dups
   const [queueCount, setQueueCount] = useState(0)
 
   const refreshJobs = useCallback(() => {
@@ -100,7 +101,7 @@ export default function App() {
   const openJob = (id) => api.job(id).then(setActiveJob)
   const NAV = [
     ['home', 'หน้าหลัก'], ['queue', `คิวตรวจ${queueCount ? ` (${queueCount})` : ''}`],
-    ['data', 'ข้อมูลทั้งหมด'], ['dashboard', 'Dashboard'],
+    ['data', 'ข้อมูลทั้งหมด'], ['dashboard', 'Dashboard'], ['dups', 'งานซ้ำ'],
   ]
   const logout = () => api.logout().then(() => { setActiveJob(null); boot() })
 
@@ -164,6 +165,8 @@ export default function App() {
           <DataView onOpenJob={openJob} />
         ) : view === 'queue' ? (
           <ReviewQueue onOpenJob={openJob} />
+        ) : view === 'dups' ? (
+          <DupAlbums />
         ) : (
           <div className="grid gap-6 lg:grid-cols-[420px_1fr]">
             <NewJobForm onCreated={(job) => { setActiveJob(job); refreshJobs() }} />

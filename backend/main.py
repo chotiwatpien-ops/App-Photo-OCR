@@ -439,6 +439,44 @@ def collect_batches_now():
             "waiting": sum(b.get("n_trips") or 0 for b in still)}
 
 
+# The 'งานซ้ำ' tab: the duplicate report's per-album sheet, for a phone (Fiat 2026-09-29: "เช็คงาน
+# ซ้ำแบบไม่เปิดคอม ... ง่ายๆ ที่สุด ไม่ต้อง Details"). Weeks from W39 on — earlier weeks were
+# delivered before the pool noted which album a picture came from.
+DUP_TAB_FROM = "2026-09-21"
+DUP_ALBUM_KEYS = ["no", "album", "first", "read", "filed", "pre", "post", "dup", "pct", "with",
+                  "left", "status"]
+_dup_cache = {}          # week -> (time, payload): a phone reopening the tab does not re-query
+
+
+@app.get("/api/duplicates/albums")
+def duplicate_albums(week: str = ""):
+    import time as _time
+    from datetime import date, timedelta
+
+    from sqlalchemy import func, select
+
+    import duplicate_report as dr
+    from ingest import week_label
+    with db.engine.begin() as c:
+        found = c.execute(select(func.distinct(db.jobs.c.date_from))
+                          .where(db.jobs.c.date_from >= DUP_TAB_FROM)).scalars().all()
+    weeks_ = sorted({w for w in found if w}, reverse=True)
+    listing = [{"date_from": w, "label": week_label(w)} for w in weeks_]
+    if not weeks_:
+        return {"weeks": [], "week": None, "albums": []}
+    w = week if week in weeks_ else weeks_[0]
+    hit = _dup_cache.get(w)
+    if hit and _time.time() - hit[0] < 120:
+        return {**hit[1], "weeks": listing}
+    d_to = (date.fromisoformat(w) + timedelta(days=6)).isoformat()
+    cases, _undecided = dr.build(*dr.load(w, d_to))
+    albums = dr.album_overview(w, d_to, cases, dr.pre_read_cases(w))
+    payload = {"week": w, "label": week_label(w), "albums": [dict(zip(DUP_ALBUM_KEYS, r)) for r in albums],
+               "as_of": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    _dup_cache[w] = (_time.time(), payload)
+    return {**payload, "weeks": listing}
+
+
 @app.get("/api/completeness")
 def completeness():
     """Per week and vehicle group: how much work is in, how much is owed, who is short.

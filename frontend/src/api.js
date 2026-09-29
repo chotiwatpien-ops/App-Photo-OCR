@@ -58,6 +58,8 @@ export const api = {
   trips: (params = {}) => fetch(`/api/trips?${new URLSearchParams(params)}`).then(handle),
   reviewQueue: () => fetch('/api/review-queue').then(handle),
   completeness: () => fetch('/api/completeness').then(handle),
+  // the 'งานซ้ำ' tab — every album of a week and whether it repeats (from W39)
+  duplicateAlbums: (week = '') => fetch(`/api/duplicates/albums?week=${week}`).then(handle),
   spreadDates: (jobId, allRows = false) =>
     fetch(`/api/jobs/${jobId}/spread-dates?all_rows=${allRows}`, { method: 'POST' }).then(handle),
   approveTrip: (id) => fetch(`/api/trips/${id}/approve`, { method: 'POST' }).then(handle),
