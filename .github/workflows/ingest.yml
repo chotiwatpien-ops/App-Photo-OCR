@@ -30,6 +30,10 @@ on:
         description: "โควตาต่อคนเฉพาะงาน 2 W Saver สำหรับรอบนี้เท่านั้น (ว่าง = 21; Standard และ 4W ยัง 21 เสมอ) — Ops สั่ง 2026-09-08 ให้ 2 W Saver วีคนี้ครบก่อน"
         type: string
         default: ""
+      per_rider_standard:
+        description: "โควตาต่อคนเฉพาะงาน 2 W Standard สำหรับรอบนี้เท่านั้น (ว่าง = 21) — เฟียส 2026-10-01: W39 ชื่อ 2W เต็มทั้ง 145 คน ให้คนเดิมรับเกิน 21"
+        type: string
+        default: ""
       exports_week:
         description: "คู่กับ exports_only: ทำรูปเฉพาะสัปดาห์นี้ (เช่น 2026-W37 หรือวันในสัปดาห์ 2026-09-07) · เว้นว่าง = ทุกสัปดาห์"
         type: string
@@ -129,6 +133,7 @@ jobs:
         working-directory: backend
         env:
           QUOTA_2_W_SAVER: ${{ github.event.inputs.per_rider_saver || '' }}
+          QUOTA_2_W_STANDARD: ${{ github.event.inputs.per_rider_standard || '' }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
