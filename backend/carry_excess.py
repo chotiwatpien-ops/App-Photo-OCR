@@ -69,8 +69,14 @@ def next_week(d_from, d_to):
 
 
 def excess_rows(d_from, d_to, target, groups=GROUPS):
-    """{group: [(row, job)...]} — the rows above target in each group, latest trip first."""
-    jobs = {j["id"]: j for j in db.jobs_by_week().get((d_from, d_to), [])}
+    """{group: [(row, job)...]} — the rows above target in each group, latest trip first.
+
+    Rows still in the week's _พร้อมอ่าน (the '(รออ่าน)' job) are not the week's work yet: counted,
+    they made a group look over target by however many sat there, and the carry then took that
+    many FILED rows away (found writing the close-week button, 2026-10-02; W39 closed with 27 Car
+    rows waiting). move_staged.py is what moves them."""
+    jobs = {j["id"]: j for j in db.jobs_by_week().get((d_from, d_to), [])
+            if j.get("driver_name") != db.HOLDING_RIDER}
     if not jobs:
         return {}, {}, jobs
     t = db.trips.c

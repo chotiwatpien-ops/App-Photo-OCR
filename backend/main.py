@@ -477,6 +477,97 @@ def duplicate_albums(week: str = ""):
     return {**payload, "weeks": listing}
 
 
+# ---------- ปิดสัปดาห์: one button instead of six workflows (close_week.py) ----------
+
+CLOSE_WEEKS_SHOWN = 4
+PLAN_FRESH_HOURS = 12        # a plan older than this is not enough to press 'ปิดจริง' on
+
+
+def _plan_fresh(runs):
+    """The newest finished plan, if it is recent and nothing has been closed since."""
+    for r in runs:
+        if r["mode"] == "apply" and r["status"] == "done":
+            return None                      # closed (or tried) after any plan below it
+        if r["mode"] == "plan" and r["status"] == "done" and r.get("finished_at"):
+            age = (datetime.now(db._TZ_BKK).replace(tzinfo=None)
+                   - datetime.fromisoformat(r["finished_at"])).total_seconds() / 3600
+            return r if age < PLAN_FRESH_HOURS else None
+    return None
+
+
+@app.get("/api/close-week")
+def close_week_page(week: str = ""):
+    from datetime import date, timedelta
+
+    from sqlalchemy import func, select
+
+    import close_week as cw
+    from ingest import week_label
+    with db.engine.begin() as c:
+        found = c.execute(select(func.distinct(db.jobs.c.date_from))).scalars().all()
+    today = datetime.now(db._TZ_BKK).date().isoformat()
+    weeks_ = sorted({w for w in found if w and w <= today}, reverse=True)[:CLOSE_WEEKS_SHOWN]
+    shut = db.closed_weeks()
+    listing = [{"date_from": w, "label": week_label(w), "closed": w in shut} for w in weeks_]
+    if not weeks_:
+        return {"weeks": [], "week": None}
+    # the week to show first: the oldest one not closed yet — that is the one waiting to be closed
+    open_ = [w for w in weeks_ if w not in shut]
+    w = week if week in weeks_ else (open_[-1] if open_ else weeks_[0])
+    d_to = (date.fromisoformat(w) + timedelta(days=6)).isoformat()
+    runs = db.close_runs_of_week(w)
+    for r in runs:                           # the page shows summaries; logs come one run at a time
+        for s in r["steps"]:
+            s.pop("log", None)
+    active = db.close_run_active()
+    return {"weeks": listing, "week": w, "week_to": d_to, "label": week_label(w),
+            "closed": shut.get(w), "preflight": cw.preflight(w, d_to), "runs": runs,
+            "plan_ok": bool(_plan_fresh(runs)), "active": active and active["id"],
+            "target": config.WEEKLY_TARGET_PER_GROUP,
+            "can_dispatch": bool(config.GITHUB_TOKEN and config.GITHUB_REPO)}
+
+
+@app.get("/api/close-week/runs/{run_id}")
+def close_week_run(run_id: int):
+    r = db.get_close_run(run_id)
+    if not r:
+        raise HTTPException(404, f"ไม่พบรอบปิด #{run_id}")
+    return r
+
+
+@app.post("/api/close-week/{date_from}/{mode}")
+def close_week_start(date_from: str, mode: str):
+    """Start a plan or a real close. A real close needs: the checks passing, a plan finished in
+    the last PLAN_FRESH_HOURS, and no other close queued or running."""
+    from datetime import date, timedelta
+
+    import close_week as cw
+    if mode not in ("plan", "apply"):
+        raise HTTPException(400, "mode ต้องเป็น plan หรือ apply")
+    try:
+        d_to = (date.fromisoformat(date_from) + timedelta(days=6)).isoformat()
+    except ValueError:
+        raise HTTPException(400, "วันที่ไม่ถูกต้อง")
+    active = db.close_run_active()
+    if active:
+        raise HTTPException(409, f"มีรอบปิด #{active['id']} ของสัปดาห์ {active['week_from']} กำลังรันอยู่ — รอให้จบก่อน")
+    if mode == "apply":
+        pre = cw.preflight(date_from, d_to)
+        if not pre["ok"]:
+            bad = [f"{c['label']}: {c['detail']}" for c in pre["checks"] if c["level"] == "block" and not c["ok"]]
+            raise HTTPException(409, "ยังปิดไม่ได้ — " + " · ".join(bad))
+        if not _plan_fresh(db.close_runs_of_week(date_from)):
+            raise HTTPException(409, f"กด 'ดูแผน' ก่อน — ต้องมีแผนที่ทำไม่เกิน {PLAN_FRESH_HOURS} ชม.")
+    run_id = db.create_close_run(date_from, d_to, mode)
+    try:
+        _dispatch("close-week.yml", {"week_from": date_from, "week_to": d_to, "mode": mode,
+                                     "run_id": str(run_id)})
+    except HTTPException as e:
+        db.update_close_run(run_id, status="failed", finished_at=db._now(), message=str(e.detail))
+        raise
+    return db.get_close_run(run_id)
+
+
 @app.get("/api/completeness")
 def completeness():
     """Per week and vehicle group: how much work is in, how much is owed, who is short.
@@ -613,11 +704,15 @@ def completeness():
 
 
 def _dispatch_ingest():
+    return _dispatch(config.GITHUB_WORKFLOW)
+
+
+def _dispatch(workflow, inputs=None):
     if not (config.GITHUB_TOKEN and config.GITHUB_REPO):
         raise HTTPException(501, "ยังไม่ได้ตั้งค่า GITHUB_TOKEN / GITHUB_REPO — ตั้งแล้วปุ่มนี้จะสั่งรันได้")
     import urllib.request
-    url = f"https://api.github.com/repos/{config.GITHUB_REPO}/actions/workflows/{config.GITHUB_WORKFLOW}/dispatches"
-    body = json.dumps({"ref": "main", "inputs": {}}).encode()
+    url = f"https://api.github.com/repos/{config.GITHUB_REPO}/actions/workflows/{workflow}/dispatches"
+    body = json.dumps({"ref": "main", "inputs": inputs or {}}).encode()
     req = urllib.request.Request(url, data=body, method="POST", headers={
         "Authorization": f"Bearer {config.GITHUB_TOKEN}", "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json"})

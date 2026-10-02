@@ -44,8 +44,10 @@ def carried_note(n_from, n_to):
 
 
 def count_by_service(d_from, d_to):
-    """{service: finished rows in the week}, whichever group's job they sit in."""
-    jobs = [j["id"] for j in db.jobs_by_week().get((d_from, d_to), [])]
+    """{service: finished rows in the week}, whichever group's job they sit in — not the rows
+    still waiting in _พร้อมอ่าน, which are nobody's yet (see carry_excess.excess_rows)."""
+    jobs = [j["id"] for j in db.jobs_by_week().get((d_from, d_to), [])
+            if j.get("driver_name") != db.HOLDING_RIDER]
     if not jobs:
         return Counter()
     t = db.trips.c

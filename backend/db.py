@@ -119,6 +119,23 @@ week_locks = Table(
     Column("closed_by", String(64)),
 )
 
+# One row per press of the web's close-week button (close_week.py). The runner writes each step's
+# outcome here as it goes, so the page shows progress without anyone opening GitHub.
+close_runs = Table(
+    "close_runs", meta,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("week_from", String(10), nullable=False),
+    Column("week_to", String(10), nullable=False),
+    Column("mode", String(8), nullable=False),     # plan | apply
+    Column("status", String(12), nullable=False),  # queued | running | done | failed | blocked
+    Column("created_at", String(19), nullable=False),
+    Column("started_at", String(19)),
+    Column("finished_at", String(19)),
+    Column("message", Text),                       # one line for the page: why it stopped, or what it did
+    Column("steps", Text),                         # JSON [{key, title, status, summary, log}]
+    Column("result", Text),                        # JSON {before, after, audit, closed}
+)
+
 pool_sources = Table(
     "pool_sources", meta,
     Column("drive_id", String(128), primary_key=True),
@@ -459,6 +476,70 @@ def closed_weeks():
     with engine.begin() as c:
         return {r["date_from"]: dict(r) for r in
                 c.execute(select(week_locks)).mappings().all()}
+
+
+def create_close_run(week_from, week_to, mode) -> int:
+    with engine.begin() as c:
+        return c.execute(insert(close_runs).values(
+            week_from=week_from, week_to=week_to, mode=mode, status="queued", created_at=_now(),
+            steps="[]")).inserted_primary_key[0]
+
+
+def update_close_run(run_id, **fields) -> None:
+    import json as _json
+    for k in ("steps", "result"):
+        if k in fields and not isinstance(fields[k], str):
+            fields[k] = _json.dumps(fields[k], ensure_ascii=False)
+    with engine.begin() as c:
+        c.execute(update(close_runs).where(close_runs.c.id == run_id).values(**fields))
+
+
+def _close_run_dict(r):
+    import json as _json
+    d = dict(r)
+    for k, empty in (("steps", []), ("result", {})):
+        try:
+            d[k] = _json.loads(d.get(k) or "null") or empty
+        except ValueError:
+            d[k] = empty
+    return d
+
+
+def get_close_run(run_id):
+    with engine.begin() as c:
+        r = c.execute(select(close_runs).where(close_runs.c.id == run_id)).mappings().first()
+    return _close_run_dict(r) if r else None
+
+
+def close_runs_of_week(week_from, limit=5):
+    with engine.begin() as c:
+        return [_close_run_dict(r) for r in c.execute(
+            select(close_runs).where(close_runs.c.week_from == week_from)
+            .order_by(close_runs.c.id.desc()).limit(limit)).mappings().all()]
+
+
+def close_run_active(hours=3):
+    """The close run that is queued or running now, if any. One stuck for longer than `hours`
+    is treated as dead (its runner was cancelled before it could say so) and does not count."""
+    since = (datetime.now(_TZ_BKK).replace(tzinfo=None) - timedelta(hours=hours)).isoformat(timespec="seconds")
+    with engine.begin() as c:
+        r = c.execute(select(close_runs)
+                      .where(close_runs.c.status.in_(("queued", "running")),
+                             close_runs.c.created_at >= since)
+                      .order_by(close_runs.c.id.desc()).limit(1)).mappings().first()
+    return _close_run_dict(r) if r else None
+
+
+def week_waiting_counts(date_from, date_to):
+    """What still stands between a week and closing it: rows not read yet (pending, which
+    includes rows out with the batch reader), and read rows a person has not approved."""
+    with engine.begin() as c:
+        base = (select(func.count()).select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+                .where(jobs.c.date_from == date_from, jobs.c.date_to == date_to))
+        pending = c.execute(base.where(trips.c.status == "pending")).scalar() or 0
+        review = c.execute(base.where(trips.c.status == "done", trips.c.committed == 0,
+                                      jobs.c.driver_name != HOLDING_RIDER)).scalar() or 0
+    return {"pending": pending, "review": review}
 
 
 def week_closed(date_from) -> bool:

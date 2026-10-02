@@ -4,6 +4,7 @@ import Dashboard from './Dashboard.jsx'
 import Home from './Home.jsx'
 import DataView from './DataView.jsx'
 import DupAlbums from './DupAlbums.jsx'
+import CloseWeek from './CloseWeek.jsx'
 import Login from './Login.jsx'
 import NewJobForm from './NewJobForm.jsx'
 import ReviewGrid from './ReviewGrid.jsx'
@@ -101,7 +102,7 @@ export default function App() {
   const openJob = (id) => api.job(id).then(setActiveJob)
   const NAV = [
     ['home', 'หน้าหลัก'], ['queue', `คิวตรวจ${queueCount ? ` (${queueCount})` : ''}`],
-    ['data', 'ข้อมูลทั้งหมด'], ['dashboard', 'Dashboard'], ['dups', 'งานซ้ำ'],
+    ['data', 'ข้อมูลทั้งหมด'], ['dashboard', 'Dashboard'], ['dups', 'งานซ้ำ'], ['close', 'ปิดสัปดาห์'],
   ]
   const logout = () => api.logout().then(() => { setActiveJob(null); boot() })
 
@@ -167,6 +168,8 @@ export default function App() {
           <ReviewQueue onOpenJob={openJob} />
         ) : view === 'dups' ? (
           <DupAlbums />
+        ) : view === 'close' ? (
+          <CloseWeek />
         ) : (
           <div className="grid gap-6 lg:grid-cols-[420px_1fr]">
             <NewJobForm onCreated={(job) => { setActiveJob(job); refreshJobs() }} />

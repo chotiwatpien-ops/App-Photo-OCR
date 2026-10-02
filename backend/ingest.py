@@ -1358,6 +1358,15 @@ def main():
         elif last and not last.get("finished_at"):
             log("⏭ มีรอบกำลังรันอยู่ — ข้ามรอบนี้")
             sys.exit(0)
+    if not (a.exports_only or a.xlsx_only or a.exports_jobs or a.fix_hidden_turbo
+            or a.delete_jobs or a.dedupe_approved or a.delete_trips):
+        # a reading round files rows into the week while close_week.py is counting and carrying
+        # them; the two would disagree about what is over target. The close takes minutes.
+        active = db.close_run_active()
+        if active and active["mode"] == "apply":
+            log(f"⏭ กำลังปิดสัปดาห์ {active['week_from']} (รอบปิด #{active['id']}) — ข้ามรอบนี้ "
+                f"ให้ปิดเสร็จก่อน รอบถัดไปจะอ่านต่อเอง")
+            sys.exit(0)
     if a.fix_hidden_turbo:
         sys.exit(fix_hidden_turbo())
     if a.redo_model:

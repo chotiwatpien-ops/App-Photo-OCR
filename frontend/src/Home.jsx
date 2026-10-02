@@ -308,14 +308,14 @@ export default function Home({ onOpenJob, onJobCreated }) {
                 e.stopPropagation()
                 const ask = W.closed
                   ? `เปิดสัปดาห์ ${W.week} อีกครั้ง? งานอัตโนมัติจะกลับมาแตะสัปดาห์นี้ได้`
-                  : `ปิดสัปดาห์ ${W.week}? ส่งไฟล์ให้ลูกค้าแล้วใช่ไหม — หลังจากนี้งานอัตโนมัติจะไม่แตะสัปดาห์นี้อีก`
+                  : `ล็อกสัปดาห์ ${W.week}? ส่งไฟล์ให้ลูกค้าแล้วใช่ไหม — หลังจากนี้งานอัตโนมัติจะไม่แตะสัปดาห์นี้อีก\n\n(ปุ่มนี้ล็อกอย่างเดียว ถ้าจะย้าย ยกงาน ออกไฟล์ และ audit ด้วย ใช้แท็บ 'ปิดสัปดาห์')`
                 if (!window.confirm(ask)) return
                 const p = W.closed ? api.reopenWeek(W.date_from) : api.closeWeek(W.date_from, W.date_to)
                 p.then(load).catch((e2) => setErr(e2.message))
               }}
                 className={`min-h-11 inline-flex items-center cursor-pointer select-none rounded-lg px-3 hover:bg-slate-50 border ${
                   W.closed ? 'border-slate-300 text-slate-600' : 'border-slate-400 text-slate-700'}`}>
-                {W.closed ? '🔓 เปิดอีกครั้ง' : '🔒 ปิดสัปดาห์'}
+                {W.closed ? '🔓 เปิดอีกครั้ง' : '🔒 ล็อกสัปดาห์'}
               </span>
               <span className="text-slate-400">{isOpen(W.week, i) ? '▾' : '▸'}</span>
             </div>
