@@ -620,13 +620,10 @@ def overview_page(week: str = ""):
         return {"weeks": [], "week": None}
     w = week if week in weeks_ else weeks_[0]
     d_to = (date.fromisoformat(w) + timedelta(days=6)).isoformat()
-    albums = []
-    if w >= DUP_TAB_FROM:
-        try:
-            albums = duplicate_albums(w).get("albums", [])
-        except Exception as e:  # noqa: BLE001 — the albums card is a nicety; the page must still load
-            logging.warning("overview albums: %s", str(e)[:200])
-    out = overview.build(w, d_to, albums)
+    # The albums card is the slow part (every picture of every album of the week) and was making
+    # each week switch wait for it (Fiat 2026-10-02: "สลับวีคมันหน่วง"). The page asks for it
+    # separately, from /api/duplicates/albums, and fills the card when it comes.
+    out = overview.build(w, d_to)
     out.update(weeks=listing, label=week_label(w), days_left=max(0, (date.fromisoformat(d_to) - today).days))
     return out
 

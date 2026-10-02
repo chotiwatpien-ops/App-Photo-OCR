@@ -73,7 +73,7 @@ function Reading({ r, onRead, busy, note }) {
         <dd>{r.running ? 'กำลังอ่านอยู่' : r.last_finished ? `${clock(r.last_finished)} · ${ago(r.last_finished)}` : 'ยังไม่เคยอ่าน'}</dd>
         <dt className="text-muted">รอบถัดไป</dt><dd>ประมาณ {r.next}</dd>
         <dt className="text-muted">รอผลอ่าน</dt><dd>{fmt(r.total)} รูป</dd>
-        <dt className="text-muted">อัลบั้มใหม่วันนี้</dt><dd>{fmt(r.albums_today)} อัลบั้ม</dd>
+        <dt className="text-muted">อัลบั้มใหม่วันนี้</dt><dd>{r.albums_today == null ? '–' : `${fmt(r.albums_today)} อัลบั้ม`}</dd>
       </dl>
       <p className="text-sm text-muted bg-ground rounded-lg px-3 py-2.5">รูปที่วางใน Drive จะถูกอ่านเองทุก 3 ชั่วโมง ไม่ต้องกดอะไร</p>
       {note && <p className="text-sm text-ink-soft">{note}</p>}
@@ -128,11 +128,37 @@ export default function Overview({ onGo }) {
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
+  const [albums, setAlbums] = useState({})      // week -> albums of that week (loaded on its own)
   const ridersRef = useRef(null)
+  const seen = useRef({})                          // week -> overview already fetched this visit
 
-  const load = useCallback((w) => api.overview(w).then((d) => { setData(d); setError('') })
-    .catch((e) => setError(e.message)), [])
-  useEffect(() => { load(week) }, [week, load])
+  // A week already seen shows at once and refreshes behind; the others are fetched ahead once
+  // the first one is in, so switching weeks does not wait (Fiat 2026-10-02: "สลับวีคมันหน่วง").
+  const load = useCallback((w) => {
+    if (seen.current[w]) setData(seen.current[w])
+    return api.overview(w).then((d) => {
+      seen.current[d.week] = d
+      if (!w) seen.current[''] = d
+      setData((cur) => (!cur || cur.week === d.week || !w || w === d.week ? d : cur))
+      setError('')
+      return d
+    }).catch((e) => setError(e.message))
+  }, [])
+  useEffect(() => {
+    load(week).then((d) => {
+      for (const x of d?.weeks || []) {
+        if (!seen.current[x.date_from]) api.overview(x.date_from).then((o) => { seen.current[o.week] = o }).catch(() => {})
+      }
+    })
+  }, [week, load])
+  // the albums card fills itself when its numbers come; the rest of the page does not wait
+  const shownWeek = data?.week
+  useEffect(() => {
+    if (!shownWeek || albums[shownWeek]) return
+    // a week from before the duplicate report existed answers with another week: count it as none
+    api.duplicateAlbums(shownWeek).then((r) => setAlbums((a) => ({ ...a, [shownWeek]: r.week === shownWeek ? r.albums || [] : [] })))
+      .catch(() => setAlbums((a) => ({ ...a, [shownWeek]: null })))
+  }, [shownWeek, albums])
 
   if (error && !data) {
     return (
@@ -156,6 +182,13 @@ export default function Overview({ onGo }) {
       .catch((e) => setNote(`สั่งไม่สำเร็จ: ${e.message}`)).finally(() => setBusy(false))
   }
   const current = data.weeks.find((w) => w.date_from === data.week)
+  const pending = week && week !== data.week               // asked for a week not on screen yet
+  const all = albums[data.week]
+  const todayIso = new Date().toISOString().slice(0, 10)
+  const latest = all ? [...all].reverse().slice(0, 5) : []
+  const nDup = all ? all.filter((a) => a.status === 'ซ้ำ').length : 0
+  const reading = { ...data.reading, albums_today: all ? all.filter((a) => (a.first || '').startsWith(todayIso)).length : null }
+  const daysLeft = (from) => Math.max(0, Math.round((new Date(`${from}T00:00:00`).getTime() + 6 * 86400000 - new Date(`${todayIso}T00:00:00`).getTime()) / 86400000))
 
   return (
     <div className="flex flex-col gap-5">
@@ -170,8 +203,9 @@ export default function Overview({ onGo }) {
         </div>
         <div role="group" aria-label="เลือกสัปดาห์" className="flex gap-2 overflow-x-auto">
           {[...data.weeks].reverse().map((w) => {
-            const on = w.date_from === data.week
-            const tag = w.closed ? 'ปิดแล้ว' : w.current ? (data.days_left ? `เหลือ ${data.days_left} วัน` : 'วันสุดท้าย') : 'ยังไม่ปิด'
+            const on = w.date_from === (week || data.week)
+            const left = daysLeft(w.date_from)
+            const tag = w.closed ? 'ปิดแล้ว' : w.current ? (left ? `เหลือ ${left} วัน` : 'วันสุดท้าย') : 'ยังไม่ปิด'
             return (
               <button key={w.date_from} onClick={() => setWeek(w.date_from)} aria-pressed={on}
                 className={`shrink-0 min-h-10 px-4 rounded-full text-sm border ${on ? 'bg-ink text-white border-ink' : 'bg-white text-ink-soft border-line'}`}>
@@ -182,9 +216,15 @@ export default function Overview({ onGo }) {
         </div>
       </div>
 
+      {pending && (
+        <p role="status" className="text-sm text-ink-soft bg-white border border-line rounded-lg px-4 py-2.5">
+          กำลังโหลด {wk(data.weeks.find((w) => w.date_from === week)?.label)}…
+        </p>
+      )}
+      <div className={`flex flex-col gap-5 transition-opacity ${pending ? 'opacity-50 pointer-events-none' : ''}`}>
       <div className="grid gap-5 lg:grid-cols-[2fr_1fr]">
         <Todos todos={data.todos} onAct={act} />
-        <Reading r={data.reading} onRead={readNow} busy={busy} note={note} />
+        <Reading r={reading} onRead={readNow} busy={busy} note={note} />
       </div>
 
       <section aria-labelledby="grp-h">
@@ -239,10 +279,11 @@ export default function Overview({ onGo }) {
             <button onClick={() => onGo('dups')} className="text-sm text-accent hover:underline">ดูงานซ้ำทั้งสัปดาห์</button>
           </div>
           <p className="text-sm text-muted mb-1">
-            {data.albums_total ? `${fmt(data.albums_total)} อัลบั้มในสัปดาห์นี้ · ซ้ำ ${fmt(data.albums_dup)}` : 'ยังไม่มีอัลบั้มในสัปดาห์นี้'} · นับซ้ำเฉพาะในสัปดาห์เดียวกัน
+            {all === undefined ? 'กำลังโหลดอัลบั้ม…' : all === null ? 'โหลดรายการอัลบั้มไม่ได้'
+              : all.length ? `${fmt(all.length)} อัลบั้มในสัปดาห์นี้ · ซ้ำ ${fmt(nDup)}` : 'ยังไม่มีอัลบั้มในสัปดาห์นี้'} · นับซ้ำเฉพาะในสัปดาห์เดียวกัน
           </p>
           <ul>
-            {data.albums.map((a) => {
+            {latest.map((a) => {
               const dup = a.status === 'ซ้ำ'
               return (
                 <li key={a.album} className="flex items-center gap-3 py-2.5 border-b border-line-soft last:border-b-0">
@@ -260,6 +301,7 @@ export default function Overview({ onGo }) {
             })}
           </ul>
         </Card>
+      </div>
       </div>
     </div>
   )
