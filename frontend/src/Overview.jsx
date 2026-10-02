@@ -148,17 +148,34 @@ export default function Overview({ onGo }) {
     load(week).then((d) => {
       for (const x of d?.weeks || []) {
         if (!seen.current[x.date_from]) api.overview(x.date_from).then((o) => { seen.current[o.week] = o }).catch(() => {})
+        fetchAlbums(x.date_from)
       }
     })
-  }, [week, load])
-  // the albums card fills itself when its numbers come; the rest of the page does not wait
-  const shownWeek = data?.week
+  }, [week, load])                                 // eslint-disable-line react-hooks/exhaustive-deps
+  const choose = (w) => {
+    if (seen.current[w]) setData(seen.current[w])    // same render as the click: nothing flashes
+    setWeek(w)
+  }
+  // a dimmed page only after a real wait — a quick swap must not blink
+  const [slow, setSlow] = useState(false)
+  const waiting = !!data && !!week && week !== data.week
   useEffect(() => {
-    if (!shownWeek || albums[shownWeek]) return
+    if (!waiting) { setSlow(false); return undefined }
+    const t = setTimeout(() => setSlow(true), 250)
+    return () => clearTimeout(t)
+  }, [waiting])
+  // the albums card fills itself when its numbers come; the rest of the page does not wait.
+  // Every listed week's albums are fetched ahead too, so the card is ready before it is shown.
+  const asked = useRef({})
+  const fetchAlbums = useCallback((w) => {
+    if (!w || asked.current[w]) return
+    asked.current[w] = true
     // a week from before the duplicate report existed answers with another week: count it as none
-    api.duplicateAlbums(shownWeek).then((r) => setAlbums((a) => ({ ...a, [shownWeek]: r.week === shownWeek ? r.albums || [] : [] })))
-      .catch(() => setAlbums((a) => ({ ...a, [shownWeek]: null })))
-  }, [shownWeek, albums])
+    api.duplicateAlbums(w).then((r) => setAlbums((a) => ({ ...a, [w]: r.week === w ? r.albums || [] : [] })))
+      .catch(() => { asked.current[w] = false; setAlbums((a) => ({ ...a, [w]: null })) })
+  }, [])
+  const shownWeek = data?.week
+  useEffect(() => { fetchAlbums(shownWeek) }, [shownWeek, fetchAlbums])
 
   if (error && !data) {
     return (
@@ -182,7 +199,7 @@ export default function Overview({ onGo }) {
       .catch((e) => setNote(`สั่งไม่สำเร็จ: ${e.message}`)).finally(() => setBusy(false))
   }
   const current = data.weeks.find((w) => w.date_from === data.week)
-  const pending = week && week !== data.week               // asked for a week not on screen yet
+  const pending = slow                                     // asked for a week that is taking a while
   const all = albums[data.week]
   const todayIso = new Date().toISOString().slice(0, 10)
   const latest = all ? [...all].reverse().slice(0, 5) : []
@@ -207,7 +224,7 @@ export default function Overview({ onGo }) {
             const left = daysLeft(w.date_from)
             const tag = w.closed ? 'ปิดแล้ว' : w.current ? (left ? `เหลือ ${left} วัน` : 'วันสุดท้าย') : 'ยังไม่ปิด'
             return (
-              <button key={w.date_from} onClick={() => setWeek(w.date_from)} aria-pressed={on}
+              <button key={w.date_from} onClick={() => choose(w.date_from)} aria-pressed={on}
                 className={`shrink-0 min-h-10 px-4 rounded-full text-sm border ${on ? 'bg-ink text-white border-ink' : 'bg-white text-ink-soft border-line'}`}>
                 {wk(w.label)} · {tag}
               </button>
@@ -216,12 +233,8 @@ export default function Overview({ onGo }) {
         </div>
       </div>
 
-      {pending && (
-        <p role="status" className="text-sm text-ink-soft bg-white border border-line rounded-lg px-4 py-2.5">
-          กำลังโหลด {wk(data.weeks.find((w) => w.date_from === week)?.label)}…
-        </p>
-      )}
-      <div className={`flex flex-col gap-5 transition-opacity ${pending ? 'opacity-50 pointer-events-none' : ''}`}>
+      <p role="status" aria-live="polite" className="sr-only">{pending ? `กำลังโหลด ${wk(data.weeks.find((w) => w.date_from === week)?.label)}` : ''}</p>
+      <div className={`flex flex-col gap-5 transition-opacity duration-200 ${pending ? 'opacity-50 pointer-events-none' : ''}`}>
       <div className="grid gap-5 lg:grid-cols-[2fr_1fr]">
         <Todos todos={data.todos} onAct={act} />
         <Reading r={reading} onRead={readNow} busy={busy} note={note} />
@@ -282,7 +295,7 @@ export default function Overview({ onGo }) {
             {all === undefined ? 'กำลังโหลดอัลบั้ม…' : all === null ? 'โหลดรายการอัลบั้มไม่ได้'
               : all.length ? `${fmt(all.length)} อัลบั้มในสัปดาห์นี้ · ซ้ำ ${fmt(nDup)}` : 'ยังไม่มีอัลบั้มในสัปดาห์นี้'} · นับซ้ำเฉพาะในสัปดาห์เดียวกัน
           </p>
-          <ul>
+          <ul className="min-h-[19rem]">
             {latest.map((a) => {
               const dup = a.status === 'ซ้ำ'
               return (
