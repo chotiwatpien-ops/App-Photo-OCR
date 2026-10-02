@@ -545,6 +545,42 @@ def duplicate_albums(week: str = ""):
     return {**payload, "weeks": listing}
 
 
+# ---------- ภาพรวม: the customer's first screen (overview.py) ----------
+
+OVERVIEW_WEEKS_SHOWN = 3
+
+
+@app.get("/api/overview")
+def overview_page(week: str = ""):
+    from datetime import date, timedelta
+
+    from sqlalchemy import func, select
+
+    import overview
+    from ingest import week_label
+    today = datetime.now(db._TZ_BKK).date()
+    with db.engine.begin() as c:
+        found = c.execute(select(func.distinct(db.jobs.c.date_from))).scalars().all()
+    weeks_ = sorted({w for w in found if w and w <= today.isoformat()}, reverse=True)[:OVERVIEW_WEEKS_SHOWN]
+    shut = db.closed_weeks()
+    listing = [{"date_from": w, "label": week_label(w), "closed": w in shut,
+                "current": w <= today.isoformat() <= (date.fromisoformat(w) + timedelta(days=6)).isoformat()}
+               for w in weeks_]
+    if not weeks_:
+        return {"weeks": [], "week": None}
+    w = week if week in weeks_ else weeks_[0]
+    d_to = (date.fromisoformat(w) + timedelta(days=6)).isoformat()
+    albums = []
+    if w >= DUP_TAB_FROM:
+        try:
+            albums = duplicate_albums(w).get("albums", [])
+        except Exception as e:  # noqa: BLE001 — the albums card is a nicety; the page must still load
+            logging.warning("overview albums: %s", str(e)[:200])
+    out = overview.build(w, d_to, albums)
+    out.update(weeks=listing, label=week_label(w), days_left=max(0, (date.fromisoformat(d_to) - today).days))
+    return out
+
+
 # ---------- ปิดสัปดาห์: one button instead of six workflows (close_week.py) ----------
 
 CLOSE_WEEKS_SHOWN = 4

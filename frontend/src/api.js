@@ -46,6 +46,7 @@ export const api = {
   closeWeek: (dateFrom, dateTo) =>
     fetch(`/api/weeks/${dateFrom}/close?date_to=${dateTo || ''}`, { method: 'POST' }).then(handle),
   reopenWeek: (dateFrom) => fetch(`/api/weeks/${dateFrom}/reopen`, { method: 'POST' }).then(handle),
+  overview: (week) => fetch(`/api/overview?week=${week || ''}`).then(handle),
   // the close-week button: checks, a plan, then the real close — run by GitHub Actions,
   // progress read back from the database (close_week.py)
   closeWeekPage: (week) => fetch(`/api/close-week?week=${week || ''}`).then(handle),

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, exportUrl } from './api.js'
 import Dashboard from './Dashboard.jsx'
 import Home from './Home.jsx'
+import Icon from './Icon.jsx'
+import Overview from './Overview.jsx'
 import DataView from './DataView.jsx'
 import DupAlbums from './DupAlbums.jsx'
 import CloseWeek from './CloseWeek.jsx'
@@ -60,7 +62,7 @@ export default function App() {
   const [health, setHealth] = useState(null)
   const [jobList, setJobList] = useState([])
   const [activeJob, setActiveJob] = useState(null)
-  const [view, setView] = useState('home') // home | jobs | dashboard | data | queue | dups
+  const [view, setView] = useState('overview') // overview | queue | dups | data | close · legacy: home | dashboard
   const [queueCount, setQueueCount] = useState(0)
 
   const refreshJobs = useCallback(() => {
@@ -103,57 +105,77 @@ export default function App() {
   if (!loggedIn) return <Login onLoggedIn={boot} />
 
   const openJob = (id) => api.job(id).then(setActiveJob)
+  // five tabs: what the customer does every week, in the order they do it (redesign 2026-10)
   const NAV = [
-    ['home', 'หน้าหลัก'], ['queue', `คิวตรวจ${queueCount ? ` (${queueCount})` : ''}`],
-    ['data', 'ข้อมูลทั้งหมด'], ['dashboard', 'Dashboard'], ['dups', 'งานซ้ำ'], ['close', 'ปิดสัปดาห์'],
+    ['overview', 'ภาพรวม', 'overview'], ['queue', 'คิวตรวจ', 'queue'], ['dups', 'งานซ้ำ', 'dups'],
+    ['data', 'ข้อมูล', 'data'], ['close', 'ปิดสัปดาห์', 'close'],
   ]
+  // the screens from before the redesign stay reachable here until each has a new home
+  const LEGACY = [['home', 'การอ่านรูปและสัปดาห์'], ['dashboard', 'Dashboard (เดิม)']]
+  const go = (k) => { setActiveJob(null); setView(k); window.scrollTo(0, 0) }
   const logout = () => api.logout().then(() => { setActiveJob(null); boot() })
+  const badge = (k) => (k === 'queue' && queueCount ? queueCount : 0)
 
   return (
-    <div className="min-h-screen">
-      <header className="bg-slate-900 text-white px-6 py-3 flex items-center justify-between shadow">
-        <div className="flex items-center gap-3">
-          <span className="text-2xl">📸</span>
-          <div>
-            <h1 className="font-semibold text-lg leading-tight">Rider Photo OCR</h1>
-            <p className="text-xs text-slate-400">
-              Google Drive → AI → Excel{health?.model ? ` · ${health.model}` : ''}
-            </p>
+    <div className="min-h-screen pb-20 md:pb-0">
+      <header className="bg-white border-b border-line">
+        <div className="max-w-screen-xl mx-auto px-4 sm:px-8 h-16 flex items-center gap-6 lg:gap-10">
+          <button onClick={() => go('overview')} className="flex items-center gap-2.5 shrink-0">
+            <span className="w-8 h-8 rounded-lg bg-ink text-white flex items-center justify-center font-semibold">R</span>
+            <span className="font-semibold">Rider Photo OCR</span>
+          </button>
+          <nav aria-label="เมนูหลัก" className="hidden md:flex items-stretch gap-1 h-16">
+            {NAV.map(([k, label]) => {
+              const on = view === k && !activeJob
+              return (
+                <button key={k} onClick={() => go(k)} aria-current={on ? 'page' : undefined}
+                  className={`flex items-center gap-2 px-3.5 border-b-2 text-[15px] ${on
+                    ? 'border-ink text-ink font-semibold' : 'border-transparent text-ink-soft hover:text-ink'}`}>
+                  {label}
+                  {badge(k) > 0 && <span className="text-xs font-semibold bg-danger text-white rounded-full px-2 py-px">{badge(k).toLocaleString('th-TH')}</span>}
+                </button>
+              )
+            })}
+          </nav>
+          <div className="ml-auto flex items-center gap-3">
+            {health?.excel_append && health.excel_locked && (
+              <span className="text-xs bg-danger-bg text-danger-ink rounded px-3 py-1">
+                ไฟล์ {health.excel_name} เปิดอยู่ — ปิดก่อนกดบันทึก
+              </span>
+            )}
+            <details className="relative">
+              <summary className="list-none cursor-pointer w-10 h-10 rounded-lg flex items-center justify-center text-ink-soft hover:bg-ground"
+                aria-label="เมนูเพิ่มเติม"><Icon name="tools" /></summary>
+              <div className="absolute right-0 mt-2 w-60 bg-white border border-line rounded-xl shadow-lg py-2 z-30">
+                <p className="px-4 py-1 text-xs text-muted">หน้าจอเดิม (กำลังย้ายเข้าแท็บใหม่)</p>
+                {LEGACY.map(([k, label]) => (
+                  <button key={k} onClick={(e) => { e.currentTarget.closest('details').open = false; go(k) }}
+                    className="w-full text-left px-4 py-2.5 text-sm hover:bg-ground">{label}</button>
+                ))}
+                {auth.auth_required && (
+                  <button onClick={logout} className="w-full text-left px-4 py-2.5 text-sm hover:bg-ground border-t border-line-soft mt-1 flex items-center gap-2">
+                    <Icon name="logout" size={16} />ออกจากระบบ</button>
+                )}
+              </div>
+            </details>
           </div>
         </div>
-        <nav className="hidden md:flex items-center gap-1 text-sm">
-          {NAV.map(([k, label]) => (
-            <button key={k} onClick={() => { setActiveJob(null); setView(k) }}
-              className={`px-3 py-1.5 rounded-lg ${view === k && !activeJob ? 'bg-white/15 text-white' : 'text-slate-300 hover:text-white hover:bg-white/10'}`}>
-              {label}
-            </button>
-          ))}
-        </nav>
-        <div className="flex items-center gap-3">
-          {health?.excel_append && health.excel_locked && (
-            <span className="text-xs bg-red-500/20 text-red-300 border border-red-500/40 rounded px-3 py-1">
-              ⚠️ ไฟล์ {health.excel_name} เปิดอยู่ — ปิดก่อนกดบันทึก
-            </span>
-          )}
-          {auth.auth_required && (
-            <button onClick={logout} className="text-xs text-slate-300 hover:text-white">ออกจากระบบ</button>
-          )}
-        </div>
       </header>
-      {/* under 768px the nav above is hidden, which left the queue, the data view and the
-          dashboard unreachable from a phone — the devices the queue is actually reviewed on.
-          Same buttons, same band, laid out for a thumb. */}
-      <nav className="md:hidden bg-slate-900 text-white px-3 pb-2 flex gap-1 overflow-x-auto text-sm">
-        {NAV.map(([k, label]) => (
-          <button key={k} onClick={() => { setActiveJob(null); setView(k) }}
-            className={`shrink-0 min-h-11 px-3 rounded-lg ${view === k && !activeJob
-              ? 'bg-white/15 text-white' : 'text-slate-300'}`}>
-            {label}
-          </button>
-        ))}
+      {/* phones: the tabs live at the bottom, where a thumb reaches them */}
+      <nav aria-label="เมนูหลัก" className="md:hidden fixed bottom-0 inset-x-0 z-20 bg-white border-t border-line grid grid-cols-5 pb-[env(safe-area-inset-bottom)]">
+        {NAV.map(([k, label, icon]) => {
+          const on = view === k && !activeJob
+          return (
+            <button key={k} onClick={() => go(k)} aria-current={on ? 'page' : undefined}
+              className={`relative min-h-14 flex flex-col items-center justify-center gap-0.5 text-[11px] ${on ? 'text-ink font-semibold' : 'text-ink-soft'}`}>
+              <Icon name={icon} size={22} />{label}
+              {badge(k) > 0 && <span className="absolute top-1.5 left-[55%] text-[11px] font-semibold bg-danger text-white rounded-full px-1.5">{badge(k)}</span>}
+            </button>
+          )
+        })}
       </nav>
 
-      <main className="max-w-screen-2xl mx-auto p-4 sm:p-6">
+      <main className="max-w-screen-xl mx-auto p-4 sm:px-8 sm:py-7">
         {activeJob ? (
           <ReviewGrid
             job={activeJob}
@@ -161,6 +183,8 @@ export default function App() {
             onBack={() => { setActiveJob(null); refreshJobs() }}
             onJobUpdate={setActiveJob}
           />
+        ) : view === 'overview' ? (
+          <Overview onGo={go} />
         ) : view === 'home' ? (
           <Home onOpenJob={openJob} onJobCreated={(job) => { setActiveJob(job); refreshJobs() }} />
         ) : view === 'dashboard' ? (

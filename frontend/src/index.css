@@ -1,9 +1,40 @@
 @import "tailwindcss";
 
+/* Redesign 2026-10 — the customer runs the app now. One ink, one action colour, and status
+   colours that differ in lightness as well as hue (blue/orange before red/green). */
 @theme {
-  --font-sans: "Segoe UI", "Leelawadee UI", Tahoma, sans-serif;
+  --font-sans: "IBM Plex Sans Thai", "IBM Plex Sans", "Leelawadee UI", "Segoe UI", Tahoma, sans-serif;
+
+  --color-ink: #17212F;
+  --color-ink-soft: #4A5565;
+  --color-muted: #5D6676;
+  --color-line: #E2E6EB;
+  --color-line-soft: #EEF1F4;
+  --color-ground: #F3F5F8;
+  --color-accent: #1F5BD6;
+  --color-accent-hover: #16449F;
+  --color-accent-bg: #F2F6FE;
+
+  --color-ok: #12805C;
+  --color-ok-ink: #0E6B4D;
+  --color-ok-bg: #E3F3EC;
+  --color-warn: #D9822B;
+  --color-warn-ink: #8A4708;
+  --color-warn-bg: #FDEBD8;
+  --color-danger: #C2362B;
+  --color-danger-ink: #A12A20;
+  --color-danger-bg: #FBE7E5;
+  --color-wait: #9FB3CC;
+  --color-wait-ink: #33507A;
+  --color-wait-bg: #E8EEF6;
 }
 
 body {
-  @apply bg-slate-100 text-slate-800 antialiased;
+  @apply bg-ground text-ink antialiased;
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
