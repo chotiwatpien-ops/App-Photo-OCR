@@ -516,33 +516,82 @@ DUP_ALBUM_KEYS = ["no", "album", "first", "read", "filed", "pre", "post", "dup",
 _dup_cache = {}          # week -> (time, payload): a phone reopening the tab does not re-query
 
 
-@app.get("/api/duplicates/albums")
-def duplicate_albums(week: str = ""):
-    import time as _time
-    from datetime import date, timedelta
-
+def _dup_weeks():
     from sqlalchemy import func, select
-
-    import duplicate_report as dr
-    from ingest import week_label
     with db.engine.begin() as c:
         found = c.execute(select(func.distinct(db.jobs.c.date_from))
                           .where(db.jobs.c.date_from >= DUP_TAB_FROM)).scalars().all()
-    weeks_ = sorted({w for w in found if w}, reverse=True)
-    listing = [{"date_from": w, "label": week_label(w)} for w in weeks_]
+    return sorted({w for w in found if w}, reverse=True)
+
+
+def _dup_week(w):
+    """{cases, undecided, pre, albums} of one week, kept DUP_CACHE_SECONDS — a phone reopening
+    the tab, the overview and the detail panel all ask for the same thing."""
+    import time as _time
+    from datetime import date, timedelta
+
+    import duplicate_report as dr
+    hit = _dup_cache.get(w)
+    if hit and _time.time() - hit[0] < DUP_CACHE_SECONDS:
+        return hit[1]
+    d_to = (date.fromisoformat(w) + timedelta(days=6)).isoformat()
+    cases, undecided = dr.build(*dr.load(w, d_to))
+    pre = dr.pre_read_cases(w)
+    data = {"cases": cases, "undecided": undecided, "pre": pre,
+            "albums": dr.album_overview(w, d_to, cases, pre),
+            "as_of": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    _dup_cache[w] = (_time.time(), data)
+    return data
+
+
+DUP_CACHE_SECONDS = 120
+
+
+@app.get("/api/duplicates/albums")
+def duplicate_albums(week: str = ""):
+    from ingest import week_label
+    weeks_ = _dup_weeks()
+    shut = db.closed_weeks()
+    listing = [{"date_from": w, "label": week_label(w), "closed": w in shut} for w in weeks_]
     if not weeks_:
         return {"weeks": [], "week": None, "albums": []}
     w = week if week in weeks_ else weeks_[0]
-    hit = _dup_cache.get(w)
-    if hit and _time.time() - hit[0] < 120:
-        return {**hit[1], "weeks": listing}
-    d_to = (date.fromisoformat(w) + timedelta(days=6)).isoformat()
-    cases, _undecided = dr.build(*dr.load(w, d_to))
-    albums = dr.album_overview(w, d_to, cases, dr.pre_read_cases(w))
-    payload = {"week": w, "label": week_label(w), "albums": [dict(zip(DUP_ALBUM_KEYS, r)) for r in albums],
-               "as_of": datetime.now().strftime("%Y-%m-%d %H:%M")}
-    _dup_cache[w] = (_time.time(), payload)
-    return {**payload, "weeks": listing}
+    d = _dup_week(w)
+    return {"week": w, "label": week_label(w), "albums": [dict(zip(DUP_ALBUM_KEYS, r)) for r in d["albums"]],
+            "as_of": d["as_of"], "weeks": listing}
+
+
+@app.get("/api/duplicates/album")
+def duplicate_album(week: str, album: str):
+    """Every repeat of one album, each beside the picture it repeats: read ones (booking code,
+    can be put back) and copies dropped before reading (same file, nothing was read)."""
+    if week not in _dup_weeks():
+        raise HTTPException(404, "ไม่พบสัปดาห์นี้")
+    d = _dup_week(week)
+    pairs = [{"kind": c.get("ประเภทการซ้ำ"), "trip_id": c["id"], "twin_id": c.get("twin_id"),
+              "rider": c.get("โฟลเดอร์ที่ระบบวาง"), "date": c.get("วันที่งาน"), "code": c.get("รหัสการจอง"),
+              "net": c.get("ยอด"), "file": c.get("ไฟล์ที่ซ้ำ"), "twin_file": c.get("ซ้ำกับไฟล์"),
+              "twin_album": c.get("ของไรเดอร์"), "restorable": True}
+             for c in d["cases"] if c.get("ไรเดอร์ผู้ส่ง") == album]
+    pairs += [{"kind": p.get("ประเภทการซ้ำ") or "ไฟล์เดิมส่งซ้ำ", "pre": True, "file": p.get("ไฟล์ที่ซ้ำ"),
+               "twin_file": p.get("ซ้ำกับไฟล์"), "twin_album": p.get("ของอัลบั้ม"), "link": p.get("ลิงก์รูป"),
+               "found": p.get("เจอเมื่อ"), "restorable": False}
+              for p in d["pre"] if p.get("ไรเดอร์ผู้ส่ง") == album]
+    return {"week": week, "album": album, "pairs": pairs}
+
+
+@app.get("/api/duplicates/report.xlsx")
+def duplicate_report_xlsx(week: str):
+    """The same workbook the ingest round puts in Drive, built now, for the admins."""
+    import duplicate_report as dr
+    from ingest import week_label
+    if week not in _dup_weeks():
+        raise HTTPException(404, "ไม่พบสัปดาห์นี้")
+    d = _dup_week(week)
+    data = dr.build_xlsx(d["cases"], d["undecided"], d["pre"], d["albums"])
+    name = f"งานซ้ำ {week_label(week).replace('-W', ' WK')}.xlsx"
+    return Response(content=data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
 
 
 # ---------- ภาพรวม: the customer's first screen (overview.py) ----------
@@ -1223,6 +1272,7 @@ def clear_discarded():
 @app.post("/api/trips/{trip_id}/restore")
 def restore_trip(trip_id: int):
     _note("trip.restore", f"trip:{trip_id}")
+    _dup_cache.clear()                    # the row stops being a repeat: every week's view is stale
     if not db.restore_discarded(trip_id):
         raise HTTPException(404, "ไม่พบแถวที่ถูกทิ้ง (หรือถูกกู้คืนไปแล้ว)")
     # ท้ายรอบ ingest ย้ายรูปของแถวที่ถูกพักไปไว้ที่ <สัปดาห์>/_ซ้ำ/ ตั้งแต่ 2026-09-13 กู้คืนแถว

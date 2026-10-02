@@ -100,6 +100,7 @@ def build(rows, twins):
             "ต้นฉบับแน่ชัด": bool(twin and ((t.get("source_album") or "").strip()
                                             or ALBUM.match(t.get("file_name") or ""))),
             "สัปดาห์ของต้นฉบับ": t.get("date_from"),
+            "twin_id": t.get("id"),          # the web shows the two pictures side by side; not a sheet column
             "รูปที่ส่งลูกค้า": t.get("customer_image"),
             "ประเภทการซ้ำ": kind_of(r, twin),
             "ลิงก์รูป": r.get("source_url"),
