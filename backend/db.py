@@ -633,6 +633,15 @@ def close_runs_of_week(week_from, limit=5):
             .order_by(close_runs.c.id.desc()).limit(limit)).mappings().all()]
 
 
+def last_close_run(week_from, mode="apply", status="done"):
+    """The newest run of this kind for the week, however many others came after it."""
+    with engine.begin() as c:
+        r = c.execute(select(close_runs).where(close_runs.c.week_from == week_from, close_runs.c.mode == mode,
+                                               close_runs.c.status == status)
+                      .order_by(close_runs.c.id.desc()).limit(1)).mappings().first()
+    return _close_run_dict(r) if r else None
+
+
 def close_run_active(hours=3):
     """The close run that is queued or running now, if any. One stuck for longer than `hours`
     is treated as dead (its runner was cancelled before it could say so) and does not count."""

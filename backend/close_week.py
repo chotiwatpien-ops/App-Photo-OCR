@@ -307,6 +307,9 @@ class Runner:
         s["status"] = "running"
         self.save()
         found, text = _call(go)
+        m = re.search(r"https://drive\.google\.com/file/d/[\w-]+/view", text)
+        if m:
+            self.result["audit_file"] = m.group(0)
         bad = [k for k in BLOCKING if found.get(k)]
         if self.mode == "plan":     # nothing has moved yet: a repeat across groups, say, is still here
             text = "ตรวจจากสภาพตอนนี้ ก่อนย้าย/ยกงาน — ตอนปิดจริงจะตรวจใหม่หลังทำทุกขั้น\n" + text

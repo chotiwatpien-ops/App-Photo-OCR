@@ -673,7 +673,13 @@ def close_week_page(week: str = ""):
         for s in r["steps"]:
             s.pop("log", None)
     active = db.close_run_active()
-    return {"weeks": listing, "week": w, "week_to": d_to, "label": week_label(w),
+    folder = next((x["drive_id"] for x in db.drive_links()
+                   if x["week"] == week_label(w) and x["kind"] == "week_folder" and not x.get("ref")), None)
+    last_close = db.last_close_run(w)
+    files = {"pictures": f"https://drive.google.com/drive/folders/{folder}" if folder else None,
+             "phase3": (last_close or {}).get("result", {}).get("file"),
+             "audit": (last_close or {}).get("result", {}).get("audit_file")}
+    return {"weeks": listing, "week": w, "week_to": d_to, "label": week_label(w), "files": files,
             "closed": shut.get(w), "preflight": cw.preflight(w, d_to), "runs": runs,
             "plan_ok": bool(_plan_fresh(runs)), "active": active and active["id"],
             "target": config.WEEKLY_TARGET_PER_GROUP,
@@ -975,6 +981,27 @@ def export_phase3():
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}"},
     )
+
+
+@app.get("/api/export/week")
+def export_week(week: str):
+    """One week's customer file in the Phase 3 layout, built now — the 'ไฟล์ส่งลูกค้า' card of
+    the close-week tab. The same rows and layout week_phase3.py puts on Drive at the close."""
+    import week_phase3
+    from datetime import date, timedelta
+    try:
+        d_to = (date.fromisoformat(week) + timedelta(days=6)).isoformat()
+    except ValueError:
+        raise HTTPException(400, "วันที่ไม่ถูกต้อง")
+    rows = week_phase3.week_rows(week, d_to)
+    if not rows:
+        raise HTTPException(404, "สัปดาห์นี้ยังไม่มีแถวที่อนุมัติแล้ว")
+    data = excel_writer.build_fare_lines_workbook(rows, every_week=True)
+    name = week_phase3.file_name(week)
+    return Response(content=data,
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}",
+                             "X-Row-Count": str(len(rows))})
 
 
 # Ops (2026-09-09): "a button that syncs the Excel without waiting for an ingest round". An

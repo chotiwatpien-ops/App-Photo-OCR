@@ -161,6 +161,7 @@ check("ใช้ชื่อโฟลเดอร์สัปดาห์จา�
 check("สร้างรูปใหม่แค่ 2 สัปดาห์ที่เกี่ยว", dict(calls)["pictures"] == {"2026-W39", "2026-W40"})
 check("ไฟล์ Phase 3 วางลง Drive", "--to-drive" in dict(calls)["phase3"])
 check("เก็บลิงก์ไฟล์ให้หน้าเว็บ", r["result"]["file"] == "https://drive.google.com/file/d/FILE123/view")
+check("เก็บลิงก์รายงานตรวจให้หน้าเว็บ", r["result"]["audit_file"] == "https://drive.google.com/file/d/audit-file/view")
 check("audit สะอาด → ติดป้ายปิดแล้ว", db.week_closed(W39[0]) and r["result"]["closed"])
 check("ข้อความบอกว่าปิดแล้ว", r["message"].startswith("ปิดสัปดาห์แล้ว"))
 
@@ -230,7 +231,8 @@ sent = []
 main._dispatch = lambda wf, inputs=None: sent.append((wf, inputs)) or True
 web = TestClient(main.app)
 with db.engine.begin() as c:
-    c.execute(update(db.trips).where(db.trips.c.file_name == "late.jpg").values(status="done", committed=1))
+    c.execute(update(db.trips).where(db.trips.c.file_name == "late.jpg")      # approving needs a date
+              .values(status="done", committed=1, trip_date="2026-09-26", trip_time="18:00"))
 page = web.get(f"/api/close-week?week={W39[0]}").json()
 check("หน้าเว็บได้เงื่อนไขและยอดของสัปดาห์", page["week"] == W39[0] and "checks" in page["preflight"])
 check("หน้าเว็บไม่ส่ง log ทั้งก้อน", all("log" not in s for r in page["runs"] for s in r["steps"]))
@@ -249,6 +251,13 @@ check("แผนเสร็จแล้ว → หน้าเว็บเป�
 res = web.post(f"/api/close-week/{W39[0]}/apply")
 check("มีแผนล่าสุด → ปิดจริงได้", res.status_code == 200 and sent[-1][1]["mode"] == "apply")
 check("ดูรอบเดียวได้พร้อม log", web.get(f"/api/close-week/runs/{res.json()['id']}").json()["mode"] == "apply")
+files = web.get(f"/api/close-week?week={W39[0]}").json()["files"]
+check("หน้าเว็บได้ลิงก์ไฟล์ Phase 3 และรายงานตรวจจากรอบปิดล่าสุด",
+      files["phase3"].endswith("FILE123/view") and files["audit"].endswith("audit-file/view"))
+x = web.get(f"/api/export/week?week={W39[0]}")
+check("ดาวน์โหลดไฟล์ส่งลูกค้าของสัปดาห์ได้", x.status_code == 200 and "Phase%203" in x.headers["content-disposition"]
+      and int(x.headers["x-row-count"]) > 0)
+check("สัปดาห์ที่ยังไม่มีแถว → 404 พร้อมเหตุผล", web.get("/api/export/week?week=2020-01-06").status_code == 404)
 
 print("\nผ่านทั้งหมด" if ok else "\n✗ มีข้อที่ไม่ผ่าน")
 sys.exit(0 if ok else 1)

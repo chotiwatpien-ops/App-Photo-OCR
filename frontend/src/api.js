@@ -70,6 +70,7 @@ export const api = {
   duplicateAlbum: (week, album) =>
     fetch(`/api/duplicates/album?${new URLSearchParams({ week, album })}`).then(handle),
   duplicateReportUrl: (week) => `/api/duplicates/report.xlsx?week=${week}`,
+  weekFileUrl: (week) => `/api/export/week?week=${week}`,
   spreadDates: (jobId, allRows = false) =>
     fetch(`/api/jobs/${jobId}/spread-dates?all_rows=${allRows}`, { method: 'POST' }).then(handle),
   approveTrip: (id) => fetch(`/api/trips/${id}/approve`, { method: 'POST' }).then(handle),
