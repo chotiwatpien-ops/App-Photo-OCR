@@ -4,8 +4,10 @@
 Local:  uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8600
 Cloud:  see render.yaml (DATABASE_URL, GEMINI_API_KEY, APP_PASSWORD, SECRET_KEY)
 """
+import contextvars
 import json
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -67,6 +69,56 @@ async def auth_gate(request: Request, call_next):
     return await call_next(request)
 
 
+# ---------- action log: who changed what, when, from where (support / MA) ----------
+# Every request that is not a GET is written to action_log, refused ones included. A handler that
+# changes data says what it changed with _note(); the middleware adds the request's own facts.
+# The handler and the middleware share one dict through a context variable, so no handler needs
+# a Request parameter just for this. Request bodies are never logged — login carries a password.
+
+_AUDIT = contextvars.ContextVar("audit", default=None)
+
+
+def _note(action=None, target=None, **detail):
+    a = _AUDIT.get()
+    if a is None:
+        return
+    if action:
+        a["action"] = action
+    if target:
+        a["target"] = target
+    if detail:
+        a.setdefault("detail", {}).update(detail)
+
+
+def _client_ip(request: Request):
+    fwd = request.headers.get("x-forwarded-for")          # Render sits in front of the app
+    return (fwd.split(",")[0].strip() if fwd else (request.client.host if request.client else None))
+
+
+@app.middleware("http")
+async def action_log(request: Request, call_next):
+    if not request.url.path.startswith("/api/"):
+        return await call_next(request)
+    note = {}
+    token = _AUDIT.set(note)
+    t0 = time.monotonic()
+    status = 500
+    try:
+        response = await call_next(request)
+        status = response.status_code
+        return response
+    finally:
+        _AUDIT.reset(token)
+        if request.method != "GET" or note.get("action"):
+            route = request.scope.get("route")
+            db.log_action(
+                method=request.method, path=request.url.path, query=str(request.url.query or "")[:500],
+                status=status, ip=_client_ip(request), user_agent=(request.headers.get("user-agent") or "")[:300],
+                action=note.get("action") or f"{request.method} {getattr(route, 'path', request.url.path)}",
+                target=note.get("target"), detail=note.get("detail"),
+                ms=int((time.monotonic() - t0) * 1000))
+
+
 @app.get("/api/me")
 def me(request: Request):
     return {"auth_required": bool(config.APP_PASSWORD), "logged_in": _logged_in(request)}
@@ -76,6 +128,7 @@ def me(request: Request):
 async def login(body: dict, response: Response):
     if not config.APP_PASSWORD:
         return {"ok": True}
+    _note("auth.login")
     if body.get("password") != config.APP_PASSWORD:
         raise HTTPException(401, "รหัสผ่านไม่ถูกต้อง")
     response.set_cookie(COOKIE, _signer.sign("ok").decode(), max_age=SESSION_MAX_AGE,
@@ -85,6 +138,7 @@ async def login(body: dict, response: Response):
 
 @app.post("/api/logout")
 def logout(response: Response):
+    _note("auth.logout")
     response.delete_cookie(COOKIE)
     return {"ok": True}
 
@@ -129,6 +183,7 @@ async def create_job(
     name = driver_name.strip()
     job_id = (db.find_job(name, date_from, date_to)
               or db.create_job(name, excel_writer.SHEET, date_from, date_to))
+    _note("job.upload", f"job:{job_id}", rider=name, date_from=date_from, date_to=date_to, files=len(files))
     for f in files:
         ext = Path(f.filename or "img.jpg").suffix.lower() or ".jpg"
         mime = MIME_BY_EXT.get(ext)
@@ -164,7 +219,10 @@ async def patch_trip(trip_id: int, fields: dict):
         raise HTTPException(404, "ไม่พบรายการ")
     if t["committed"]:
         raise HTTPException(409, "รายการนี้อนุมัติแล้ว แก้ไขไม่ได้")
-    db.update_trip(trip_id, {k: v for k, v in fields.items() if k in db.TRIP_EDITABLE})
+    change = {k: v for k, v in fields.items() if k in db.TRIP_EDITABLE}
+    _note("trip.edit", f"trip:{trip_id}", job=t["job_id"], file=t.get("file_name"),
+          before={k: t.get(k) for k in change}, after=change)
+    db.update_trip(trip_id, change)
     t = db.get_trip(trip_id)
     # the row was held back because its numbers disagreed; a person has just changed one of
     # them, so ask the same question again. Without this the queue keeps calling a corrected
@@ -185,12 +243,16 @@ def remove_trip(trip_id: int):
         raise HTTPException(404, "ไม่พบรายการ")
     if t["committed"]:
         raise HTTPException(409, "รายการนี้อนุมัติแล้ว ลบไม่ได้")
+    _note("trip.delete", f"trip:{trip_id}", row={k: t.get(k) for k in (
+        "job_id", "file_name", "booking_code", "trip_date", "trip_time", "service_type",
+        "base_fare", "net_earnings", "status", "source_url")})
     # The picture goes to <week>/_ทิ้ง-กดลบ/<rider>/ before the row does, while the job and the
     # Drive id can still be read off it. A row thrown away by hand is a picture worth looking at
     # again — and left in the rider's folder it is worse than useless, because the sweep counts
     # it as read and Ops count it as a trip. A failed move never fails the delete.
     import trash_picture
     moved = trash_picture.move_to_trash(trip_id)
+    _note(picture_moved_to=moved)
     db.delete_trip(trip_id)
     db.refresh_job_status(t["job_id"])
     return {"deleted": trip_id, "picture": moved}
@@ -241,6 +303,7 @@ def _picture_from_drive(trip_id: int, part: int):
 
 @app.post("/api/jobs/{job_id}/commit")
 def commit(job_id: int, force: bool = False):
+    _note("job.approve", f"job:{job_id}", force=force)
     j = db.get_job(job_id)
     if not j:
         raise HTTPException(404, "ไม่พบ job")
@@ -306,6 +369,7 @@ def commit(job_id: int, force: bool = False):
         except excel_writer.ExcelLockedError:
             raise HTTPException(423, f"ไฟล์ {config.EXCEL_PATH.name} ถูกเปิดอยู่ — กรุณาปิดใน Excel ก่อนแล้วลองใหม่")
     db.mark_committed(job_id)
+    _note(rider=j["driver_name"], approved=len(done), trip_ids=[t["id"] for t in done])
     return {"written": len(done), "file": written_file}
 
 
@@ -316,6 +380,7 @@ def spread_dates(job_id: int, all_rows: bool = False):
     if not j:
         raise HTTPException(404, "ไม่พบ job")
     n = pipeline.spread_dates(job_id, j["date_from"], j["date_to"], only_missing=not all_rows)
+    _note("job.spread_dates", f"job:{job_id}", all_rows=all_rows, dated=n)
     return {"dated": n}
 
 
@@ -347,6 +412,7 @@ def close_week(date_from: str, date_to: str = None):
 
     ที่หยุดคือ: การเก็บกวาดรูปซ้ำออกจากโฟลเดอร์ไรเดอร์ และการสร้างรูปส่งลูกค้าใหม่ทับของเดิม
     ที่ยังทำได้: ทุกอย่างที่คนสั่งเอง — ปุ่มบน GitHub, การกดอนุมัติในคิว, การขอไฟล์ Excel"""
+    _note("week.lock", f"week:{date_from}")
     if not db.close_week(date_from, date_to, by="app"):
         return {"ok": True, "already": True}
     return {"ok": True}
@@ -355,6 +421,7 @@ def close_week(date_from: str, date_to: str = None):
 @app.post("/api/weeks/{date_from}/reopen")
 def reopen_week(date_from: str):
     """เปิดสัปดาห์อีกครั้ง — ใช้เมื่อยังต้องแก้ต่อหลังกดปิดไปแล้ว"""
+    _note("week.unlock", f"week:{date_from}")
     return {"ok": db.reopen_week(date_from)}
 
 
@@ -420,6 +487,7 @@ def batches(limit: int = 20):
 
 @app.post("/api/batches/collect")
 def collect_batches_now():
+    _note("batches.collect")
     """Pull in whatever the batch reader has finished, without waiting for the next round.
 
     Runs in the web app, which has no Drive credentials, so the customer images and the Drive
@@ -558,7 +626,9 @@ def close_week_start(date_from: str, mode: str):
             raise HTTPException(409, "ยังปิดไม่ได้ — " + " · ".join(bad))
         if not _plan_fresh(db.close_runs_of_week(date_from)):
             raise HTTPException(409, f"กด 'ดูแผน' ก่อน — ต้องมีแผนที่ทำไม่เกิน {PLAN_FRESH_HOURS} ชม.")
+    _note(f"close.{mode}", f"week:{date_from}")
     run_id = db.create_close_run(date_from, d_to, mode)
+    _note(run=run_id)
     try:
         _dispatch("close-week.yml", {"week_from": date_from, "week_to": d_to, "mode": mode,
                                      "run_id": str(run_id)})
@@ -726,6 +796,7 @@ def _dispatch(workflow, inputs=None):
 @app.post("/api/ingest/trigger")
 def trigger_ingest():
     """Kick the GitHub Actions ingest workflow (workflow_dispatch)."""
+    _note("ingest.trigger")
     return {"ok": _dispatch_ingest(), "url": f"https://github.com/{config.GITHUB_REPO}/actions"}
 
 
@@ -741,6 +812,7 @@ def cron_ingest(min_gap_hours: float = 4.0):
     twice by accident, costs nothing."""
     runs = db.list_ingest_runs(1)
     last = runs[0] if runs else None
+    _note("ingest.cron")
     if last and not last.get("finished_at"):
         return {"ok": False, "skipped": "มีรอบกำลังรันอยู่", "run": last.get("started_at")}
     if last and last.get("started_at"):
@@ -756,6 +828,8 @@ def cron_ingest(min_gap_hours: float = 4.0):
 @app.patch("/api/jobs/{job_id}/rider")
 async def rename_job_rider(job_id: int, body: dict):
     """Rename the rider on a job — for a Drive folder that arrived without a name."""
+    old = db.get_job(job_id)
+    _note("job.rename", f"job:{job_id}", before=old and old.get("driver_name"), after=body.get("name"))
     try:
         r = db.rename_job(job_id, body.get("name"))
     except ValueError as e:
@@ -861,6 +935,7 @@ def export_sync_status():
 
 @app.post("/api/export/sync")
 def export_sync():
+    _note("export.sync")
     if not (config.DRIVE_OAUTH_TOKEN or config.GOOGLE_SERVICE_ACCOUNT) or not config.DRIVE_EXPORTS_FOLDER_ID:
         raise HTTPException(501, "เซิร์ฟเวอร์นี้ยังเขียน Drive ไม่ได้ — ตั้ง DRIVE_OAUTH_TOKEN_JSON และ "
                                  "DRIVE_EXPORTS_FOLDER_ID ใน Render ก่อน (ค่าเดียวกับ GitHub secret) · "
@@ -913,18 +988,21 @@ def approve_passing():
     rows = db.review_queue()
     ok = [r for r in rows if r.get("check_status") == "pass" and not r.get("duplicate_of")
           and r.get("trip_date") and not r.get("seen_in_job")]
-    done, failed = 0, []
+    done, failed, ids = 0, [], []
     for r in ok:
         res = db.approve_trip(r["id"])
         if "error" in res:
             failed.append({"file_name": r["file_name"], "error": res["error"]})
         else:
             done += 1
+            ids.append(r["id"])
+    _note("queue.approve_passing", approved=done, trip_ids=ids, failed=len(failed))
     return {"approved": done, "skipped": len(rows) - len(ok), "failed": failed}
 
 
 @app.post("/api/trips/{trip_id}/approve")
 def approve_trip(trip_id: int):
+    _note("trip.approve", f"trip:{trip_id}")
     r = db.approve_trip(trip_id)
     if "error" in r:
         raise HTTPException(400, r["error"])
@@ -1018,6 +1096,80 @@ def diag_summary():
             "runs": db.list_ingest_runs(10), "issues": db.list_ingest_issues(30)}
 
 
+def _strip_logs(runs):
+    for r in runs:
+        for s in r.get("steps") or []:
+            s.pop("log", None)
+    return runs
+
+
+@app.get("/api/diag/actions")
+def diag_actions(limit: int = 200, since: str = "", target: str = "", action: str = ""):
+    """Who changed what: every non-GET request, newest first (action_log)."""
+    return {"actions": db.list_actions(min(limit, 2000), since or None, target or None, action or None)}
+
+
+@app.get("/api/diag/close-runs")
+def diag_close_runs(week: str = "", limit: int = 20):
+    """Close-week runs, without the step logs; /api/diag/close-runs/{id} has them."""
+    from sqlalchemy import select
+    q = select(db.close_runs).order_by(db.close_runs.c.id.desc()).limit(min(limit, 200))
+    if week:
+        q = q.where(db.close_runs.c.week_from == week)
+    with db.engine.begin() as c:
+        runs = [db._close_run_dict(r) for r in c.execute(q).mappings().all()]
+    return {"runs": _strip_logs(runs)}
+
+
+@app.get("/api/diag/close-runs/{run_id}")
+def diag_close_run(run_id: int):
+    r = db.get_close_run(run_id)
+    if not r:
+        raise HTTPException(404, f"ไม่พบรอบปิด #{run_id}")
+    return r
+
+
+@app.get("/api/diag/runs")
+def diag_runs(limit: int = 50, workflow: str = "", conclusion: str = "", since: str = ""):
+    """GitHub Actions runs archived by archive_runs.py — kept a year, GitHub keeps 90 days."""
+    return {"runs": db.list_workflow_runs(min(limit, 500), workflow or None, conclusion or None, since or None)}
+
+
+@app.get("/api/diag/runs/{run_id}")
+def diag_run(run_id: int):
+    r = db.get_workflow_run(run_id)
+    if not r:
+        raise HTTPException(404, f"ไม่พบรอบ #{run_id} ในที่เก็บ (เก็บวันละครั้ง — รอบที่เพิ่งจบดูบน GitHub)")
+    return r
+
+
+@app.get("/api/diag/support")
+def diag_support():
+    """One look at the whole system for support: what is waiting, what failed, who did what."""
+    from datetime import timedelta
+    week_ago = (datetime.now(db._TZ_BKK).replace(tzinfo=None) - timedelta(days=7)).isoformat(timespec="seconds")
+    runs = db.list_ingest_runs(10)
+    last = runs[0] if runs else None
+    open_b = db.open_batches()
+    from sqlalchemy import select
+    with db.engine.begin() as c:
+        closes = [db._close_run_dict(r) for r in c.execute(
+            select(db.close_runs).order_by(db.close_runs.c.id.desc()).limit(5)).mappings().all()]
+    return {
+        "now": db._now(),
+        "counts": {k: v for k, v in diag_summary().items() if k not in ("runs", "issues")},
+        "ingest": {"last": last, "runs": runs},
+        "issues": db.list_ingest_issues(30),
+        "batches": {"open": len(open_b), "trips": sum(b.get("n_trips") or 0 for b in open_b),
+                    "oldest": open_b[0]["created_at"] if open_b else None},
+        "close_runs": _strip_logs(closes),
+        "failed_runs": db.list_workflow_runs(30, conclusion="failure", since=week_ago),
+        "archived_last": (db.list_workflow_runs(1) or [{}])[0].get("archived_at"),
+        "actions": db.list_actions(40),
+        "closed_weeks": db.closed_weeks(),
+    }
+
+
 @app.get("/api/review-queue/discarded")
 def discarded(limit: int = 200, everything: bool = False):
     """Rows the system dropped by itself as already-counted repeats — kept visible, and undoable.
@@ -1028,11 +1180,13 @@ def discarded(limit: int = 200, everything: bool = False):
 @app.post("/api/review-queue/discarded/clear")
 def clear_discarded():
     """Hide what is in the log today and count again from here. Nothing is deleted."""
+    _note("queue.clear_discarded")
     return {"hidden": db.clear_discarded_log()}
 
 
 @app.post("/api/trips/{trip_id}/restore")
 def restore_trip(trip_id: int):
+    _note("trip.restore", f"trip:{trip_id}")
     if not db.restore_discarded(trip_id):
         raise HTTPException(404, "ไม่พบแถวที่ถูกทิ้ง (หรือถูกกู้คืนไปแล้ว)")
     # ท้ายรอบ ingest ย้ายรูปของแถวที่ถูกพักไปไว้ที่ <สัปดาห์>/_ซ้ำ/ ตั้งแต่ 2026-09-13 กู้คืนแถว

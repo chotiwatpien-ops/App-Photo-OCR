@@ -9,6 +9,7 @@ import Login from './Login.jsx'
 import NewJobForm from './NewJobForm.jsx'
 import ReviewGrid from './ReviewGrid.jsx'
 import ReviewQueue from './ReviewQueue.jsx'
+import Support from './Support.jsx'
 
 const STATUS_TH = {
   running: { label: 'กำลังอ่านรูป', cls: 'bg-amber-100 text-amber-700' },
@@ -96,6 +97,8 @@ export default function App() {
     return () => clearInterval(t)
   }, [activeJob])
 
+  // the vendor's support view: diag key or login, read-only, outside the customer's tabs
+  if (window.location.hash === '#support') return <Support />
   if (!auth) return null
   if (!loggedIn) return <Login onLoggedIn={boot} />
 

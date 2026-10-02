@@ -1,0 +1,40 @@
+name: Archive runs — เก็บ log ของทุก workflow ลงฐานข้อมูล (เก็บ 400 วัน)
+
+# GitHub deletes run logs after 90 days; support needs them for the length of a contract.
+# Once a day this copies every finished run of the last 3 days (facts + the last 16 KB of its
+# log) into the workflow_runs table, which the support page and /api/diag/runs read.
+# Press by hand with days=90 once to take in everything GitHub still has.
+
+on:
+  schedule:
+    - cron: "40 20 * * *"        # 03:40 Bangkok
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "ย้อนกี่วัน (ครั้งแรกใส่ 90 เพื่อเก็บทุกอย่างที่ GitHub ยังมี)"
+        type: string
+        default: "3"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: Archive finished runs
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DAYS: ${{ inputs.days || '3' }}
+          TZ: Asia/Bangkok
+        run: python -u archive_runs.py --days "$DAYS"

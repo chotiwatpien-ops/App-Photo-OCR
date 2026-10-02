@@ -6,7 +6,7 @@ so the database stays small enough for a free Postgres tier.
 """
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import (Column, Float, Integer, LargeBinary, MetaData, String, Table, Text,
+from sqlalchemy import (BigInteger, Column, Float, Integer, LargeBinary, MetaData, String, Table, Text,
                         case, create_engine, delete, func, insert, or_, select, text, update)
 
 from config import DATABASE_URL
@@ -134,6 +134,45 @@ close_runs = Table(
     Column("message", Text),                       # one line for the page: why it stopped, or what it did
     Column("steps", Text),                         # JSON [{key, title, status, summary, log}]
     Column("result", Text),                        # JSON {before, after, audit, closed}
+)
+
+# Every request that changes something, one row each, written by main.py's middleware — so when a
+# customer running the app alone says "the number changed by itself", support can say who
+# changed it, when, from where and what it was before. Insert-only: nothing in the app updates or
+# deletes these rows. `detail` is what the handler adds (the row's values before and after).
+action_log = Table(
+    "action_log", meta,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("at", String(19), nullable=False),
+    Column("method", String(8)),
+    Column("path", Text),
+    Column("query", Text),
+    Column("status", Integer),                 # the HTTP status the request ended with
+    Column("ip", String(64)),
+    Column("user_agent", Text),
+    Column("action", String(64)),              # e.g. trip.edit, trip.delete, week.close
+    Column("target", String(64)),              # e.g. trip:123, job:5, week:2026-09-21
+    Column("detail", Text),                    # JSON
+    Column("ms", Integer),
+)
+
+# GitHub keeps a workflow's log for 90 days; a support contract runs a year. archive_runs.py
+# copies each finished run's facts and the tail of its log here once a day (workflow
+# archive-runs.yml), and drops rows older than RUN_LOG_DAYS.
+workflow_runs = Table(
+    "workflow_runs", meta,
+    Column("id", BigInteger, primary_key=True, autoincrement=False),   # GitHub's run id
+    Column("workflow", Text),
+    Column("event", String(32)),               # schedule | workflow_dispatch | push
+    Column("title", Text),
+    Column("status", String(16)),
+    Column("conclusion", String(16)),          # success | failure | cancelled | skipped
+    Column("started_at", String(19)),
+    Column("finished_at", String(19)),
+    Column("actor", String(64)),
+    Column("url", Text),
+    Column("log_tail", Text),
+    Column("archived_at", String(19)),
 )
 
 pool_sources = Table(
@@ -476,6 +515,82 @@ def closed_weeks():
     with engine.begin() as c:
         return {r["date_from"]: dict(r) for r in
                 c.execute(select(week_locks)).mappings().all()}
+
+
+def log_action(**fields) -> int:
+    """Append one row to action_log. Never raises: a request must not fail because the log did."""
+    import json as _json
+    if "detail" in fields and not isinstance(fields["detail"], (str, type(None))):
+        fields["detail"] = _json.dumps(fields["detail"], ensure_ascii=False, default=str)
+    try:
+        with engine.begin() as c:
+            return c.execute(insert(action_log).values(at=_now(), **fields)).inserted_primary_key[0]
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def list_actions(limit=200, since=None, target=None, action=None):
+    """Newest first. target 'trip:12' matches exactly; action matches its prefix ('trip.')."""
+    import json as _json
+    q = select(action_log).order_by(action_log.c.id.desc()).limit(limit)
+    if since:
+        q = q.where(action_log.c.at >= since)
+    if target:
+        q = q.where(action_log.c.target == target)
+    if action:
+        q = q.where(action_log.c.action.like(f"{action}%"))
+    with engine.begin() as c:
+        rows = [dict(r) for r in c.execute(q).mappings().all()]
+    for r in rows:
+        try:
+            r["detail"] = _json.loads(r["detail"]) if r.get("detail") else None
+        except ValueError:
+            pass
+    return rows
+
+
+RUN_LOG_DAYS = 400
+
+
+def archived_run_ids(ids):
+    """Which of these GitHub run ids are already in workflow_runs."""
+    ids = [int(i) for i in ids]
+    if not ids:
+        return set()
+    with engine.begin() as c:
+        return {r[0] for r in c.execute(select(workflow_runs.c.id).where(workflow_runs.c.id.in_(ids))).all()}
+
+
+def archive_workflow_run(row) -> None:
+    with engine.begin() as c:
+        c.execute(delete(workflow_runs).where(workflow_runs.c.id == int(row["id"])))
+        c.execute(insert(workflow_runs).values(archived_at=_now(), **row))
+
+
+def prune_workflow_runs(days=RUN_LOG_DAYS) -> int:
+    cutoff = (datetime.now(_TZ_BKK).replace(tzinfo=None) - timedelta(days=days)).isoformat(timespec="seconds")
+    with engine.begin() as c:
+        return c.execute(delete(workflow_runs).where(workflow_runs.c.started_at < cutoff)).rowcount
+
+
+def list_workflow_runs(limit=50, workflow=None, conclusion=None, since=None):
+    """Newest first, without the log (get_workflow_run has it)."""
+    cols = [c for c in workflow_runs.c if c.name != "log_tail"]
+    q = select(*cols).order_by(workflow_runs.c.started_at.desc()).limit(limit)
+    if workflow:
+        q = q.where(workflow_runs.c.workflow.like(f"%{workflow}%"))
+    if conclusion:
+        q = q.where(workflow_runs.c.conclusion == conclusion)
+    if since:
+        q = q.where(workflow_runs.c.started_at >= since)
+    with engine.begin() as c:
+        return [dict(r) for r in c.execute(q).mappings().all()]
+
+
+def get_workflow_run(run_id):
+    with engine.begin() as c:
+        r = c.execute(select(workflow_runs).where(workflow_runs.c.id == int(run_id))).mappings().first()
+    return dict(r) if r else None
 
 
 def create_close_run(week_from, week_to, mode) -> int:
