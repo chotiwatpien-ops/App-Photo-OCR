@@ -571,7 +571,8 @@ def duplicate_album(week: str, album: str):
     pairs = [{"kind": c.get("ประเภทการซ้ำ"), "trip_id": c["id"], "twin_id": c.get("twin_id"),
               "rider": c.get("โฟลเดอร์ที่ระบบวาง"), "date": c.get("วันที่งาน"), "code": c.get("รหัสการจอง"),
               "net": c.get("ยอด"), "file": c.get("ไฟล์ที่ซ้ำ"), "twin_file": c.get("ซ้ำกับไฟล์"),
-              "twin_album": c.get("ของไรเดอร์"), "restorable": True}
+              "twin_album": c.get("ของไรเดอร์"), "url": c.get("ลิงก์รูป"), "twin_url": c.get("twin_url"),
+              "restorable": True}
              for c in d["cases"] if c.get("ไรเดอร์ผู้ส่ง") == album]
     pairs += [{"kind": p.get("ประเภทการซ้ำ") or "ไฟล์เดิมส่งซ้ำ", "pre": True, "file": p.get("ไฟล์ที่ซ้ำ"),
                "twin_file": p.get("ซ้ำกับไฟล์"), "twin_album": p.get("ของอัลบั้ม"), "link": p.get("ลิงก์รูป"),

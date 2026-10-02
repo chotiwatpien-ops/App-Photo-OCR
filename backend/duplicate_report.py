@@ -101,6 +101,7 @@ def build(rows, twins):
                                             or ALBUM.match(t.get("file_name") or ""))),
             "สัปดาห์ของต้นฉบับ": t.get("date_from"),
             "twin_id": t.get("id"),          # the web shows the two pictures side by side; not a sheet column
+            "twin_url": t.get("source_url"),  # and falls back to Drive in the viewer's own browser
             "รูปที่ส่งลูกค้า": t.get("customer_image"),
             "ประเภทการซ้ำ": kind_of(r, twin),
             "ลิงก์รูป": r.get("source_url"),

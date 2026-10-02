@@ -39,6 +39,7 @@ def trip(**kw):
 
 
 first = trip(file_name="4W-Taxi Meen ชุด 1_1+2_฿80.jpg", status="done", committed=1, booking_code="A-5KX19P",
+             source_url="https://drive.google.com/file/d/ORIG1/view",
              source_album="4W-Taxi Meen ชุด 1", net_earnings=80, trip_date="2026-09-29")
 again = trip(file_name="4W-Taxi Meen ชุด 2_5+6_฿80.jpg", status="duplicate", committed=0, booking_code="A-5KX19P",
              source_album="4W-Taxi Meen ชุด 2", net_earnings=80, trip_date="2026-09-29", duplicate_of=first)
@@ -56,6 +57,8 @@ read = [p for p in det["pairs"] if not p.get("pre")]
 pre = [p for p in det["pairs"] if p.get("pre")]
 check("รายละเอียด: ใบที่อ่านแล้ว 1 · ไฟล์เดิมส่งซ้ำ 1", len(read) == 1 and len(pre) == 1)
 check("❗ ใบที่อ่านแล้วรู้ว่าซ้ำกับแถวไหน (ไว้โชว์รูปคู่กัน)", read[0]["trip_id"] == again and read[0]["twin_id"] == first)
+check("❗ มีลิงก์ Drive ของใบเดิม ไว้ให้เบราว์เซอร์ดึงรูปเองเมื่อเซิร์ฟเวอร์ดึงไม่ได้",
+      read[0]["twin_url"] == "https://drive.google.com/file/d/ORIG1/view")
 check("บอกเลขจองและอัลบั้มของใบเดิม", read[0]["code"] == "A-5KX19P" and read[0]["twin_album"] == "4W-Taxi Meen ชุด 1")
 check("ใบที่อ่านแล้วกดเก็บไว้ได้ · ไฟล์เดิมที่ไม่ได้อ่านกดไม่ได้", read[0]["restorable"] and not pre[0]["restorable"])
 check("ไฟล์เดิมส่งซ้ำมีลิงก์ไป Drive", pre[0]["link"] == "https://drive.google.com/file/d/D1/view")

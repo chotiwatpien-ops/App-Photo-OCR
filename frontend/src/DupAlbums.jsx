@@ -39,15 +39,30 @@ function Tile({ label, value, sub, tone = 'text-ink' }) {
   )
 }
 
-function Thumb({ src, href, label, empty = 'ไม่ได้อ่าน (ตัดก่อนส่งให้ AI)' }) {
-  const [broken, setBroken] = useState(false)
-  const body = src && !broken
-    ? <img src={src} alt={label} loading="lazy" onError={() => setBroken(true)}
-        className="w-full h-28 object-cover object-top rounded-lg border border-line bg-ground" />
-    : <span className="w-full h-28 rounded-lg border border-line bg-ground flex items-center justify-center text-xs text-muted text-center px-2">{src ? 'เปิดรูปไม่ได้' : empty}</span>
+const driveId = (url) => (url || '').match(/\/d\/([\w-]+)|[?&]id=([\w-]+)/)?.slice(1).find(Boolean)
+
+/** A picture from the server, else straight from Drive in the viewer's own browser (a person
+ *  who can open the album can see its pictures even when the server cannot reach Drive), else
+ *  a link to open it there. */
+function Thumb({ src, drive, label, empty = 'ไม่ได้อ่าน (ตัดก่อนส่งให้ AI)' }) {
+  const id = driveId(drive)
+  const [step, setStep] = useState(src ? 'server' : id ? 'drive' : 'none')
+  const url = step === 'server' ? src : step === 'drive' ? `https://drive.google.com/thumbnail?id=${id}&sz=w600` : null
+  const next = () => setStep((s) => (s === 'server' && id ? 'drive' : 'none'))
+  const open = id ? `https://drive.google.com/file/d/${id}/view` : src
   return (
     <figure className="m-0 flex flex-col gap-1">
-      {href ? <a href={href} target="_blank" rel="noreferrer">{body}</a> : body}
+      {url ? (
+        <a href={open} target="_blank" rel="noreferrer">
+          <img src={url} alt={label} loading="lazy" referrerPolicy="no-referrer" onError={next}
+            className="w-full h-28 object-cover object-top rounded-lg border border-line bg-ground" />
+        </a>
+      ) : (
+        <span className="w-full h-28 rounded-lg border border-line bg-ground flex flex-col items-center justify-center gap-1 text-xs text-muted text-center px-2">
+          {src || id ? 'แสดงรูปในหน้านี้ไม่ได้' : empty}
+          {id && <a href={open} target="_blank" rel="noreferrer" className="text-accent hover:underline">เปิดใน Drive</a>}
+        </span>
+      )}
       <figcaption className="text-xs text-muted text-center">{label}</figcaption>
     </figure>
   )
@@ -58,9 +73,9 @@ function Pair({ p, onKeep, busy }) {
   return (
     <li className="border border-line rounded-xl p-3 flex flex-col gap-2.5">
       <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-center">
-        <Thumb label="ใบใหม่" src={p.pre ? null : `/api/trips/${p.trip_id}/image`} href={p.pre ? p.link : `/api/trips/${p.trip_id}/image`} />
+        <Thumb label="ใบใหม่" src={p.pre ? null : `/api/trips/${p.trip_id}/image`} drive={p.pre ? p.link : p.url} />
         <span className="text-sm text-muted" aria-hidden="true">=</span>
-        <Thumb label="ใบเดิม" src={p.twin_id ? `/api/trips/${p.twin_id}/image` : null} href={p.twin_id ? `/api/trips/${p.twin_id}/image` : null} />
+        <Thumb label="ใบเดิม" src={p.twin_id ? `/api/trips/${p.twin_id}/image` : null} drive={p.twin_url} empty="ไม่พบใบเดิม" />
       </div>
       <div className="text-sm">
         {!p.pre && <p className="font-medium">{[p.rider, day(p.date), p.net != null ? `฿${fmt(p.net)}` : ''].filter(Boolean).join(' · ')}</p>}
