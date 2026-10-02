@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { api } from './api.js'
+import Icon from './Icon.jsx'
 
 export default function NewJobForm({ onCreated }) {
   const [driverName, setDriverName] = useState('')
@@ -41,69 +42,53 @@ export default function NewJobForm({ onCreated }) {
     }
   }
 
+  const box = 'min-h-11 w-full border border-line rounded-lg px-3 text-[15px] bg-white focus:border-accent outline-none'
   return (
-    <section className="bg-white rounded-xl shadow-sm border border-slate-200 p-5 h-fit">
-      <h2 className="font-semibold mb-4">งานใหม่</h2>
-
-      <label className="block text-sm text-slate-600 mb-1">ชื่อไรเดอร์ (ตามที่จะลง Excel)</label>
-      <input
-        value={driverName}
-        onChange={(e) => setDriverName(e.target.value)}
-        placeholder="เช่น กิตติพงศ์ สินประเสริฐ"
-        className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-400"
-      />
-
-      <div className="grid grid-cols-2 gap-3 mb-3">
-        <div>
-          <label className="block text-sm text-slate-600 mb-1">ตั้งแต่วันที่</label>
-          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
-        </div>
-        <div>
-          <label className="block text-sm text-slate-600 mb-1">ถึงวันที่</label>
-          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
-            className="w-full border border-slate-300 rounded-lg px-3 py-2 text-sm" />
-        </div>
+    <div className="flex flex-col gap-3">
+      <label className="flex flex-col gap-1 text-sm text-ink-soft">ชื่อไรเดอร์ (ตามที่จะลงในไฟล์)
+        <input value={driverName} onChange={(e) => setDriverName(e.target.value)} placeholder="เช่น กิตติพงศ์ ส." className={box} />
+      </label>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="flex flex-col gap-1 text-sm text-ink-soft">ตั้งแต่วันที่
+          <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className={box} />
+        </label>
+        <label className="flex flex-col gap-1 text-sm text-ink-soft">ถึงวันที่
+          <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className={box} />
+        </label>
       </div>
 
-      <div
+      <button type="button"
         onClick={() => inputRef.current?.click()}
         onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
         onDragLeave={() => setDragging(false)}
         onDrop={(e) => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files) }}
-        className={`border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition mb-3
-          ${dragging ? 'border-blue-400 bg-blue-50' : 'border-slate-300 hover:border-slate-400'}`}
-      >
-        <p className="text-3xl mb-1">🖼️</p>
-        <p className="text-sm text-slate-600">ลากรูปมาวาง หรือคลิกเพื่อเลือก</p>
-        <p className="text-xs text-slate-400 mt-1">รองรับ .jpg .png .webp เลือกทั้งโฟลเดอร์ได้</p>
-        <input
-          ref={inputRef} type="file" multiple accept="image/*" className="hidden"
-          onChange={(e) => { addFiles(e.target.files); e.target.value = '' }}
-        />
-      </div>
+        className={`border-2 border-dashed rounded-xl p-6 text-center flex flex-col items-center gap-1 transition
+          ${dragging ? 'border-accent bg-accent-bg' : 'border-line hover:border-ink-soft'}`}>
+        <Icon name="download" size={26} className="text-ink-soft rotate-180" />
+        <span className="text-sm text-ink-soft">ลากรูปมาวาง หรือกดเพื่อเลือก</span>
+        <span className="text-xs text-muted">รองรับ .jpg .png .webp เลือกหลายรูปพร้อมกันได้</span>
+      </button>
+      <input ref={inputRef} type="file" multiple accept="image/*" className="hidden"
+        onChange={(e) => { addFiles(e.target.files); e.target.value = '' }} />
 
       {files.length > 0 && (
-        <div className="mb-3 text-sm">
+        <div className="text-sm">
           <div className="flex items-center justify-between mb-1">
-            <span className="text-slate-600">เลือกแล้ว {files.length} รูป</span>
-            <button onClick={() => setFiles([])} className="text-xs text-red-500 hover:underline">ล้างทั้งหมด</button>
+            <span className="text-ink-soft">เลือกแล้ว {files.length} รูป</span>
+            <button onClick={() => setFiles([])} className="min-h-9 text-danger-ink hover:underline">ล้างทั้งหมด</button>
           </div>
-          <div className="max-h-32 overflow-y-auto border border-slate-200 rounded-lg p-2 text-xs text-slate-500 space-y-0.5">
+          <div className="max-h-32 overflow-y-auto border border-line rounded-lg p-2 text-xs text-muted space-y-0.5">
             {files.map((f) => <div key={f.name}>{f.name}</div>)}
           </div>
         </div>
       )}
 
-      {error && <p className="text-sm text-red-600 mb-3">⚠️ {error}</p>}
+      {error && <p role="alert" className="text-sm text-danger-ink">{error}</p>}
 
-      <button
-        onClick={submit}
-        disabled={submitting}
-        className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white rounded-lg py-2.5 text-sm font-medium transition"
-      >
-        {submitting ? 'กำลังอัปโหลด...' : `เริ่มอ่านข้อมูล (${files.length} รูป)`}
+      <button onClick={submit} disabled={submitting || files.length === 0}
+        className="min-h-11 w-full sm:w-auto sm:self-start px-6 bg-accent hover:bg-accent-hover text-white rounded-lg text-[15px] font-semibold disabled:opacity-40">
+        {submitting ? 'กำลังอัปโหลด…' : `เริ่มอ่านรูป (${files.length} รูป)`}
       </button>
-    </section>
+    </div>
   )
 }

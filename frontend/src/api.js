@@ -1,10 +1,25 @@
+// Errors the person can act on. The server's own message is kept when it sent one (they are
+// written in Thai for people); a bare status or a dropped connection is said in plain words.
+const PLAIN = {
+  413: 'ไฟล์ใหญ่เกินไป ลองแบ่งส่งทีละน้อย',
+  429: 'มีคนใช้งานพร้อมกันมาก รอสักครู่แล้วลองใหม่',
+  500: 'ระบบขัดข้องชั่วคราว ลองใหม่อีกครั้ง ถ้ายังไม่ได้ให้แจ้งผู้ดูแลระบบ',
+  502: 'ระบบกำลังเริ่มทำงานหรือขัดข้องชั่วคราว รอสักครู่แล้วลองใหม่',
+  503: 'ระบบกำลังเริ่มทำงาน รอสักครู่แล้วลองใหม่',
+  504: 'ระบบตอบช้าเกินไป ลองใหม่อีกครั้ง',
+}
+
+const fetch = (...args) => window.fetch(...args).catch(() => {
+  throw new Error('เชื่อมต่อระบบไม่ได้ ตรวจอินเทอร์เน็ตแล้วลองใหม่')
+})
+
 async function handle(res) {
   if (!res.ok) {
-    let msg = `HTTP ${res.status}`
+    let msg = PLAIN[res.status] || (res.status >= 500 ? PLAIN[500] : `ทำไม่สำเร็จ (รหัส ${res.status})`)
     try {
       const j = await res.json()
-      msg = j.detail || msg
-    } catch { /* keep default */ }
+      if (typeof j.detail === 'string') msg = j.detail
+    } catch { /* keep the plain one */ }
     if (res.status === 401 && msg === 'login_required') {
       window.dispatchEvent(new Event('pocr:login-required'))
     }

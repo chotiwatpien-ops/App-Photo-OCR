@@ -12,6 +12,7 @@ import NewJobForm from './NewJobForm.jsx'
 import ReviewGrid from './ReviewGrid.jsx'
 import ReviewQueue from './ReviewQueue.jsx'
 import Support from './Support.jsx'
+import Tools from './Tools.jsx'
 
 const STATUS_TH = {
   running: { label: 'กำลังอ่านรูป', cls: 'bg-amber-100 text-amber-700' },
@@ -99,6 +100,12 @@ export default function App() {
     return () => clearInterval(t)
   }, [activeJob])
 
+  useEffect(() => {
+    const names = { overview: 'ภาพรวม', queue: 'คิวตรวจ', dups: 'งานซ้ำ', data: 'ข้อมูล', close: 'ปิดสัปดาห์', tools: 'เครื่องมือเพิ่มเติม' }
+    const here = activeJob ? activeJob.driver_name : names[view]
+    document.title = here ? `${here} · Rider Photo OCR` : 'Rider Photo OCR'
+  }, [view, activeJob])
+
   // the vendor's support view: diag key or login, read-only, outside the customer's tabs
   if (window.location.hash === '#support') return <Support />
   if (!auth) return null
@@ -110,8 +117,8 @@ export default function App() {
     ['overview', 'ภาพรวม', 'overview'], ['queue', 'คิวตรวจ', 'queue'], ['dups', 'งานซ้ำ', 'dups'],
     ['data', 'ข้อมูล', 'data'], ['close', 'ปิดสัปดาห์', 'close'],
   ]
-  // the screens from before the redesign stay reachable here until each has a new home
-  const LEGACY = [['home', 'การอ่านรูปและสัปดาห์'], ['dashboard', 'Dashboard (เดิม)']]
+  // what is needed now and then lives behind the gear, off the five tabs
+  const MORE = [['tools', 'เครื่องมือเพิ่มเติม'], ['home', 'หน้าจอเดิม: การอ่านรูป'], ['dashboard', 'หน้าจอเดิม: Dashboard']]
   const go = (k) => { setActiveJob(null); setView(k); window.scrollTo(0, 0) }
   const logout = () => api.logout().then(() => { setActiveJob(null); boot() })
   const badge = (k) => (k === 'queue' && queueCount ? queueCount : 0)
@@ -147,8 +154,7 @@ export default function App() {
               <summary className="list-none cursor-pointer w-10 h-10 rounded-lg flex items-center justify-center text-ink-soft hover:bg-ground"
                 aria-label="เมนูเพิ่มเติม"><Icon name="tools" /></summary>
               <div className="absolute right-0 mt-2 w-60 bg-white border border-line rounded-xl shadow-lg py-2 z-30">
-                <p className="px-4 py-1 text-xs text-muted">หน้าจอเดิม (กำลังย้ายเข้าแท็บใหม่)</p>
-                {LEGACY.map(([k, label]) => (
+                {MORE.map(([k, label]) => (
                   <button key={k} onClick={(e) => { e.currentTarget.closest('details').open = false; go(k) }}
                     className="w-full text-left px-4 py-2.5 text-sm hover:bg-ground">{label}</button>
                 ))}
@@ -183,6 +189,8 @@ export default function App() {
             onBack={() => { setActiveJob(null); refreshJobs() }}
             onJobUpdate={setActiveJob}
           />
+        ) : view === 'tools' ? (
+          <Tools onGo={go} onJobCreated={(job) => { setActiveJob(job); refreshJobs() }} />
         ) : view === 'overview' ? (
           <Overview onGo={go} />
         ) : view === 'home' ? (
