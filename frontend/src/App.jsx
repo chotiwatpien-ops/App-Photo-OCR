@@ -192,7 +192,7 @@ export default function App() {
         ) : view === 'data' ? (
           <DataView onOpenJob={openJob} />
         ) : view === 'queue' ? (
-          <ReviewQueue onOpenJob={openJob} />
+          <ReviewQueue onOpenJob={openJob} onCount={setQueueCount} />
         ) : view === 'dups' ? (
           <DupAlbums />
         ) : view === 'close' ? (
