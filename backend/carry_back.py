@@ -32,6 +32,7 @@ from sqlalchemy import select
 import db
 from carry_excess import REPLACED_DIR, next_week, next_week_folder
 from distribute import NUM_PREFIX, bare, folder_label
+from pipeline import car_is_standard
 
 SERVICE_OF = {"2 W Saver": "Saver Bike", "2 W Standard": "Standard Bike", "4 W Standard": "Standard Car"}
 FROM_JOB_RE = re.compile(r"เดิม job #(\d+)")
@@ -52,7 +53,7 @@ def count_by_service(d_from, d_to):
         return Counter()
     t = db.trips.c
     with db.engine.begin() as c:
-        return Counter(r[0] for r in c.execute(
+        return Counter(car_is_standard((r[0] or "").strip()) for r in c.execute(
             select(t.service_type).where(t.job_id.in_(jobs), t.status == "done")).all())
 
 
@@ -71,7 +72,7 @@ def candidates(d_from, d_to, group):
             .where(t.job_id.in_(list(jobs)), t.status == "done")).mappings().all()]
     mark, want = carried_note(n_from, n_to), SERVICE_OF.get(group)
     out = [r for r in rows if mark in (r.get("note") or "")
-           and (want is None or (r.get("service_type") or "").strip() == want)]
+           and (want is None or car_is_standard((r.get("service_type") or "").strip()) == want)]
 
     def slip_day(r):
         m = SLIP_DAY_RE.search(r.get("note") or "")

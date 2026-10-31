@@ -2243,6 +2243,7 @@ def week_scorecard(date_from, date_to, target=None):
     big green figure on the top half must equal the fare plus the incentives printed on the
     bottom one, which held for 4,399 of W37's 4,410 rows and failed on ten mis-paired ones."""
     import config as _cfg
+    from pipeline import car_is_standard
     target = _cfg.WEEKLY_TARGET_PER_GROUP if target is None else target
     t = trips.c
     with engine.begin() as c:
@@ -2262,7 +2263,9 @@ def week_scorecard(date_from, date_to, target=None):
             out["pending"] += 1
         if r["status"] != "done":
             continue
-        svc = (r["service_type"] or "?").strip()
+        # one car product: an old 'Saver Car' row counts as Standard Car, as week_group_counts
+        # and the overview count it (Fiat 2026-10-31: "Saver Car ให้นับเป็น Standard Car")
+        svc = car_is_standard((r["service_type"] or "?").strip())
         if (r["driver_name"] or "") == HOLDING_RIDER:
             # read, but still in the week's _พร้อมอ่าน: on nobody's bill yet and never pictured.
             # W38 counted 15 of them as the car group over target and 19 as unpictured rows, and

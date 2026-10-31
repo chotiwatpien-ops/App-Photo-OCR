@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react'
 import { api, exportUrl } from './api.js'
 
-const SERVICE_OPTIONS = ['Saver Bike', 'Standard Bike', 'Saver Car', 'Standard Car']
+// one car product: Saver Car counts as Standard Car (Fiat 2026-10-31), so it is no longer offered
+const SERVICE_OPTIONS = ['Saver Bike', 'Standard Bike', 'Standard Car']
 const PAYMENT_OPTIONS = ['CASH', 'GRAB PAY', 'QR PAY', 'UNKNOWN']
 const PROVINCE_OPTIONS = ['BKK', 'NBI', 'PTE', 'SPK', 'SKN', 'NPT', 'CBI', 'AYA', 'OTHER']
 

@@ -70,8 +70,8 @@ with db.engine.begin() as c:
 card = db.week_scorecard(*W38, target=TARGET)
 check("❗ แถวในกองพักไม่ถูกนับว่ากลุ่มรถยนต์เกินเป้า", "Standard Car" not in card["over"])
 check("❗ แถวในกองพักไม่ถูกนับว่าไม่มีรูปส่งลูกค้า", card["no_picture"] == 0)
-check("แถวในกองพักถูกนับแยกตามประเภทงาน",
-      card["staged"] == {"Standard Car": 3, "EV": 1, "Saver Bike": 1, "Scooter Delivery": 1})
+check("แถวในกองพักถูกนับแยกตามประเภทงาน (EV นับเป็น Standard Car — รถยนต์มีสินค้าเดียว)",
+      card["staged"] == {"Standard Car": 4, "Saver Bike": 1, "Scooter Delivery": 1})
 check("ยอดที่ลงโฟลเดอร์แล้วยังนับเหมือนเดิม", card["by_service"] == {"Standard Car": 2})
 
 # --- the plan --------------------------------------------------------------------------------

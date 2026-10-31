@@ -34,14 +34,15 @@ from sqlalchemy import select
 import db
 import redate_to_week
 from distribute import NUM_PREFIX, bare, folder_label
+from pipeline import car_is_standard
 
 REPLACED_DIR = "_แทนที่แล้ว"
 GROUPS = ("2 W Saver", "2 W Standard", "4 W Standard")
 # What the customer counts, one service per group. The count is the row's Service Type, not the
-# folder its job sits in (Fiat, 2026-09-16: "นับตาม Service Type") — W37 held 20 'Saver Car' rows
-# in 4 W Standard, which the folder count read as 1,490 against a target of 1,470, and run #8
-# carried 20 real Standard Car trips out of a week that was exactly on target. A service nobody
-# buys (Saver Car has no group of its own) is counted apart and never carried.
+# folder its job sits in (Fiat, 2026-09-16: "นับตาม Service Type"). The customer buys one car
+# product, so an old 'Saver Car' row (or EV, Women driver) counts and is carried as Standard Car
+# (Fiat 2026-10-31: "Saver Car ให้นับเป็น Standard Car") — counted apart, it made the room count
+# and this one disagree, and the close moved a week's own Standard Car work out while it was short.
 SERVICE_OF = {"2 W Saver": "Saver Bike", "2 W Standard": "Standard Bike", "4 W Standard": "Standard Car"}
 
 
@@ -87,7 +88,7 @@ def excess_rows(d_from, d_to, target, groups=GROUPS):
             .where(t.job_id.in_(list(jobs)), t.status == "done")).mappings().all()]
     per, other = defaultdict(list), Counter()
     for r in rows:
-        want = (r.get("service_type") or "").strip()
+        want = car_is_standard((r.get("service_type") or "").strip())
         group = next((g for g in groups if SERVICE_OF.get(g) == want), None)
         if group is None:
             # no service on the row (nothing was read) falls back to the folder it is filed in,
