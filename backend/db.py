@@ -937,7 +937,38 @@ def void_trips(ids, why: str) -> int:
                       .values(status="voided", committed=0,
                               note=func.coalesce(trips.c.note + " | ", "") + why))
         _release_dup_flags(c, list(ids))
+        _release_parked_copies(c, list(ids))
         return r.rowcount
+
+
+def _release_parked_copies(c, voided_ids) -> int:
+    """Copies parked as repeats of a row that is now voided go back to the queue.
+
+    _release_dup_flags frees rows still waiting; a copy the round already parked
+    (status='duplicate') kept that status, and when the voided row was the only live copy of its
+    code in the week the trip was billed nowhere and shown to nobody — often the later, correct
+    pairing (verify-duplicate-guard, 2026-10-31). A parked copy is matched by booking code in the
+    same week, since the round parks against a twin without recording it. When another live copy
+    of the code is still in the week, the parked ones stay parked."""
+    j = trips.join(jobs, jobs.c.id == trips.c.job_id)
+    gone = {(code, wf, wt) for code, wf, wt in c.execute(
+        select(trips.c.booking_code, jobs.c.date_from, jobs.c.date_to).select_from(j)
+        .where(trips.c.id.in_(voided_ids), trips.c.booking_code.isnot(None))).all()}
+    n = 0
+    for code, wf, wt in gone:
+        week_jobs = select(jobs.c.id).where(jobs.c.date_from == wf, jobs.c.date_to == wt)
+        live = c.execute(select(func.count()).select_from(trips)
+                         .where(trips.c.booking_code == code, trips.c.status == "done",
+                                trips.c.job_id.in_(week_jobs))).scalar()
+        if live:
+            continue
+        n += c.execute(update(trips)
+                       .where(trips.c.booking_code == code, trips.c.status == "duplicate",
+                              trips.c.job_id.in_(week_jobs))
+                       .values(status="done", committed=0, duplicate_of=None,
+                               note=func.coalesce(trips.c.note + " | ", "")
+                               + "กลับเข้าคิว: แถวที่เคยซ้ำด้วยถูก void")).rowcount or 0
+    return n
 
 
 def _release_dup_flags(c, voided_ids) -> int:
@@ -1061,8 +1092,14 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
             return r["net_earnings"] if r["net_earnings"] is not None else r["base_fare"]
 
         kept = []
+        # `seen` holds codes approved BEFORE this round; two copies waiting side by side (e.g. both
+        # freed when the row they repeated was voided) would otherwise be approved together. The
+        # second waits; the next round parks it against the first (discard_settled_duplicates).
+        batch, batch_short = set(), set()
         for tid in ok_ids:
             r = by_id[tid]
+            if _is_repeat(r, batch, batch_short):
+                continue
             a = _amount(r)
             twin = None
             if r["kind"] == "bottom" and not r["booking_code"] and tid not in paired and a is not None:
@@ -1072,6 +1109,11 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
                              and abs(_amount(by_id[o]) - a) <= 0.01), None)
             if twin is None:
                 kept.append(tid)
+                if r["booking_code"]:
+                    if len(r["booking_code"]) >= DUP_FULL_CODE:
+                        batch.add(r["booking_code"])
+                    else:
+                        batch_short.add((r["booking_code"], r["base_fare"], r["trip_time"]))
                 continue
             msg = f"ครึ่งล่างของ {twin['file_name']} ที่อนุมัติในรอบเดียวกัน (ยอด {a:,.0f} ตรงกัน) — ไม่นับซ้ำ"
             c.execute(update(trips).where(trips.c.id == tid)
@@ -1898,17 +1940,20 @@ def approve_trip(trip_id) -> dict:
             return {"error": "ยังอ่านไม่เสร็จ"}
         if not t["trip_date"]:
             return {"error": "ยังไม่ได้ระบุวันที่"}
-        # money guard: this rider already has this trip approved — approving it again is the
-        # exact path that put 52 duplicate rows in the workbook
+        # money guard: this trip is already approved in the same week — approving it again is the
+        # exact path that put 52 duplicate rows in the workbook. Any rider, as the round counts a
+        # repeat (customer 2026-09-14); it checked the same rider only until verify-duplicate-guard
+        # showed rider A's copy approved by hand next to rider B's (2026-10-31). This guard is also
+        # what keeps อนุมัติทุกแถวที่ตัวเลขผ่าน from approving two copies in one press.
         if t["booking_code"]:
-            jm = c.execute(select(jobs.c.driver_name, jobs.c.date_from)
+            jm = c.execute(select(jobs.c.date_from, jobs.c.date_to)
                            .where(jobs.c.id == t["job_id"])).mappings().first()
             twin = c.execute(select(trips.c.file_name)
                              .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
                              .where(trips.c.committed == 1,
                                     trips.c.booking_code == t["booking_code"],
-                                    jobs.c.driver_name == jm["driver_name"],
                                     jobs.c.date_from == jm["date_from"],
+                                    jobs.c.date_to == jm["date_to"],
                                     trips.c.id != trip_id).limit(1)).scalar()
             if twin:
                 return {"error": f"เที่ยวนี้อนุมัติไปแล้วในสัปดาห์เดียวกัน ({twin}) — "

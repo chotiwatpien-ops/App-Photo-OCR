@@ -84,8 +84,15 @@ def excess_rows(d_from, d_to, target, groups=GROUPS):
     with db.engine.begin() as c:
         rows = [dict(r) for r in c.execute(
             select(t.id, t.job_id, t.file_name, t.trip_date, t.trip_time, t.customer_image,
-                   t.note, t.service_type)
+                   t.note, t.service_type, t.booking_code)
             .where(t.job_id.in_(list(jobs)), t.status == "done")).mappings().all()]
+        # booking codes next week already bills: a row carrying one of them would be counted twice
+        # there (verify-duplicate-guard, 2026-10-31) — it stays, and the next row in line goes
+        n_from, n_to = next_week(d_from, d_to)
+        billed_next = {code for (code,) in c.execute(
+            select(t.booking_code).select_from(db.trips.join(db.jobs, db.jobs.c.id == t.job_id))
+            .where(db.jobs.c.date_from == n_from, db.jobs.c.date_to == n_to, t.status == "done",
+                   t.committed == 1, t.booking_code.isnot(None))).all()}
     per, other = defaultdict(list), Counter()
     for r in rows:
         want = car_is_standard((r.get("service_type") or "").strip())
@@ -107,7 +114,10 @@ def excess_rows(d_from, d_to, target, groups=GROUPS):
             continue
         ranked = sorted(per[g], key=lambda r: (r.get("trip_date") or "", r.get("trip_time") or "", r["id"]),
                         reverse=True)
-        out[g] = [(r, jobs[r["job_id"]]) for r in ranked[:n]]
+        movable = [r for r in ranked if r.get("booking_code") not in billed_next]
+        if len(movable) < n:
+            counts[f"(ซ้ำกับสัปดาห์หน้า ยกไม่ได้) {g}"] = n - len(movable)
+        out[g] = [(r, jobs[r["job_id"]]) for r in movable[:n]]
     return out, counts, jobs
 
 
@@ -238,6 +248,8 @@ def main(argv=None):
     for k, v in sorted(counts.items()):
         if k.startswith("(ไม่มีกลุ่ม)"):
             print(f"    {k:<14} มี {v:>5}   ไม่มีเป้า — ไม่ยก ปล่อยไว้ในสัปดาห์นี้")
+        elif k.startswith("(ซ้ำกับสัปดาห์หน้า"):
+            print(f"    {k}: {v} แถว — สัปดาห์หน้านับรหัสการจองนี้แล้ว ยกไปจะนับซ้ำ จึงยังเกินเป้าอยู่")
     if not excess:
         print("ไม่มีกลุ่มไหนเกิน")
         return 0
