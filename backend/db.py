@@ -738,34 +738,6 @@ def delete_jobs(job_ids) -> list:
     return out
 
 
-def dedupe_approved_trips() -> list:
-    """Same booking code approved more than once for the SAME rider: keep the earliest row,
-    delete the extras (and any half merged into them). Returns a log of what went."""
-    removed = []
-    with engine.begin() as c:
-        dups = c.execute(
-            select(trips.c.booking_code, jobs.c.driver_name, jobs.c.date_from)
-            .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
-            .where(trips.c.committed == 1, trips.c.booking_code.isnot(None))
-            .group_by(trips.c.booking_code, jobs.c.driver_name, jobs.c.date_from)
-            .having(func.count() > 1)).all()
-        for code, driver, week in dups:
-            rows = c.execute(
-                select(trips.c.id, trips.c.job_id, trips.c.file_name, trips.c.net_earnings)
-                .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
-                .where(trips.c.committed == 1, trips.c.booking_code == code,
-                       jobs.c.driver_name == driver, jobs.c.date_from == week)
-                .order_by(trips.c.id)).mappings().all()
-            for r in rows[1:]:  # keep the first, drop the rest
-                kids = c.execute(delete(trips).where(trips.c.merged_into == r["id"])).rowcount
-                c.execute(delete(ingested_files).where(ingested_files.c.trip_id == r["id"]))
-                c.execute(delete(trips).where(trips.c.id == r["id"]))
-                removed.append({"driver_name": driver, "code": code, "trip_id": r["id"],
-                                "job_id": r["job_id"], "file_name": r["file_name"],
-                                "net": r["net_earnings"] or 0, "merged_children": kids})
-    return removed
-
-
 def mark_orphan_bottom_duplicates(job_id) -> int:
     """A code-less lower half that never paired is either (a) the other half of a trip already
     counted — its amount matches an approved row in the same job, so flag it as a duplicate for
@@ -1626,7 +1598,7 @@ def trips_from_album(prefix):
             select(trips.c.id, trips.c.job_id, trips.c.file_name, trips.c.status,
                    trips.c.committed, jobs.c.driver_name, jobs.c.category)
             .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
-            .where(trips.c.file_name.like(f"{prefix}%"))).mappings().all()
+            .where(trips.c.file_name.startswith(prefix, autoescape=True))).mappings().all()
     return [dict(r) for r in rows]
 
 

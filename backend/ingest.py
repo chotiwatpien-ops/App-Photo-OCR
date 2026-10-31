@@ -599,9 +599,9 @@ def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True, force=Fals
     return errors, failed
 
 
-def cleanup(drive, exports_id, delete_job_ids=None, dedupe=False, delete_trip_ids=None) -> int:
-    """User-ordered data cleanup: drop whole jobs (duplicate manual uploads) and/or remove
-    approved rows that repeat a booking code for the same rider. Rewrites the workbook after."""
+def cleanup(drive, exports_id, delete_job_ids=None, delete_trip_ids=None) -> int:
+    """User-ordered data cleanup: drop whole jobs (duplicate manual uploads) and/or specific rows
+    the team has checked by picture. Rewrites the workbook after."""
     if delete_job_ids:
         for r in db.delete_jobs(delete_job_ids):
             if r["found"]:
@@ -619,15 +619,6 @@ def cleanup(drive, exports_id, delete_job_ids=None, dedupe=False, delete_trip_id
             else:
                 log(f"   (ไม่พบแถว #{r['id']})")
         log(f"🧹 ลบแถวที่สั่งไว้ {sum(1 for r in gone if r['found'])} แถว (฿{baht:,.0f})")
-    if dedupe:
-        removed = db.dedupe_approved_trips()
-        baht = sum(r["net"] for r in removed)
-        for r in removed[:60]:
-            log(f"🗑 ซ้ำ: {r['driver_name']} {r['file_name']} (job #{r['job_id']}, "
-                f"code {r['code']}, ฿{r['net']:g})")
-        if len(removed) > 60:
-            log(f"   ... และอีก {len(removed) - 60} แถว")
-        log(f"🧹 ลบแถวที่อนุมัติซ้ำของไรเดอร์คนเดียวกัน {len(removed)} แถว (฿{baht:,.0f})")
     rows = db.query_trips(committed_only=True)
     try:
         drive.upload_xlsx(exports_id, "Rider Trips.xlsx", excel_writer.build_workbook(rows))
@@ -1011,7 +1002,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
             downloads = list(ex.map(_dl, group))
         trip_ids = []
         seen_hashes = db.seen_image_hashes_week(d_from, d_to)
-        skipped = []
+        copies = []
         albums = db.pool_albums([i["file"]["id"] for i in group])   # ใครส่งรูปนี้มา (ถ้ามาจากกอง)
         n_same = 0
         for i, data, err in downloads:
@@ -1028,7 +1019,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
                 # paired a round after its original) — record it as ingested so it never comes
                 # back, do not pay to read it again, and put it in the duplicate report
                 db.record_ingested(f["id"], f["name"], job_id, None)
-                skipped.append({"ref": f"ingest:{f['id']}", "week_from": d_from,
+                copies.append({"ref": f"ingest:{f['id']}", "week_from": d_from,
                                 "album": albums.get(f["id"]) or rider, "file_name": f["name"],
                                 "drive_id": f["id"], "same_as": seen_hashes[digest],
                                 "kind": "ส่งซ้ำของที่อ่านไปแล้ว"})
@@ -1052,7 +1043,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
         if n_same:
             log(f"  ⏭ ข้ามรูปที่เนื้อหาซ้ำกับที่อ่านไปแล้ว {n_same} ใบ (ไม่เสียค่าอ่านซ้ำ)")
             try:
-                db.record_skipped_copies(skipped)
+                db.record_skipped_copies(copies)
             except Exception as e:  # noqa: BLE001 — the report can miss a line; the round must not stop
                 log(f"  ⚠ จดรูปที่ข้ามลงรายงานรูปซ้ำไม่ได้: {str(e)[:100]}")
 
@@ -1209,10 +1200,10 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
         import free_dup_seats
         by_week = db.jobs_by_week()
         shut = set(db.closed_weeks())
-        skipped = [f for f, t in sorted(touched_weeks)
-                   if not free_dup_seats.week_is_open(f, t, closed=shut)]
-        if skipped:
-            log(f"🪑 ข้ามสัปดาห์ที่ปิดแล้ว {' · '.join(skipped)} — จบแล้ว ไม่ขยับอะไร")
+        shut_touched = [f for f, t in sorted(touched_weeks)
+                        if not free_dup_seats.week_is_open(f, t, closed=shut)]
+        if shut_touched:
+            log(f"🪑 ข้ามสัปดาห์ที่ปิดแล้ว {' · '.join(shut_touched)} — จบแล้ว ไม่ขยับอะไร")
         for wk_from, wk_to in sorted(touched_weeks):
             if not free_dup_seats.week_is_open(wk_from, wk_to, closed=shut):
                 continue
@@ -1330,8 +1321,6 @@ def main():
     ap.add_argument("--fix-hidden-turbo", action="store_true",
                     help="DB-only maintenance: fill small net-base gaps (collapsed sections) into Turbo")
     ap.add_argument("--delete-jobs", metavar="IDS", help="comma-separated job ids to delete")
-    ap.add_argument("--dedupe-approved", action="store_true",
-                    help="delete approved rows repeating a booking code for the same rider")
     ap.add_argument("--delete-trips", metavar="IDS",
                     help="comma-separated trip ids to delete (team-verified repeats), then rewrite the xlsx")
     ap.add_argument("--redo-model", metavar="SUBSTR",
@@ -1359,7 +1348,7 @@ def main():
             log("⏭ มีรอบกำลังรันอยู่ — ข้ามรอบนี้")
             sys.exit(0)
     if not (a.exports_only or a.xlsx_only or a.exports_jobs or a.fix_hidden_turbo
-            or a.delete_jobs or a.dedupe_approved or a.delete_trips):
+            or a.delete_jobs or a.delete_trips):
         # a reading round files rows into the week while close_week.py is counting and carrying
         # them; the two would disagree about what is over target. The close takes minutes.
         active = db.close_run_active()
@@ -1386,11 +1375,10 @@ def main():
         log(f"Drive auth: {drive.mode}" + ("" if drive.mode == "oauth" else "  (service account = อ่านได้ เขียนไม่ได้ — รัน drive_auth.py เพื่อเขียนกลับ)"))
         inbox = config.DRIVE_INBOX_FOLDER_ID
         exports = a.exports or config.DRIVE_EXPORTS_FOLDER_ID
-    if a.delete_jobs or a.dedupe_approved or a.delete_trips:
+    if a.delete_jobs or a.delete_trips:
         ids = [int(x) for x in (a.delete_jobs or "").replace(" ", "").split(",") if x]
         tids = [int(x) for x in (a.delete_trips or "").replace(" ", "").split(",") if x]
-        sys.exit(cleanup(drive, exports, delete_job_ids=ids, dedupe=a.dedupe_approved,
-                         delete_trip_ids=tids))
+        sys.exit(cleanup(drive, exports, delete_job_ids=ids, delete_trip_ids=tids))
     if a.exports_jobs:
         only = {int(x) for x in a.exports_jobs.replace(" ", "").split(",") if x}
         log(f"🖼 สร้างรูปส่งลูกค้าใหม่เฉพาะ job {sorted(only)}")
