@@ -281,7 +281,7 @@ def load(d_from, d_to):
     """แถวซ้ำของสัปดาห์ + ต้นฉบับของมัน (ต้นฉบับอยู่สัปดาห์ไหนก็ได้)"""
     t, j = db.trips.c, db.jobs.c
     cols = [t.id, t.file_name, t.status, t.committed, t.booking_code, t.duplicate_of,
-            t.net_earnings, t.trip_date, t.note, t.customer_image, t.source_url, t.image_hash,
+            t.net_earnings, t.base_fare, t.trip_time, t.trip_date, t.note, t.customer_image, t.source_url, t.image_hash,
             t.source_album, j.driver_name, j.category, j.folder_name, j.date_from]
     src = db.trips.join(db.jobs, j.id == t.job_id)
     with db.engine.begin() as c:
@@ -299,16 +299,16 @@ def load(d_from, d_to):
     twin_by_id = {r["id"]: r for r in twins}
     code_twin = {}
     for r in sorted(by_code, key=lambda r: r["id"]):     # ใบแรกที่อนุมัติคือต้นฉบับ
-        code_twin.setdefault((r["booking_code"], r["date_from"]), r)
-    other_week = {r["booking_code"] for r in by_code}
+        code_twin.setdefault((db.trip_key(r), r["date_from"]), r)
+    other_week = {db.trip_key(r) for r in by_code}
     for r in week:                                      # เติมต้นฉบับให้แถวที่ไม่มี duplicate_of
         if not r["duplicate_of"] and r["booking_code"]:
             # ต้นฉบับต้องอยู่สัปดาห์เดียวกัน (ลูกค้า 2026-09-14) ถ้ามีแต่ของสัปดาห์อื่น แถวนี้เป็นงาน
-            tw = code_twin.get((r["booking_code"], r["date_from"]))
+            tw = code_twin.get((db.trip_key(r), r["date_from"]))
             if tw and tw["id"] != r["id"]:
                 r["twin_id"] = tw["id"]
                 twin_by_id[tw["id"]] = tw
-            elif r["booking_code"] in other_week:
+            elif db.trip_key(r) in other_week:
                 r["cross_week"] = True
     return week, twin_by_id
 

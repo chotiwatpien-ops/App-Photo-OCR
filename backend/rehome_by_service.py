@@ -187,11 +187,8 @@ def main(argv=None):
     if not week:
         print(f"✗ ไม่พบโฟลเดอร์สัปดาห์ '{a.week}'")
         return 1
-    exports = next((f for f in drive.list_folders(inbox) if f["name"].strip() == "Export Pic"), None)
-    from ingest import week_label
-    wk_label = week_label(a.d_from)
-    exports_week = (next((f["id"] for f in drive.list_folders(exports["id"]) if f["name"] == wk_label), None)
-                    if exports else None)
+    from ingest import export_week_folder
+    exports_week = export_week_folder(drive, a.d_from)
     mv = Mover(drive, week["id"], exports_week)
 
     done = apply(drive, mv, a.d_from, a.d_to, moves)

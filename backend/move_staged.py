@@ -141,9 +141,7 @@ def bring_back(drive, inbox_id, d_from, d_to, rows, log=print):
     from carry_excess import REPLACED_DIR
     n_from, _n_to = next_week(d_from, d_to)
     _week, hold, jid = waiting_room(drive, inbox_id, d_from, d_to)
-    exports = next((f for f in drive.list_folders(inbox_id) if f["name"].strip() == "Export Pic"), None)
-    next_exports = (next((f["id"] for f in drive.list_folders(exports["id"])
-                          if f["name"] == ingest.week_label(n_from)), None) if exports else None)
+    next_exports = ingest.export_week_folder(drive, n_from)
     done, listing, replaced = Counter(), {}, None
     pics = db.drive_ids_for_trips([r["id"] for r in rows])
     for r in rows:

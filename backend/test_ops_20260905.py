@@ -69,9 +69,9 @@ t3b = trip(c2, "A-9AAAAAAAAAAAAAV", date="2026-09-09")
 db.auto_approve_job(c2)
 check("แต่ในสัปดาห์หลังนั้นเอง ใบที่สองยังเป็นซ้ำ", db.get_trip(t3b)["status"] == "duplicate")
 check("คนละสัปดาห์ในหน้าอนุมัติเอง: ไม่เตือนว่าเคยอนุมัติ",
-      db.find_committed_duplicates(["A-9AAAAAAAAAAAAAV"], week=("2026-09-14", "2026-09-20")) == [])
+      db.committed_twins([{"booking_code": "A-9AAAAAAAAAAAAAV"}], ("2026-09-14", "2026-09-20")) == {})
 check("สัปดาห์เดียวกันในหน้าอนุมัติเอง: ยังเตือน",
-      len(db.find_committed_duplicates(["A-9AAAAAAAAAAAAAV"], week=WEEK)) == 1)
+      len(db.committed_twins([{"booking_code": "A-9AAAAAAAAAAAAAV"}], WEEK)) == 1)
 
 # code เดียวกันแต่ยอดไม่ตรง = คำถามจริง ต้องให้คนดู ไม่ใช่ทิ้งเงียบ
 d = db.create_job("สมศรี", "Trips", *WEEK)

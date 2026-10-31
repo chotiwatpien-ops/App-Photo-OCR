@@ -46,6 +46,10 @@ exp_grp = inbox / "Export Pic" / "2026-W38" / "2 W Saver"
 for d in (rider_dir, other_dir, exp_grp):
     d.mkdir(parents=True)
 drive = LocalDrive(root)
+# the pictures step and every move find the week's pictures under DRIVE_EXPORTS_FOLDER_ID
+import config                                                     # noqa: E402
+config.DRIVE_EXPORTS_FOLDER_ID = str(inbox / "Export Pic")
+(inbox / "Export Pic").mkdir(parents=True, exist_ok=True)
 
 W38 = ("2026-09-14", "2026-09-20")
 j_me = db.create_job("สรธร Home", "Trips", *W38, category="2 W Saver", drive_folder_id=str(rider_dir))

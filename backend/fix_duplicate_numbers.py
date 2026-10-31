@@ -106,16 +106,12 @@ def main(argv=None):
     if not a.apply:
         print("\n(รายงานอย่างเดียว — ใส่ --apply เพื่อล้างจริง)")
         return 0
-    import config
     import roster
-    from ingest import week_label
+    from ingest import export_week_folder
     drive = roster._drive()
-    exports = next((f for f in drive.list_folders(config.DRIVE_INBOX_FOLDER_ID)
-                    if f["name"].strip() == "Export Pic"), None)
-    ex_week = (next((f["id"] for f in drive.list_folders(exports["id"])
-                     if f["name"] == week_label(a.d_from)), None) if exports else None)
+    ex_week = export_week_folder(drive, a.d_from)
     if ex_week is None:
-        print("⚠ ไม่พบโฟลเดอร์ Export Pic ของสัปดาห์นี้ — จะล้างชื่อในฐานข้อมูลอย่างเดียว")
+        print("⚠ ไม่พบโฟลเดอร์รูปส่งลูกค้าของสัปดาห์นี้ — จะล้างชื่อในฐานข้อมูลอย่างเดียว")
     done = apply(drive, ex_week, dups, jobs)
     print("\nทำแล้ว: " + " · ".join(f"{k} {v}" for k, v in done.most_common()))
     print("ขั้นต่อไป: ingest ติ๊ก exports_only — แถวที่ล้างชื่อจะได้รูปและชื่อใหม่ที่ไม่ซ้ำ")

@@ -575,7 +575,7 @@ def apply_extraction(trip_id: int, job_id: int, data: dict) -> str:
         # Grab codes never contain whitespace — the model sometimes inserts a space at the
         # on-screen line wrap, which would defeat the duplicate check
         if data.get("booking_code"):
-            data["booking_code"] = re.sub(r"\s+", "", data["booking_code"]) or None
+            data["booking_code"] = re.sub(r"\s+", "", data["booking_code"]).upper() or None
         # team rule: tip counts as Bonus (col M). The model sometimes reads the additional-income
         # TOTAL (which already includes the tip) as bonus — re-adding the tip then double-counts
         # it. Prefer whichever reading makes the identity net = base + bonus + turbo balance.
@@ -608,7 +608,9 @@ def apply_extraction(trip_id: int, job_id: int, data: dict) -> str:
         note = data.get("confidence_note")
         if turbo_note:
             note = f"{turbo_note} | {note}" if note else turbo_note
-        dup = db.find_job_duplicate(job_id, data.get("booking_code"), trip_id)
+        dup = db.find_job_duplicate(job_id, data.get("booking_code"), trip_id,
+                                    base_fare=data.get("base_fare"),
+                                    trip_time=extractor.normalize_time(data.get("screen_time")))
         if dup:
             dup_msg = f"รูปนี้ซ้ำกับ {dup['file_name']} (booking code เดียวกัน)"
             note = f"{dup_msg} | {note}" if note else dup_msg

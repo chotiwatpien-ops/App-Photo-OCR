@@ -82,6 +82,19 @@ def week_label(d_from: str) -> str:
     return f"{y}-W{w:02d}"
 
 
+def export_week_folder(drive, d_from):
+    """The customer's picture folder of the week starting d_from, or None when it has none yet.
+
+    The pictures step writes to <DRIVE_EXPORTS_FOLDER_ID>/<2026-Wnn>/<group>/ and the audit reads
+    there. Every step that moves a delivered picture finds the week here too. They used to look
+    for a folder named 'Export Pic' in the Inbox, so any other exports folder left pictures behind
+    and the audit blocked the lock for good."""
+    root = config.DRIVE_EXPORTS_FOLDER_ID
+    if not root:
+        return None
+    return next((f["id"] for f in drive.list_folders(root) if f["name"] == week_label(d_from)), None)
+
+
 def parse_weeks(arg):
     """'2026-W37, 2026-09-07' -> {'2026-W37'}; None or empty -> None (meaning every week).
 

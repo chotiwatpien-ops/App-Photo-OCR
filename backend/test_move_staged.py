@@ -40,6 +40,10 @@ hold38 = inbox / "Week 14-20 Sep" / "_พร้อมอ่าน"
 hold38.mkdir(parents=True)
 (inbox / "Week 21-27 Sep" / "4 W Standard").mkdir(parents=True)
 drive = LocalDrive(root)
+# the pictures step and every move find the week's pictures under DRIVE_EXPORTS_FOLDER_ID
+import config                                                     # noqa: E402
+config.DRIVE_EXPORTS_FOLDER_ID = str(inbox / "Export Pic")
+(inbox / "Export Pic").mkdir(parents=True, exist_ok=True)
 
 W38, W39 = ("2026-09-14", "2026-09-20"), ("2026-09-21", "2026-09-27")
 TARGET = 3

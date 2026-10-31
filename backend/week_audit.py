@@ -48,8 +48,8 @@ def audit(rows, pictures=None):
     # 1. one booking code on two rows of the same week
     by_code = defaultdict(list)
     for r in rows:
-        if (r.get("booking_code") or "").strip():
-            by_code[r["booking_code"].strip().upper()].append(r)
+        if db.trip_key(r):
+            by_code[db.trip_key(r)].append(r)
     out["งานซ้ำ-รหัสการจอง"] = [g for g in by_code.values() if len(g) > 1]
     # 2. equal in every column the customer sees, and no code to tell them apart
     key = lambda r: (r.get("trip_date"), r.get("trip_time"), r.get("base_fare"), r.get("distance_km"),

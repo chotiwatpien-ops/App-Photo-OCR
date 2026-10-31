@@ -781,6 +781,40 @@ def mark_orphan_bottom_duplicates(job_id) -> int:
 DUP_FULL_CODE = 15
 
 
+def trip_key(row):
+    """The one answer to 'is this the same trip?': two rows are the same trip when their keys are
+    equal. A full code is the key on its own; a short one needs the fare and clock time too.
+    None for a row without a code, which is never anyone's repeat."""
+    code = (row.get("booking_code") or "").strip().upper()
+    if not code:
+        return None
+    if len(code) >= DUP_FULL_CODE:
+        return (code,)
+    return (code, row.get("base_fare"), row.get("trip_time"))
+
+
+def committed_twins(rows, week, exclude_ids=()):
+    """{trip_key: approved row} for every row of `rows` already approved in `week`
+    (date_from, date_to), any rider. The rows in exclude_ids are not their own twins."""
+    keys = {trip_key(r) for r in rows} - {None}
+    if not keys:
+        return {}
+    with engine.begin() as c:
+        found = c.execute(
+            select(trips.c.id, trips.c.job_id, trips.c.file_name, trips.c.booking_code,
+                   trips.c.base_fare, trips.c.trip_time)
+            .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+            .where(trips.c.committed == 1,
+                   func.upper(trips.c.booking_code).in_({k[0] for k in keys}),
+                   jobs.c.date_from == week[0], jobs.c.date_to == week[1])
+            .order_by(trips.c.id)).mappings().all()
+    out = {}
+    for t in found:
+        if t["id"] not in exclude_ids and trip_key(t) in keys:
+            out.setdefault(trip_key(t), dict(t))
+    return out
+
+
 def _twin_filter(q, code, base_fare, trip_time):
     return q if len(code) >= DUP_FULL_CODE else q.where(trips.c.base_fare == base_fare,
                                                         trips.c.trip_time == trip_time)
@@ -985,14 +1019,10 @@ def restore_discarded(trip_id) -> bool:
         return r.rowcount > 0
 
 
-def _is_repeat(row, seen, seen_short) -> bool:
-    """Has this booking code already been approved somewhere? See _approved_twin for the rule."""
-    code = row["booking_code"]
-    if not code:
-        return False
-    if len(code) >= DUP_FULL_CODE:
-        return code in seen
-    return (code, row["base_fare"], row["trip_time"]) in seen_short
+def _is_repeat(row, seen) -> bool:
+    """Is this trip among `seen` (a set of trip_key)? See _approved_twin for the rule."""
+    key = trip_key(row)
+    return key is not None and key in seen
 
 
 HOLDING_RIDER = "(รออ่าน)"     # a job that only holds pictures until they are read and filed
@@ -1027,7 +1057,7 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
                                           .where(trips.c.job_id == job_id,
                                                  trips.c.merged_into.isnot(None))).all()}
         codes = [r["booking_code"] for r in rows if r["booking_code"]]
-        seen, seen_short = set(), set()
+        seen = set()
         if codes:
             # Repeated work comes out — inside the week only (customer, 2026-09-14; see
             # _approved_twin). A booking code approved in this week is the same trip whichever
@@ -1040,17 +1070,14 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
                                       trips.c.booking_code.in_(codes),
                                       jobs.c.date_from == week[0],
                                       jobs.c.date_to == week[1])).mappings().all():
-                if len(t["booking_code"]) >= DUP_FULL_CODE:
-                    seen.add(t["booking_code"])
-                else:
-                    seen_short.add((t["booking_code"], t["base_fare"], t["trip_time"]))
+                seen.add(trip_key(t))
         ok_ids = [r["id"] for r in rows
                   if r["check_status"] == "pass" and not r["duplicate_of"] and r["trip_date"]
                   # team rule 2026-08-25: balanced money is the bar — a missing booking code
                   # (some Grab screens don't show one) or km does NOT hold a row back. Stray
                   # lower halves are handled by mark_orphan_bottom_duplicates() above: the
                   # ones matching a counted trip carry duplicate_of and are excluded here.
-                  and not _is_repeat(r, seen, seen_short)
+                  and not _is_repeat(r, seen)
                   # a top half read this very round with no lower half yet: wait one round
                   and not (r["kind"] == "top" and r["id"] in fresh_ids and r["id"] not in paired)]
         # A code-less lower half whose amount equals a full/top row approved in the SAME batch is
@@ -1067,10 +1094,10 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
         # `seen` holds codes approved BEFORE this round; two copies waiting side by side (e.g. both
         # freed when the row they repeated was voided) would otherwise be approved together. The
         # second waits; the next round parks it against the first (discard_settled_duplicates).
-        batch, batch_short = set(), set()
+        batch = set()
         for tid in ok_ids:
             r = by_id[tid]
-            if _is_repeat(r, batch, batch_short):
+            if _is_repeat(r, batch):
                 continue
             a = _amount(r)
             twin = None
@@ -1082,10 +1109,7 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
             if twin is None:
                 kept.append(tid)
                 if r["booking_code"]:
-                    if len(r["booking_code"]) >= DUP_FULL_CODE:
-                        batch.add(r["booking_code"])
-                    else:
-                        batch_short.add((r["booking_code"], r["base_fare"], r["trip_time"]))
+                    batch.add(trip_key(r))
                 continue
             msg = f"ครึ่งล่างของ {twin['file_name']} ที่อนุมัติในรอบเดียวกัน (ยอด {a:,.0f} ตรงกัน) — ไม่นับซ้ำ"
             c.execute(update(trips).where(trips.c.id == tid)
@@ -1345,24 +1369,6 @@ def attach_folder(job_id, drive_folder_id, driver_name=None, folder_name=None):
         if vals:
             c.execute(update(jobs).where(jobs.c.id == job_id).values(**vals))
     return out
-
-
-def find_same_rider_code_conflicts(job_id, codes):
-    """Approved trips of the SAME rider (any job) already carrying one of these booking codes.
-    Blocks a repeat even when a person forces the approval — this is the money guard."""
-    codes = [c for c in codes if c]
-    if not codes:
-        return []
-    with engine.begin() as c:
-        jm = c.execute(select(jobs.c.driver_name, jobs.c.date_from)
-                       .where(jobs.c.id == job_id)).mappings().first()
-        rows = c.execute(select(trips.c.booking_code, trips.c.file_name, trips.c.job_id)
-                         .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
-                         .where(trips.c.committed == 1, trips.c.booking_code.in_(codes),
-                                jobs.c.driver_name == jm["driver_name"],
-                                jobs.c.date_from == jm["date_from"],
-                                trips.c.job_id != job_id)).mappings().all()
-        return [dict(r) for r in rows]
 
 
 def seen_image_hashes(driver_name, date_from, date_to):
@@ -1626,31 +1632,18 @@ def delete_trips(trip_ids):
     return out
 
 
-def find_job_duplicate(job_id, booking_code, exclude_id):
-    """Earlier trip in the same job with the same booking code, or None."""
+def find_job_duplicate(job_id, booking_code, exclude_id, base_fare=None, trip_time=None):
+    """Earlier trip in the same job that is the same trip (trip_key), or None. Only a row still
+    standing counts: a voided or parked earlier copy would otherwise hold the new one forever."""
     if not booking_code:
         return None
     with engine.begin() as c:
-        r = c.execute(select(trips.c.id, trips.c.file_name)
-                      .where(trips.c.job_id == job_id, trips.c.booking_code == booking_code,
-                             trips.c.id < exclude_id)
-                      .order_by(trips.c.id).limit(1)).mappings().first()
+        q = (select(trips.c.id, trips.c.file_name)
+             .where(trips.c.job_id == job_id, trips.c.booking_code == booking_code,
+                    trips.c.status == "done", trips.c.id < exclude_id))
+        q = _twin_filter(q, booking_code, base_fare, trip_time)
+        r = c.execute(q.order_by(trips.c.id).limit(1)).mappings().first()
         return dict(r) if r else None
-
-
-def find_committed_duplicates(codes, week=None):
-    """Trips already committed whose booking codes are in `codes` — inside `week`
-    (date_from, date_to) when given, since a repeat across weeks is work (customer, 2026-09-14)."""
-    codes = [x for x in codes if x]
-    if not codes:
-        return []
-    q = (select(trips.c.booking_code, trips.c.job_id, trips.c.file_name)
-         .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
-         .where(trips.c.committed == 1, trips.c.booking_code.in_(codes)))
-    if week:
-        q = q.where(jobs.c.date_from == week[0], jobs.c.date_to == week[1])
-    with engine.begin() as c:
-        return [dict(r) for r in c.execute(q).mappings().all()]
 
 
 def query_trips(date_from=None, date_to=None, driver=None, committed_only=True, job_id=None):
@@ -1888,26 +1881,29 @@ def committed_fingerprint() -> str:
 
 def review_queue():
     """Every done-but-unapproved row across all jobs, oldest job first.
-    Adds seen_in_job: the job that already approved the same booking code (why auto-approve held it)."""
-    q = _trip_join(0).order_by(trips.c.job_id, trips.c.id)
+    Adds seen_in_job: the job that already approved this trip in the same week (why auto-approve
+    held it). A trip approved in another week is work again (customer, 2026-09-14)."""
+    q = _trip_join(0).add_columns(jobs.c.date_from.label("wk_from"), jobs.c.date_to.label("wk_to"))
     with engine.begin() as c:
-        rows = [dict(r) for r in c.execute(q).mappings().all()]
-        codes = [r["booking_code"] for r in rows if r["booking_code"]]
-        seen = {}
-        if codes:
-            for code, jid in c.execute(select(trips.c.booking_code, trips.c.job_id)
-                                       .where(trips.c.committed == 1, trips.c.booking_code.in_(codes))).all():
-                seen.setdefault(code, jid)
-        for r in rows:
-            r["seen_in_job"] = seen.get(r["booking_code"])
-        return rows
+        rows = [dict(r) for r in c.execute(q.order_by(trips.c.job_id, trips.c.id)).mappings().all()]
+    by_week = {}
+    for r in rows:
+        by_week.setdefault((r["wk_from"], r["wk_to"]), []).append(r)
+    for week, group in by_week.items():
+        twins = committed_twins(group, week)
+        for r in group:
+            twin = twins.get(trip_key(r))
+            r["seen_in_job"] = twin["job_id"] if twin else None
+    for r in rows:
+        del r["wk_from"], r["wk_to"]
+    return rows
 
 
 def approve_trip(trip_id) -> dict:
     """Approve a single row (after a person looked at it) and sync its job's status."""
     with engine.begin() as c:
         t = c.execute(select(trips.c.job_id, trips.c.status, trips.c.trip_date,
-                             trips.c.booking_code)
+                             trips.c.booking_code, trips.c.base_fare, trips.c.trip_time)
                       .where(trips.c.id == trip_id)).mappings().first()
         if not t:
             return {"error": "not found"}
@@ -1923,13 +1919,15 @@ def approve_trip(trip_id) -> dict:
         if t["booking_code"]:
             jm = c.execute(select(jobs.c.date_from, jobs.c.date_to)
                            .where(jobs.c.id == t["job_id"])).mappings().first()
-            twin = c.execute(select(trips.c.file_name)
-                             .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
-                             .where(trips.c.committed == 1,
-                                    trips.c.booking_code == t["booking_code"],
-                                    jobs.c.date_from == jm["date_from"],
-                                    jobs.c.date_to == jm["date_to"],
-                                    trips.c.id != trip_id).limit(1)).scalar()
+            q = (select(trips.c.file_name)
+                 .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+                 .where(trips.c.committed == 1,
+                        trips.c.booking_code == t["booking_code"],
+                        jobs.c.date_from == jm["date_from"],
+                        jobs.c.date_to == jm["date_to"],
+                        trips.c.id != trip_id))
+            q = _twin_filter(q, t["booking_code"], t["base_fare"], t["trip_time"])
+            twin = c.execute(q.limit(1)).scalar()
             if twin:
                 return {"error": f"เที่ยวนี้อนุมัติไปแล้วในสัปดาห์เดียวกัน ({twin}) — "
                                  f"ถ้าเป็นรูปซ้ำให้กดลบแทน"}

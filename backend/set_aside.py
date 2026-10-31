@@ -36,7 +36,6 @@ import excel_writer
 import redate_to_week
 
 STATUS = "set_aside"
-EXPORT_ROOT = "Export Pic"
 REPLACED_DIR = "_แทนที่แล้ว"
 ORIGINALS_DIR = "_ต้นฉบับ"
 
@@ -82,9 +81,8 @@ def batch_rows(job_id):
 
 def apply(drive, inbox_id, picked, rider, group, d_from, d_to, new_from, new_to, name, log=print):
     done = Counter()
-    exp_root = next((f["id"] for f in drive.list_folders(inbox_id) if f["name"].strip() == EXPORT_ROOT), None)
-    if exp_root is None:
-        exp_root = drive.ensure_folder(inbox_id, EXPORT_ROOT)
+    import config
+    exp_root = config.DRIVE_EXPORTS_FOLDER_ID          # the folder the pictures step writes to
     batch_dir = drive.ensure_folder(exp_root, name)
     originals = drive.ensure_folder(batch_dir, ORIGINALS_DIR)
     week_dir = next((f["id"] for f in drive.list_folders(exp_root) if f["name"] == week_label(d_from)), None)
@@ -136,7 +134,7 @@ def apply(drive, inbox_id, picked, rider, group, d_from, d_to, new_from, new_to,
     if data:
         drive.upload_xlsx(batch_dir, file_name, data)
         done["เขียนไฟล์"] += 1
-    log(f"  📄 {EXPORT_ROOT}/{name}/{file_name}")
+    log(f"  📄 รูปส่งลูกค้า/{name}/{file_name}")
     return done, jid
 
 

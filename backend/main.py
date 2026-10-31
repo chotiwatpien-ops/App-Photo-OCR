@@ -317,16 +317,18 @@ def commit(job_id: int, force: bool = False):
         raise HTTPException(400, f"ยังไม่ได้ระบุวันที่: {', '.join(missing[:5])}")
     if any(t["status"] == "pending" for t in j["trips"]):
         raise HTTPException(400, "ยังอ่านไม่เสร็จ")
-    same_rider = db.find_same_rider_code_conflicts(job_id, [t["booking_code"] for t in done])
-    if same_rider:
-        names = [f"{d['file_name']} (job #{d['job_id']})" for d in same_rider[:5]]
-        raise HTTPException(409, f"เที่ยวเหล่านี้ของไรเดอร์คนนี้อนุมัติไปแล้ว: {', '.join(names)} — "
+    # the same trip-key rule as the round and the อนุมัติ button (db.trip_key): approved anywhere
+    # in this week, by any rider, or twice inside this batch. Neither can be forced past.
+    twins = db.committed_twins(done, (j["date_from"], j["date_to"]))
+    if twins:
+        names = [f"{d['file_name']} (job #{d['job_id']})" for d in list(twins.values())[:5]]
+        raise HTTPException(409, f"เที่ยวเหล่านี้อนุมัติไปแล้วในสัปดาห์นี้: {', '.join(names)} — "
                                  f"ลบรูปที่ซ้ำออกก่อน (กดยืนยันข้ามไม่ได้ เพราะจะทำให้เงินซ้ำ)")
     from collections import Counter
-    repeats = [c for c, n in Counter(t["booking_code"] for t in done if t["booking_code"]).items()
+    repeats = [k for k, n in Counter(db.trip_key(t) for t in done if db.trip_key(t)).items()
                if n > 1]
     if repeats:
-        files = [t["file_name"] for t in done if t["booking_code"] in repeats]
+        files = [t["file_name"] for t in done if db.trip_key(t) in repeats]
         raise HTTPException(409, f"ชุดนี้มีเที่ยวเดียวกันซ้ำกันเอง {len(repeats)} รหัส "
                                  f"({', '.join(files[:5])}) — ลบรูปซ้ำออกก่อน "
                                  f"(กดยืนยันข้ามไม่ได้ เพราะจะทำให้เงินซ้ำ)")
@@ -335,13 +337,6 @@ def commit(job_id: int, force: bool = False):
         if dup_in_job:
             raise HTTPException(409, f"มีรูปซ้ำกันเองใน job นี้ ({', '.join(dup_in_job[:5])}) — "
                                      f"ลบรูปที่ซ้ำออกก่อน หรือกดยืนยันบันทึกซ้ำ")
-        committed_dups = [d for d in db.find_committed_duplicates([t["booking_code"] for t in done],
-                                                                  week=(j["date_from"], j["date_to"]))
-                          if d["job_id"] != job_id]
-        if committed_dups:
-            names = [f"{d['file_name']} (job #{d['job_id']})" for d in committed_dups[:5]]
-            raise HTTPException(409, f"พบ {len(committed_dups)} เที่ยวที่เคยอนุมัติไปแล้ว: "
-                                     f"{', '.join(names)} — อาจบันทึกซ้ำ ตรวจสอบก่อน หรือกดยืนยันบันทึกซ้ำ")
         if config.EXCEL_APPEND:
             try:
                 existing = excel_writer.count_existing_rows(j["driver_name"], {t["trip_date"] for t in done})

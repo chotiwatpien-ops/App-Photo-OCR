@@ -236,7 +236,6 @@ def main(argv=None):
     db.init_db()
     import config
     import roster
-    from ingest import week_label
     drive = roster._drive()
 
     excess, counts, _jobs = excess_rows(a.d_from, a.d_to, a.target)
@@ -265,9 +264,8 @@ def main(argv=None):
         print("✗ ตั้งชื่อโฟลเดอร์สัปดาห์หน้าจากชื่อสัปดาห์นี้ไม่ได้ — ใส่ --next-week")
         return 1
     inbox = config.DRIVE_INBOX_FOLDER_ID
-    exports = next((f for f in drive.list_folders(inbox) if f["name"].strip() == "Export Pic"), None)
-    exports_week = (next((f["id"] for f in drive.list_folders(exports["id"]) if f["name"] == week_label(a.d_from)), None)
-                    if exports else None)
+    from ingest import export_week_folder
+    exports_week = export_week_folder(drive, a.d_from)
     wk = Weeks(drive, inbox, a.week, nxt, exports_week)
     done = apply(drive, wk, a.d_from, a.d_to, excess)
     print("\nทำแล้ว: " + " · ".join(f"{k} {v}" for k, v in done.most_common()))

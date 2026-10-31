@@ -192,9 +192,8 @@ def main(argv=None):
     if this_week is None:
         print(f"✗ ไม่พบโฟลเดอร์ {a.week!r} ใน Inbox")
         return 1
-    exports = next((f for f in drive.list_folders(inbox) if f["name"].strip() == "Export Pic"), None)
-    next_exports = (next((f["id"] for f in drive.list_folders(exports["id"]) if f["name"] == week_label(n_from)), None)
-                    if exports else None)
+    from ingest import export_week_folder
+    next_exports = export_week_folder(drive, n_from)
     total = Counter()
     for group, picked in plan.items():
         if picked:
