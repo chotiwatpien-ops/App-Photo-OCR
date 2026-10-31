@@ -34,12 +34,15 @@ const json = (method, body) => ({
   body: JSON.stringify(body),
 })
 
-export function exportUrl({ dateFrom, dateTo, driver, jobId, committedOnly = true } = {}) {
+export function exportUrl({ dateFrom, dateTo, driver, jobId, committedOnly = true, status, q } = {}) {
   const p = new URLSearchParams()
   if (dateFrom) p.set('date_from', dateFrom)
   if (dateTo) p.set('date_to', dateTo)
   if (driver) p.set('driver', driver)
   if (jobId) p.set('job_id', jobId)
+  // the ข้อมูล tab sends its own status and search, so the file holds exactly the rows on screen
+  if (status) p.set('status', status)
+  if (q) p.set('q', q)
   p.set('committed_only', committedOnly ? 'true' : 'false')
   return `/api/export?${p.toString()}`
 }

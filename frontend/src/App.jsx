@@ -102,7 +102,7 @@ export default function App() {
 
   useEffect(() => {
     const names = { overview: 'ภาพรวม', queue: 'คิวตรวจ', dups: 'งานซ้ำ', data: 'ข้อมูล', close: 'ปิดสัปดาห์', tools: 'เครื่องมือเพิ่มเติม' }
-    const here = activeJob ? activeJob.driver_name : names[view]
+    const here = window.location.hash === '#support' ? 'Support' : activeJob ? activeJob.driver_name : names[view]
     document.title = here ? `${here} · Rider Photo OCR` : 'Rider Photo OCR'
   }, [view, activeJob])
 

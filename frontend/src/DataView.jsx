@@ -60,7 +60,7 @@ export default function DataView({ onOpenJob }) {
     setF({ ...f, week: e.target.value, from: w ? w.from : '', to: w ? w.to : '' }); setPage(1)
   }
   const pages = Math.max(1, Math.ceil(data.total / SIZE))
-  const dl = exportUrl({ dateFrom: f.from, dateTo: f.to, driver: f.driver, committedOnly: f.status !== 'all' && f.status !== 'waiting' })
+  const dl = exportUrl({ dateFrom: f.from, dateTo: f.to, driver: f.driver, status: f.status, q: f.q })
   const box = 'min-h-11 border border-line rounded-lg px-3 bg-white text-[15px]'
 
   return (

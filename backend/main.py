@@ -935,9 +935,24 @@ def drivers():
 
 @app.get("/api/export")
 def export(date_from: str = None, date_to: str = None, driver: str = None,
-           job_id: int = None, committed_only: bool = True):
-    rows = db.query_trips(date_from, date_to, driver, committed_only, job_id)
-    data = excel_writer.build_workbook(rows)
+           job_id: int = None, committed_only: bool = True, status: str = None, q: str = None):
+    """With no filter: the original all-weeks Rider Trips.xlsx (Tools, Dashboard). With any filter —
+    the ข้อมูล tab, a rider's job, a week — the rows asked for, in the layout the customer reads now
+    (Phase 3). Until 2026-10-31 the filtered download also went through build_workbook, which drops
+    every trip from the Phase 2 week on: any current week came out as headers only."""
+    if status or q:      # the ข้อมูล tab: exactly the rows the page lists
+        rows, _n = db.search_trips(date_from, date_to, driver, status or "all", q, limit=10 ** 6, offset=0)
+    else:
+        rows = db.query_trips(date_from, date_to, driver, committed_only, job_id)
+    if any((date_from, date_to, driver, job_id, status, q)):
+        undated = sum(1 for r in rows if not r.get("trip_date"))
+        rows = [r for r in rows if r.get("trip_date")]          # a row needs its date to be a line in the file
+        data = (excel_writer.build_fare_lines_workbook(rows, every_week=True)
+                or excel_writer.build_fare_lines_header())
+    else:
+        undated = 0
+        data = excel_writer.build_workbook(rows)
+        rows = [r for r in rows if not excel_writer.in_location_scope(r.get("trip_date"))]   # what it wrote
     stamp = datetime.now().strftime("%Y%m%d-%H%M")
     parts = ["Rider Trips"]
     if job_id:
@@ -949,7 +964,7 @@ def export(date_from: str = None, date_to: str = None, driver: str = None,
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(fname)}",
-                 "X-Row-Count": str(len(rows))},
+                 "X-Row-Count": str(len(rows)), "X-Undated-Skipped": str(undated)},
     )
 
 

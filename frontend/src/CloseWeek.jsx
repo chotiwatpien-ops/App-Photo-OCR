@@ -185,6 +185,10 @@ export default function CloseWeek() {
   const nextLabel = n ? `WK${+n[1] + 1}` : 'สัปดาห์หน้า'
   const label = wk(data.label)
   const applying = live && latest.mode === 'apply'
+  // A close that failed, or that the checks stopped, says so where the eye is. It used to show only
+  // inside the folded history while this card went back to 'พร้อมกด' (run drive5, 2026-10-31).
+  const lastApply = !live && !closed && latest?.mode === 'apply'
+    && (latest.status === 'failed' || latest.status === 'blocked') ? latest : null
 
   const start = (mode) => {
     if (mode === 'apply' && !window.confirm(
@@ -205,7 +209,9 @@ export default function CloseWeek() {
     { title: 'ดูแผน', state: closed || data.plan_ok ? 'done' : ready ? 'now' : 'todo',
       sub: closed ? 'เสร็จ' : data.plan_ok ? `เมื่อ ${when(plan?.finished_at)}` : 'ยังไม่ได้ทำ' },
     { title: 'ปิดสัปดาห์', state: closed ? 'done' : applying || (ready && data.plan_ok) ? 'now' : 'todo',
-      sub: closed ? `ปิดแล้ว ${when(data.closed.closed_at)}` : applying ? 'กำลังทำ…' : ready && data.plan_ok ? 'พร้อมกด' : 'รอขั้นก่อนหน้า' },
+      sub: closed ? `ปิดแล้ว ${when(data.closed.closed_at)}` : applying ? 'กำลังทำ…'
+        : lastApply ? (lastApply.status === 'blocked' ? 'ยังปิดไม่ได้' : 'ครั้งก่อนไม่สำเร็จ')
+          : ready && data.plan_ok ? 'พร้อมกด' : 'รอขั้นก่อนหน้า' },
     { title: 'รับไฟล์', state: closed ? 'now' : 'todo', sub: closed ? 'พร้อมแล้ว' : 'หลังปิดเสร็จ' },
   ]
   const show = live ? latest : (closed && lastClose(data)) || plan
@@ -242,6 +248,21 @@ export default function CloseWeek() {
       )}
       {other && <p className="text-sm text-warn-ink">มีการปิดสัปดาห์อื่นกำลังทำอยู่ — รอให้เสร็จก่อน</p>}
       {error && <p className="text-sm text-danger-ink">{error}</p>}
+      {lastApply && (
+        <section role="alert" className="rounded-xl border border-danger bg-danger-bg px-4 py-3 sm:px-6 sm:py-4 flex flex-col gap-2">
+          <p className="font-semibold text-danger-ink">
+            {lastApply.status === 'blocked' ? `ยังปิด ${label} ไม่ได้` : `ปิด ${label} ไม่สำเร็จ`}
+            <span className="font-normal"> · {when(lastApply.finished_at || lastApply.created_at)}</span>
+          </p>
+          {lastApply.message && <p className="text-sm text-ink break-words">{lastApply.message}</p>}
+          <p className="text-sm text-ink-soft">
+            {lastApply.status === 'blocked'
+              ? 'แก้เรื่องที่ค้างในรายการความพร้อมด้านล่าง แล้วกดปิดใหม่'
+              : 'สัปดาห์นี้ยังไม่ปิด กดปิดใหม่ได้ — ถ้ายังไม่ผ่าน แจ้งผู้ดูแลระบบพร้อมเวลาด้านบน'}
+          </p>
+          {lastApply.steps?.some((s) => s.status === 'done' || s.status === 'failed') && <Steps run={lastApply} />}
+        </section>
+      )}
 
       <div className="grid gap-5 lg:grid-cols-2">
         <Card aria-labelledby="ready-h" className="p-4 sm:px-6 sm:py-5">

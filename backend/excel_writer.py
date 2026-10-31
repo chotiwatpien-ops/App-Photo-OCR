@@ -481,6 +481,18 @@ def build_fare_lines_workbook(rows: list[dict], every_week=False) -> bytes | Non
     return buf.getvalue()
 
 
+def build_fare_lines_header() -> bytes:
+    """A Phase 3 file with no trips — a filter that matches nothing still downloads in the layout
+    the customer reads, not the old one."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = LOCATION_SHEET
+    _style_header(ws, FARE_LINES_HEADERS, FARE_WIDTHS + [14, 14], medium=True)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def later_workbooks(rows: list[dict]) -> list[tuple[str, bytes]]:
     """(file name, bytes) for every workbook after the first that has rows in it — Phase 2, then
     Phase 3. The places that write the customer files all ask here, so a new phase is one change,

@@ -96,7 +96,7 @@ function Group({ g, target }) {
           <p className="text-sm text-muted">{g.service.endsWith('Car') ? 'รถยนต์ · 4W' : 'มอเตอร์ไซค์ · 2W'}</p>
         </div>
         <span className={`text-sm font-medium rounded-full px-2.5 py-0.5 ${full ? TONE.ok : TONE.warn}`}>
-          {full ? 'ครบเป้า' : `ยังขาด ${fmt(g.short)}`}
+          {g.over ? `เกินเป้า ${fmt(g.over)}` : full ? 'ครบเป้า' : `ยังขาด ${fmt(g.short)}`}
         </span>
       </div>
       <p className="text-[30px] leading-none font-semibold tracking-tight">{fmt(g.have)}<span className="text-base font-normal text-muted"> / {fmt(target)}</span></p>

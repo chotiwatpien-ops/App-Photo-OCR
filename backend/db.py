@@ -1799,10 +1799,13 @@ def search_trips(date_from=None, date_to=None, driver=None, status="all", q=None
                  limit=50, offset=0):
     """Paginated rows for the data view. status: all | approved | waiting."""
     base = _trip_join({"approved": 1, "waiting": 0}.get(status))
+    # A row with no date yet belongs to the week of its job: it waits in คิวตรวจ for one, and the
+    # date filter alone hid it from รอตรวจ (run drive5, 2026-10-31). Dated rows filter by their date.
+    undated = trips.c.trip_date.is_(None)
     if date_from:
-        base = base.where(trips.c.trip_date >= date_from)
+        base = base.where((trips.c.trip_date >= date_from) | (undated & (jobs.c.date_to >= date_from)))
     if date_to:
-        base = base.where(trips.c.trip_date <= date_to)
+        base = base.where((trips.c.trip_date <= date_to) | (undated & (jobs.c.date_from <= date_to)))
     if driver:
         base = base.where(jobs.c.driver_name == driver)
     if q:
