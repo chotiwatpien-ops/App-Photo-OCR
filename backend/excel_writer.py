@@ -162,13 +162,18 @@ def passenger_fare(t):
     """Column P per the team's convention (config.PASSENGER_FARE_SOURCE); falls back to the
     other line, derived if need be, then to a per-service-type estimate off the base fare."""
     paid, total = t.get("passenger_paid"), t.get("passenger_total")
+    # the slip's own rule (extractor.PASSENGER_LINE_RULES): paid, plus every line between,
+    # minus the tip, is the total; the international fee is stored as its absolute value
+    lines = (sum(t.get(k) or 0 for k in ("app_fee", "other_adj", "discount", "insurance_fee",
+                                         "passenger_tolls"))
+             - abs(t.get("intl_fee") or 0) - (t.get("tip") or 0))
     if config.PASSENGER_FARE_SOURCE == "paid":
         if paid is None and total is not None:
-            paid = total - (t.get("app_fee") or 0) - (t.get("other_adj") or 0)
+            paid = total - lines
         val = paid
     else:
         if total is None and paid is not None:
-            total = paid + (t.get("app_fee") or 0) + (t.get("other_adj") or 0)
+            total = paid + lines
         val = total
     if val is None and t.get("base_fare"):
         val = round(t["base_fare"] * FARE_RATIO.get(t.get("service_type") or "", FARE_RATIO_DEFAULT))

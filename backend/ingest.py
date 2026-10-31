@@ -369,7 +369,7 @@ def keep_images_for_waiting(job_id, among=None, memory=None, drive=None) -> int:
     return kept
 
 
-def collect_batches(drive, exports_id=None, cancel_open=False):
+def collect_batches(drive, exports_id=None, cancel_open=False, fresh_out=None):
     """Pick up whatever the batch queue has finished since the last round.
 
     cancel_open=True is the way out when Google's batch queue stalls. On 2026-09-15 seven
@@ -483,6 +483,8 @@ def collect_batches(drive, exports_id=None, cancel_open=False):
             errors += errs2
             for jid in failed:
                 issues.append((f"images:{jid}", "images", f"อัพโหลดรูปส่งลูกค้า job #{jid} ไม่สำเร็จ"))
+    if fresh_out is not None:
+        fresh_out.update(t for tids in fresh_by_job.values() for t in tids)
     return done_trips, errors, touched_jobs, issues
 
 
@@ -640,7 +642,7 @@ def fix_hidden_turbo() -> int:
     with db.engine.begin() as c:
         t = db.trips.c
         rows = c.execute(select(t.id, t.file_name, t.net_earnings, t.base_fare, t.bonus,
-                                t.turbo, t.note)
+                                t.turbo, t.note, t.passenger_total, t.grab_commission)
                          .where(t.status == "done", t.committed == 0,
                                 t.check_status == "fail")).mappings().all()
         for r in rows:
@@ -653,9 +655,11 @@ def fix_hidden_turbo() -> int:
             gap = round(net - base - (r["bonus"] or 0), 2)
             if not (0 < gap <= round(0.20 * base, 2)):  # same 20%-of-base cap as the pipeline
                 continue
-            note = f"{note_txt} | {r['note']}" if r["note"] else note_txt
+            seen = pipeline.net_witnessed(dict(r))
+            note_bits = [note_txt] + ([] if seen else [pipeline.UNWITNESSED_TURBO]) + [r["note"]]
             c.execute(update(db.trips).where(t.id == r["id"])
-                      .values(turbo=gap, check_status="pass", note=note))
+                      .values(turbo=gap, check_status="pass" if seen else "no_data",
+                              note=" | ".join(b for b in note_bits if b)))
             log(f"  ✓ #{r['id']} {r['file_name']}: turbo 0→{gap}")
             fixed += 1
     log(f"เติม Turbo จากส่วนต่างให้ {fixed} แถว — รอคนกดอนุมัติในคิวตรวจ")
@@ -771,9 +775,14 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
     jobs_created = approved = flagged = errors = submitted = 0
     processed_images = 0
     touched_weeks = set()
+    # every trip read in this round, whichever path read it. A top half among them with no
+    # lower half yet waits one more round; any approval later in the round must know that too,
+    # or the review sweep approves the top the collect just held.
+    fresh_round = set()
 
     if config.INGEST_BATCH or db.open_batches():
-        got, errs, jobs_touched, batch_issues = collect_batches(drive, exports_id, cancel_open=cancel_batches)
+        got, errs, jobs_touched, batch_issues = collect_batches(drive, exports_id, cancel_open=cancel_batches,
+                                                                fresh_out=fresh_round)
         errors += errs
         issues.extend(batch_issues)
         if got or jobs_touched:
@@ -805,6 +814,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
         with ThreadPoolExecutor(max_workers=INGEST_PARALLEL) as ex:
             res = list(ex.map(_redo, stuck))
         errors += res.count("error")
+        fresh_round.update(t for (t, _j), r in zip(stuck, res) if r == "done")
     redo_jobs = {j for _, j in stuck} | set(db.stale_running_jobs()) | set(db.jobs_missing_dates())
     if redo_jobs:
         for jid, d1, d2 in db.jobs_dates(redo_jobs):
@@ -812,7 +822,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
                 pipeline.pair_fragments(jid)
                 if d1 and d2:
                     pipeline.spread_dates(jid, d1, d2, only_missing=True)
-                st = db.auto_approve_job(jid)
+                st = db.auto_approve_job(jid, fresh_ids=fresh_round)
                 approved += st["approved"]
                 flagged += st["flagged"]
                 touched_weeks.add((d1, d2))
@@ -845,7 +855,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
         try:
             if d1 and d2:
                 pipeline.spread_dates(jid, d1, d2, only_missing=True)  # a failed collect left them bare
-            st = db.auto_approve_job(jid)
+            st = db.auto_approve_job(jid, fresh_ids=fresh_round)
             if st["approved"] or st.get("discarded"):
                 approved += st["approved"]
                 touched_weeks.add((d1, d2))
@@ -895,6 +905,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
 
         with ThreadPoolExecutor(max_workers=INGEST_PARALLEL) as ex:
             res = list(ex.map(_reread, broken))
+        fresh_round.update(t for (t, _j), r in zip(broken, res) if r == "done")
         fixed = res.count("done")
         log(f"   อ่านสำเร็จ {fixed}/{len(broken)} แถว")
         for (tid, _), r in zip(broken, res):
@@ -907,7 +918,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
                 pipeline.pair_fragments(jid)
                 if d1 and d2:
                     pipeline.spread_dates(jid, d1, d2, only_missing=True)
-                st = db.auto_approve_job(jid)
+                st = db.auto_approve_job(jid, fresh_ids=fresh_round)
                 if st["approved"]:
                     approved += st["approved"]
                     touched_weeks.add((d1, d2))
@@ -1103,7 +1114,8 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
             issues.append((f"images:{job_id}", "images", f"อัพโหลดรูปส่งลูกค้าของ {rider} ไม่สำเร็จ: {e}"))
             errors += 1
 
-        stats = db.auto_approve_job(job_id, fresh_ids=trip_ids)
+        fresh_round.update(trip_ids)
+        stats = db.auto_approve_job(job_id, fresh_ids=fresh_round)
         keep_images_for_waiting(job_id, among=trip_ids, memory=images)
         approved += stats["approved"]
         flagged += stats["flagged"]
@@ -1146,7 +1158,7 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
                 pipeline.pair_fragments(jid)
                 if d1 and d2:
                     pipeline.spread_dates(jid, d1, d2, only_missing=True)
-                st = db.auto_approve_job(jid)
+                st = db.auto_approve_job(jid, fresh_ids=fresh_round)
                 approved += st["approved"]
                 flagged += st["flagged"]
             except Exception as e:  # noqa: BLE001

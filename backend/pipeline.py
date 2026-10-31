@@ -109,6 +109,10 @@ def pair_fragments(job_id) -> int:
                     if tnote2:
                         fields["turbo"] = m2["turbo"]
                         fields["check_status"] = _check(m2)
+                        if (fields["check_status"] == "pass"
+                                and not net_witnessed(m2, other_net=bot.get("net_earnings"))):
+                            fields["check_status"] = "no_data"
+                            tnote2 = f"{tnote2} | {UNWITNESSED_TURBO}"
                         tnote = f"{tnote} | {tnote2}" if tnote else tnote2
             fields["kind"] = "full"
             note = f"รวม 2 รูป: {r['file_name']} + {b['file_name']}"
@@ -183,9 +187,6 @@ def pair_fragments(job_id) -> int:
                 continue
             top, bot = db.get_trip(r["id"]), db.get_trip(b["id"])
             fields = {k: bot.get(k) for k in BOTTOM_FIELDS if bot.get(k) is not None}
-            for k in BOTTOM_IF_MISSING:
-                if not top.get(k) and bot.get(k):
-                    fields[k] = bot[k]
             merged = {**top, **fields}
             fields["check_status"] = extractor.arithmetic_check({
                 "net_earnings": merged.get("net_earnings"), "base_fare": merged.get("base_fare"),
@@ -196,6 +197,13 @@ def pair_fragments(job_id) -> int:
             })
             fields["kind"] = "full"
             note = f"รวม 2 รูป: {r['file_name']} + {b['file_name']} (จับคู่ตามลำดับไฟล์ — รูปล่างไม่มี booking code)"
+            # the first pass already tried every way these two amounts could agree, so a lower
+            # half showing a fare of its own here disagrees with the top
+            shown = _num(bot.get("base_fare")) or _num(bot.get("net_earnings"))
+            if shown:
+                fields["check_status"] = "fail"
+                note = (f"{note} | รูปล่างแสดงยอด {shown:g} ไม่ตรงกับรูปบน "
+                        f"— ดูรูปว่าเป็นเที่ยวเดียวกันไหม")
             prior = top.get("note") or ""
             fields["note"] = f"{note} | {prior}" if prior else note
             db.merge_bottom_into_top(b["id"], r["id"], fields)
@@ -431,6 +439,32 @@ def _repair_money(data):
     return None
 
 
+def net_witnessed(data, other_net=None) -> bool:
+    """Is the driver's net confirmed by a figure other than base + bonus + turbo?
+
+    Filling the net−base gap into turbo makes that identity balance by construction, so it can
+    no longer catch a misread net. Another printed figure has to agree instead: the left
+    screen's net, the other half's net, or the passenger fare minus Grab's cut."""
+    net = _num(data.get("net_earnings"))
+    if net is None:
+        return False
+    for other in (data.get("net_earnings_left_panel"), other_net):
+        if _num(other) is not None and abs(_num(other) - net) <= 0.01:
+            return True
+    pt, gc = _num(data.get("passenger_total")), _num(data.get("grab_commission"))
+    return pt is not None and gc is not None and abs((pt - gc) - net) <= 1
+
+
+UNWITNESSED_TURBO = "ไม่มีตัวเลขอื่นในรูปยืนยันยอด net — ดูรูปก่อนอนุมัติ"
+
+
+def tip_maybe_in_bonus(raw_bonus, tip, base) -> bool:
+    """With no base fare there is nothing to tell whether the bonus read already holds the tip
+    (the model sometimes reads the extras total as bonus). A bonus smaller than the tip cannot
+    hold it; any other bonus might."""
+    return bool(tip) and not base and (raw_bonus or 0) >= tip
+
+
 def _fill_hidden_turbo(data):
     """Team rule (2026-08-24): a small positive net−base gap with bonus and turbo both read
     as 0 is the surge hidden inside a folded section (~5% of base in practice) — fill it into
@@ -494,6 +528,9 @@ def repair_money_reads() -> int:
     for r in rows:
         data = {k: r[k] for k in ("net_earnings", "base_fare", "bonus", "turbo", "tolls",
                                   "passenger_total", "grab_commission")}
+        tip = r["tip"] or 0
+        if tip_maybe_in_bonus((r["bonus"] or 0) - tip, tip, r["base_fare"]):
+            continue                                  # stored bonus = what was read + the tip
         note = _repair_money(data)
         if not note:
             continue
@@ -550,12 +587,24 @@ def apply_extraction(trip_id: int, job_id: int, data: dict) -> str:
                 and abs(net - (base + raw_bonus + tip + turbo)) > 0.01:
             data["bonus"] = raw_bonus  # bonus already included the tip
         turbo_note = None
-        if extractor.arithmetic_check(data) != "pass":
-            turbo_note = _repair_money(data)
-        if extractor.arithmetic_check(data) != "pass":
-            t2 = _fill_hidden_turbo(data)
-            turbo_note = f"{turbo_note} | {t2}" if turbo_note and t2 else (t2 or turbo_note)
+        tip_unsure = tip_maybe_in_bonus(raw_bonus, tip, base)
+        filled = None
+        if tip_unsure:
+            # deriving the base here would balance the identity whichever way the tip went
+            turbo_note = (f"ไม่เห็นค่าโดยสารพื้นฐาน และไม่รู้ว่าโบนัส {raw_bonus:g} รวมทิป {tip:g} "
+                          f"ไว้แล้วหรือยัง — ดูรูป")
+        else:
+            if extractor.arithmetic_check(data) != "pass":
+                turbo_note = _repair_money(data)
+            if extractor.arithmetic_check(data) != "pass":
+                filled = _fill_hidden_turbo(data)
+                turbo_note = f"{turbo_note} | {filled}" if turbo_note and filled else (filled or turbo_note)
         check = extractor.arithmetic_check(data)
+        if tip_unsure and check == "pass":
+            check = "no_data"
+        if filled and check == "pass" and not net_witnessed(data):
+            check = "no_data"
+            turbo_note = f"{turbo_note} | {UNWITNESSED_TURBO}"
         note = data.get("confidence_note")
         if turbo_note:
             note = f"{turbo_note} | {note}" if note else turbo_note
@@ -565,10 +614,10 @@ def apply_extraction(trip_id: int, job_id: int, data: dict) -> str:
             note = f"{dup_msg} | {note}" if note else dup_msg
         usage = data.get("_usage", {})
         job = db.get_job_meta(job_id)
-        service, svc_note = normalize_service(data.get("service_type"), job.get("category") if job else None,
-                                              trust_tier=data.get("kind") != "bottom")
-        if data.get("kind") == "bottom":
-            svc_note = None  # no service chip on the bottom half — the model guessed
+        # a lower half shows no service chip: whatever the model named is a guess, and the
+        # rider's group is all there is
+        guess = None if data.get("kind") == "bottom" else data.get("service_type")
+        service, svc_note = normalize_service(guess, job.get("category") if job else None)
         if data.get("kind") in ("full", "bottom") and data.get("passenger_paid") is None and data.get("passenger_total") is None:
             pf_note = "P ว่าง — รูปหุบหัวข้อ 'ค่าโดยสารของผู้โดยสารทั้งหมด' (แจ้งไรเดอร์กางก่อนแคป)"
             note = f"{pf_note} | {note}" if note else pf_note
