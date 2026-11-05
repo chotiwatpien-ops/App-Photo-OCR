@@ -300,6 +300,8 @@ def discover(drive, inbox_id, walk=None, closed=None):
         top_name = clean_name(top["name"])
         if config.week_ignored(top_name):
             continue                     # a sandbox week (config.IGNORE_WEEKS) — not production data
+        if top["name"].lstrip().startswith("_"):
+            continue                     # ours, e.g. _Archive holding closed weeks: same rule as inside a week
         rng = parse_range(top_name) if top_name.lower().startswith("week") else None
         if rng:  # production: Week D-D Mon / <category> / <Admin X> / <rider>
             d1, d2 = rng
