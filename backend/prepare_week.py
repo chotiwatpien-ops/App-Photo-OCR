@@ -18,12 +18,14 @@ import sys
 from datetime import date, timedelta
 
 GROUPS = ("2W", "4W")
+MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 CATEGORIES = ("2 W Saver", "2 W Standard", "4 W Standard")
 
 
 def week_name(d_from):
-    """'2026-11-09' -> 'Week 9-15 Nov', spelled as Ops spell it (pool.next_week_name)."""
-    from pool import MONTH_ABBR
+    """'2026-11-09' -> 'Week 9-15 Nov', spelled as Ops spell it (pool.next_week_name). The month
+    names are kept here because importing pool pulls in the OCR libraries, which this
+    workflow does not install."""
     d1 = date.fromisoformat(d_from)
     d2 = d1 + timedelta(days=6)
     if d1.month == d2.month:

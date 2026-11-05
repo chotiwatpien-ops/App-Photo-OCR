@@ -32,6 +32,7 @@ drive = LocalDrive(inbox)
 quiet = lambda *a: None                                         # noqa: E731
 
 check("ชื่อสัปดาห์เดือนเดียวกัน", pw.week_name("2026-11-09") == "Week 9-15 Nov")
+check("ไม่ดึง pool/pairing (workflow ไม่ได้ติดตั้ง numpy)", "pool" not in sys.modules and "pairing" not in sys.modules)
 check("ชื่อสัปดาห์ข้ามเดือน", pw.week_name("2026-11-30") == "Week 30 Nov-6 Dec")
 check("ชื่อที่สร้างอ่านกลับเป็นสัปดาห์เดิม",
       ingest.week_label(ingest.parse_range(pw.week_name("2026-11-30"))[0].isoformat()) == "2026-W49")
