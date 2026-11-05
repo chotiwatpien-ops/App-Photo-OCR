@@ -334,7 +334,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="ปิดสัปดาห์ในครั้งเดียว (ปุ่มบนเว็บ)")
     ap.add_argument("--from", dest="d_from")
     ap.add_argument("--to", dest="d_to")
-    ap.add_argument("--mode", choices=("plan", "apply"), default="plan")
+    ap.add_argument("--mode", choices=("plan", "apply", "lock"), default="plan",
+                    help="lock = ล็อกอย่างเดียว ไม่ย้าย ไม่ยกงาน ไม่ออกไฟล์ (เหมือนปุ่ม 🔒 ในหน้าจอเดิม)")
     ap.add_argument("--run-id", type=int, help="แถวใน close_runs ที่เว็บสร้างไว้ (ว่าง = สร้างใหม่)")
     ap.add_argument("--mark-failed", type=int, metavar="RUN_ID",
                     help="ใช้ใน workflow เมื่อรันล้มก่อนถึงตัวนี้ — บอกหน้าเว็บว่ารอบนี้ตายแล้ว")
@@ -349,6 +350,11 @@ def main(argv=None):
         return 0
     if not (a.d_from and a.d_to):
         ap.error("ต้องใส่ --from และ --to")
+    if a.mode == "lock":
+        # for a week that is dropped, not delivered: nothing is moved, carried or exported
+        made = db.close_week(a.d_from, a.d_to, by="close-week lock")
+        print(f"🔒 {a.d_from}..{a.d_to}: {'ล็อกแล้ว' if made else 'ล็อกอยู่แล้ว ไม่ได้ทำอะไรเพิ่ม'}")
+        return 0
     run_id = a.run_id or db.create_close_run(a.d_from, a.d_to, a.mode)
     rc = Runner(run_id, a.d_from, a.d_to, a.mode).go()
     run = db.get_close_run(run_id)
