@@ -1,0 +1,49 @@
+name: Correction report — คนแก้อะไรในคิวตรวจ (อ่านอย่างเดียว)
+
+# Every fix a person makes in the review queue is a free answer key for the reader. This sums
+# them from action_log: which fields get corrected and how, and for each reason a row was held,
+# how often it was approved unchanged (a hold that costs review time for nothing). The result is
+# on the run's Summary page. It names trips by id only, never a rider, an address or a booking
+# code: this repository and its Actions logs are public. It writes nothing.
+
+on:
+  schedule:
+    - cron: "0 2 * * 1"            # Monday 09:00 Bangkok, the week just gone
+  workflow_dispatch:
+    inputs:
+      date_from:
+        description: "วันแรก (YYYY-MM-DD) ว่างไว้ = ย้อนหลัง 7 วัน"
+        type: string
+        default: ""
+      date_to:
+        description: "วันสุดท้าย (YYYY-MM-DD) ว่างไว้ = วันนี้"
+        type: string
+        default: ""
+
+concurrency:
+  group: correction-report
+  cancel-in-progress: false
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: Sum the queue corrections
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TZ: Asia/Bangkok
+          DFROM: ${{ inputs.date_from }}
+          DTO: ${{ inputs.date_to }}
+        run: |
+          set --
+          if [ -n "$DFROM" ]; then set -- "$@" --from "$DFROM"; fi
+          if [ -n "$DTO" ]; then set -- "$@" --to "$DTO"; fi
+          python -u correction_report.py "$@"
