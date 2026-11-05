@@ -93,8 +93,22 @@ def pair_fragments(job_id) -> int:
                     fields = alt
                     fields["check_status"] = "pass"
             tnote = None
-            if fields["check_status"] != "pass":
-                m2 = {**top, **fields}
+            # the bottom's net confirms the top's only when the top printed a net of its own;
+            # otherwise the merged net IS the bottom's and would witness itself
+            other_net = bot.get("net_earnings") if top.get("net_earnings") is not None else None
+            m = {**top, **fields}
+            tip = _num(m.get("tip")) or 0
+            if fields["check_status"] == "pass":
+                # a turbo filled into the top before the merge balances this check by itself
+                if ("เติม Turbo" in (top.get("note") or "") and top.get("turbo")
+                        and m.get("turbo") == top.get("turbo") and not net_witnessed(m, other_net)):
+                    fields["check_status"] = "no_data"
+                    tnote = UNWITNESSED_TURBO
+            elif tip_maybe_in_bonus((_num(m.get("bonus")) or 0) - tip, tip, m.get("base_fare")):
+                fields["check_status"] = "no_data"
+                tnote = tip_unsure_note((_num(m.get("bonus")) or 0) - tip, tip)
+            else:
+                m2 = dict(m)
                 # a turbo we inferred BEFORE the merge was based on the guessed base — once the
                 # bottom's real base lands, that inference is stale and may be redone
                 if "เติม Turbo" in (top.get("note") or ""):
@@ -110,7 +124,7 @@ def pair_fragments(job_id) -> int:
                         fields["turbo"] = m2["turbo"]
                         fields["check_status"] = _check(m2)
                         if (fields["check_status"] == "pass"
-                                and not net_witnessed(m2, other_net=bot.get("net_earnings"))):
+                                and not net_witnessed(m2, other_net=other_net)):
                             fields["check_status"] = "no_data"
                             tnote2 = f"{tnote2} | {UNWITNESSED_TURBO}"
                         tnote = f"{tnote} | {tnote2}" if tnote else tnote2
@@ -164,6 +178,11 @@ def pair_fragments(job_id) -> int:
             })
             fields["kind"] = "full"
             note = f"รวม 2 รูป: {r['file_name']} + {b['file_name']} (จับคู่ตามลำดับไฟล์ — รูปล่างไม่เห็นค่าโดยสารพื้นฐาน)"
+            tip = _num(bot.get("tip")) or 0
+            raw_bonus = (_num(bot.get("bonus")) or 0) - tip       # stored bonus = what was read + tip
+            if tip_maybe_in_bonus(raw_bonus, tip, None):
+                fields["check_status"] = "no_data"
+                note = f"{note} | {tip_unsure_note(raw_bonus, tip)}"
             prior = top.get("note") or ""
             fields["note"] = f"{note} | {prior}" if prior else note
             db.merge_bottom_into_top(b["id"], r["id"], fields)
@@ -202,8 +221,7 @@ def pair_fragments(job_id) -> int:
             shown = _num(bot.get("base_fare")) or _num(bot.get("net_earnings"))
             if shown:
                 fields["check_status"] = "fail"
-                note = (f"{note} | รูปล่างแสดงยอด {shown:g} ไม่ตรงกับรูปบน "
-                        f"— ดูรูปว่าเป็นเที่ยวเดียวกันไหม")
+                note = f"{note} | รูปล่างแสดงยอด {shown:g} {HALVES_DISAGREE}"
             prior = top.get("note") or ""
             fields["note"] = f"{note} | {prior}" if prior else note
             db.merge_bottom_into_top(b["id"], r["id"], fields)
@@ -456,6 +474,12 @@ def net_witnessed(data, other_net=None) -> bool:
 
 
 UNWITNESSED_TURBO = "ไม่มีตัวเลขอื่นในรูปยืนยันยอด net — ดูรูปก่อนอนุมัติ"
+HALVES_DISAGREE = "ไม่ตรงกับรูปบน — ดูรูปว่าเป็นเที่ยวเดียวกันไหม"
+
+
+def tip_unsure_note(raw_bonus, tip):
+    return (f"ไม่เห็นค่าโดยสารพื้นฐาน และไม่รู้ว่าโบนัส {raw_bonus:g} รวมทิป {tip:g} "
+            f"ไว้แล้วหรือยัง — ดูรูป")
 
 
 def tip_maybe_in_bonus(raw_bonus, tip, base) -> bool:
@@ -591,8 +615,7 @@ def apply_extraction(trip_id: int, job_id: int, data: dict) -> str:
         filled = None
         if tip_unsure:
             # deriving the base here would balance the identity whichever way the tip went
-            turbo_note = (f"ไม่เห็นค่าโดยสารพื้นฐาน และไม่รู้ว่าโบนัส {raw_bonus:g} รวมทิป {tip:g} "
-                          f"ไว้แล้วหรือยัง — ดูรูป")
+            turbo_note = tip_unsure_note(raw_bonus, tip)
         else:
             if extractor.arithmetic_check(data) != "pass":
                 turbo_note = _repair_money(data)

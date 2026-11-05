@@ -668,8 +668,14 @@ def fix_hidden_turbo() -> int:
             gap = round(net - base - (r["bonus"] or 0), 2)
             if not (0 < gap <= round(0.20 * base, 2)):  # same 20%-of-base cap as the pipeline
                 continue
+            if pipeline.HALVES_DISAGREE in (r["note"] or ""):
+                continue                     # failed on purpose: the two halves show different fares
             seen = pipeline.net_witnessed(dict(r))
-            note_bits = [note_txt] + ([] if seen else [pipeline.UNWITNESSED_TURBO]) + [r["note"]]
+            # the page shows both halves of a merged row only while its note opens with 'รวม 2 รูป'
+            head, _sep, rest = (r["note"] or "").partition(" | ")
+            if not head.startswith("รวม 2 รูป"):
+                head, rest = "", r["note"] or ""
+            note_bits = [head, note_txt] + ([] if seen else [pipeline.UNWITNESSED_TURBO]) + [rest]
             c.execute(update(db.trips).where(t.id == r["id"])
                       .values(turbo=gap, check_status="pass" if seen else "no_data",
                               note=" | ".join(b for b in note_bits if b)))

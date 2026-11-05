@@ -113,5 +113,52 @@ t = read(job, "3.jpg", kind="bottom", net_earnings=44, base_fare=44, service_typ
 check("ครึ่งล่างลำพังในกลุ่ม 2 W Saver ได้ Saver Bike ไม่ใช่รถที่โมเดลเดา",
       t["service_type"] == "Saver Bike", t["service_type"])
 
+# --- 6. the guards hold when two halves are merged (how-review 2026-11-05) ------------------
+j6 = db.create_job("สมปอง", "Trips", "2026-08-24", "2026-08-30", category="4 W Standard")
+top = read(j6, "1.jpg", kind="top", net_earnings=57, base_fare=48, booking_code="A-MERGEFILL0001")
+check("ครึ่งบนที่เติม turbo เองถูกกักไว้ก่อน", top["check_status"] == "no_data" and top["turbo"] == 9)
+read(j6, "2.jpg", kind="bottom", net_earnings=48, base_fare=48)
+pipeline.pair_fragments(j6)
+t = db.get_trip(top["id"])
+check("รวมกับครึ่งล่างที่ค่ารอบเท่ากัน: turbo ที่เติมไว้ยังต้องมีตัวเลขยืนยัน ไม่ผ่านเอง",
+      t["kind"] == "full" and t["check_status"] != "pass", (t["kind"], t["check_status"]))
+check("โน้ตยังขึ้นต้นด้วย 'รวม 2 รูป' (หน้าเว็บใช้แสดงรูปครึ่งที่สอง)", (t["note"] or "").startswith("รวม 2 รูป"))
+
+j7 = db.create_job("สมใจ", "Trips", "2026-08-24", "2026-08-30", category="4 W Standard")
+top = read(j7, "1.jpg", kind="top", net_earnings=57, base_fare=48, booking_code="A-MERGEFILL0002")
+read(j7, "2.jpg", kind="bottom", net_earnings=48, base_fare=48, passenger_total=71, grab_commission=14)
+pipeline.pair_fragments(j7)
+t = db.get_trip(top["id"])
+check("รวมแล้วมีค่าโดยสาร − ส่วนแบ่ง Grab ยืนยัน net: ผ่านเองได้", t["check_status"] == "pass", t["check_status"])
+
+j8 = db.create_job("สมหมาย", "Trips", "2026-08-24", "2026-08-30", category="2 W Saver")
+top = read(j8, "1.jpg", kind="top", net_earnings=100, base_fare=None, booking_code="A-MERGETIP00001",
+           service_type="Saver Bike")
+read(j8, "2.jpg", kind="bottom", bonus=20, tip=20)
+pipeline.pair_fragments(j8)
+t = db.get_trip(top["id"])
+check("รวมรอบ 2 (ครึ่งล่างไม่มีค่ารอบ) + โบนัสอาจรวมทิป: ไม่ผ่านเอง",
+      t["kind"] == "full" and t["check_status"] != "pass", (t["kind"], t["base_fare"], t["check_status"]))
+check("รวมรอบ 2: โน้ตบอกเรื่องทิป", "รวมทิป" in (t["note"] or ""))
+
+j9 = db.create_job("สมนึก", "Trips", "2026-08-24", "2026-08-30", category="2 W Saver")
+top = read(j9, "1.jpg", kind="top", net_earnings=100, base_fare=None, booking_code="A-MERGETIP00002",
+           service_type="Saver Bike")
+read(j9, "2.jpg", kind="bottom", net_earnings=100, base_fare=None, bonus=20, tip=20)
+pipeline.pair_fragments(j9)
+t = db.get_trip(top["id"])
+check("รวมรอบ 1 ครึ่งล่างไม่มีค่ารอบ + โบนัสอาจรวมทิป: ไม่ผ่านเอง",
+      t["kind"] == "full" and t["check_status"] != "pass", (t["base_fare"], t["check_status"]))
+
+j10 = db.create_job("สมพร", "Trips", "2026-08-24", "2026-08-30", category="4 W Standard")
+tid = db.create_trip(j10, "m.jpg", None, "image/jpeg")
+db.update_trip(tid, {"status": "done", "check_status": "fail", "net_earnings": 57, "base_fare": 48,
+                     "bonus": 0, "turbo": 0, "kind": "full", "note": "รวม 2 รูป: a.jpg + b.jpg | เดิม"})
+ingest.fix_hidden_turbo()
+t = db.get_trip(tid)
+check("รอบเก็บตกเติม turbo แล้ว โน้ตยังขึ้นต้นด้วย 'รวม 2 รูป'",
+      (t["note"] or "").startswith("รวม 2 รูป") and "เติม Turbo" in t["note"] and t["note"].endswith("เดิม"),
+      t["note"])
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)
