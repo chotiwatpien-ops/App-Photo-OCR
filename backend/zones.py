@@ -78,7 +78,7 @@ def zone_for(district=None, province_code=None, address=None, on_date=None) -> s
 # customer named overrides its district: Lumphini is named apart from Pathum Wan. Slips carry no
 # coordinates, so a "polygon" is decided by the names in the address, never by a map line.
 TABLE_PATH = __import__("pathlib").Path(__file__).with_name("zone_table.csv")
-TABLE_OTHER = "Other"          # Bangkok, not named in the table
+TABLE_OTHER = "Other"          # the customer's blue: anywhere the other zones do not name
 _table = None
 
 
@@ -113,8 +113,9 @@ def load_table(path=None):
 
 def table_zone(district=None, province_code=None, address=None, table=None) -> str:
     """Zone by the customer's table. Order: a named sub-district in the address → the district
-    the reader gave → a named district in the address → Bangkok's 'Other' → outside (blank).
-    Outside Bangkok and unnamed stays blank until the customer says what it should be."""
+    the reader gave → a named district in the address → Other (blue). Blue covers places outside
+    Bangkok the table does not name too (Fiat, 2026-11-08), so no trip is left without a zone;
+    a trip with no location at all stays blank."""
     global _table
     if table is None:
         _table = _table or load_table()
@@ -131,6 +132,4 @@ def table_zone(district=None, province_code=None, address=None, table=None) -> s
     for name, zone in dists:
         if name in addr:
             return zone
-    if province_code == "BKK" or "กรุงเทพ" in addr:
-        return TABLE_OTHER
-    return ""
+    return TABLE_OTHER if (d or addr or province_code) else ""

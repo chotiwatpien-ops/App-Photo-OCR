@@ -24,7 +24,7 @@ def preview(rows, table=None):
     for r in rows:
         for end in ("pickup", "dropoff"):
             z = zones.table_zone(r.get(f"{end}_district"), r.get(f"{end}_code"), r.get(f"{end}_text"), table=table)
-            got[z or "(นอกพื้นที่ ว่าง)"] += 1
+            got[z or "(ไม่มีที่อยู่ ว่าง)"] += 1
             if z in ("", zones.TABLE_OTHER):
                 d = zones._norm(r.get(f"{end}_district")) or "(ตัวอ่านไม่ได้ให้เขต)"
                 if d not in names:
