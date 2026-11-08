@@ -392,6 +392,17 @@ def _write_zone_map(wb):
     rows = [(name, ", ".join(sorted(members)),
              ", ".join(prov_th[c] for c, z in PROVINCE_ZONE.items() if z == name)) for name, members in ZONES]
     rows.append(("Downtown", "เขตอื่นทั้งหมดในกรุงเทพฯ ที่ไม่อยู่ในโซนข้างบน", prov_th["BKK"]))
+    if config.ZONE_TABLE_FROM:
+        # trips from this day on use the customer's colour zones instead (zone_table.csv)
+        from zones import load_table, TABLE_OTHER
+        rows += [("", "", ""), (f"ตั้งแต่ {config.ZONE_TABLE_FROM}", "ใช้โซนสีของลูกค้าแทนตารางข้างบน · แขวงที่ระบุชนะเขตของมัน", "")]
+        by_zone = {}
+        for part in load_table():
+            for n, z in part:
+                by_zone.setdefault(z, []).append(n)
+        for z in ("Green", "Grey", "Orange", "Pink"):
+            rows.append((z, ", ".join(sorted(by_zone.get(z, []))), ""))
+        rows.append((TABLE_OTHER, "ที่อื่นทั้งหมดที่ไม่อยู่ในโซนข้างบน ทั้งในและนอกกรุงเทพฯ", ""))
     for i, r in enumerate(rows, start=2):
         for c, v in enumerate(r, start=1):
             cell = ws.cell(row=i, column=c, value=v)

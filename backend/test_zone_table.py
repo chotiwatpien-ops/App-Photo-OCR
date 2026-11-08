@@ -81,5 +81,25 @@ check("ลูกค้าพิมพ์ชื่อพื้นที่ ชื
                                    for n, said in (("ก", "Outer Ring"), ("ข", "ส้ม"), ("ค", "orange"), ("ง", ""))])]
       == ["Orange", "Orange", "Orange", "Blue"])
 
+import importlib                                                # noqa: E402
+import io                                                       # noqa: E402
+import openpyxl                                                 # noqa: E402
+importlib.reload(config)
+check("เปิดใช้โซนสีตั้งแต่ W46 (Fiat 8 พ.ย.)", config.ZONE_TABLE_FROM == "2026-11-09", config.ZONE_TABLE_FROM)
+xw.config.ZONE_TABLE_FROM = config.ZONE_TABLE_FROM
+base = dict(driver_name="ทดสอบ Win", trip_time="10:00", service_type="Saver Bike", payment_method="CASH",
+            distance_km=3, net_earnings=50, base_fare=50, bonus=0, turbo=0, tolls=0, passenger_total=60,
+            passenger_paid=61, pickup_district="ดินแดง", pickup_code="BKK", pickup_text="ดินแดง",
+            dropoff_district="ลาดกระบัง", dropoff_code="BKK", dropoff_text="ลาดกระบัง", booking_code="A-X",
+            customer_image="x.jpg", job_id=1)
+book = openpyxl.load_workbook(io.BytesIO(xw.build_fare_lines_workbook(
+    [dict(base, id=1, trip_date="2026-09-30"), dict(base, id=2, trip_date="2026-11-10")], every_week=True)))
+ws = book[book.sheetnames[0]]
+head = [c.value for c in ws[1]]
+cols = [i for i, h in enumerate(head) if h in ("Pick-up Zone", "Drop-off Zone")]
+got = {str(r[1])[:10]: [r[i] for i in cols] for r in ws.iter_rows(min_row=2, values_only=True)}
+check("ไฟล์ Phase 3: เที่ยวก่อน W46 คงโซนเดิม", got.get("2026-09-30") == ["Downtown", "East-SVB"], got)
+check("ไฟล์ Phase 3: เที่ยว W46 ได้โซนสี", got.get("2026-11-10") == ["Green", "Orange"], got)
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)
