@@ -1,73 +1,73 @@
 name,level,zone
-ปทุมวัน,เขต,City Center
-คลองเตย,เขต,City Center
-ดินแดง,เขต,City Center
-คลองเตยเหนือ,แขวง,City Center
-คลองตัน,แขวง,City Center
-คลองตันเหนือ,แขวง,City Center
-วัฒนา,เขต,City Center
-ลุมพินี,แขวง,Inner City
-สีลม,แขวง,Inner City
-บางรัก,เขต,Inner City
-ยานนาวา,เขต,Inner City
-สัมพันธวงศ์,เขต,Inner City
-พระนคร,เขต,Inner City
-ป้อมปราบศัตรูพ่าย,เขต,Inner City
-ดุสิต,เขต,Inner City
-จตุจักร,เขต,Inner City
-บางซื่อ,เขต,Inner City
-พระโขนง,เขต,Inner City
-สวนหลวง,เขต,Inner City
-บางนา,เขต,Inner City
-ธนบุรี,เขต,Inner City
-สาทร,เขต,Inner City
-ราชเทวี,เขต,Inner City
-พญาไท,เขต,Inner City
-ห้วยขวาง,เขต,Inner City
-วังทองหลาง,เขต,Inner City
-ลาดพร้าว,เขต,Inner City
-บางคอแหลม,เขต,Inner City
-คลองสาน,เขต,Inner City
-บางกอกใหญ่,เขต,Inner City
-บางกอกน้อย,เขต,Inner City
-บางพลัด,เขต,Inner City
-บางกะปิ,เขต,Inner City
-จอมทอง,เขต,Inner City
-ประเวศ,เขต,Outer Ring
-บางเขน,เขต,Outer Ring
-หลักสี่,เขต,Outer Ring
-สายไหม,เขต,Outer Ring
-คันนายาว,เขต,Outer Ring
-มีนบุรี,เขต,Outer Ring
-บางแค,เขต,Outer Ring
-ปากเกร็ด,เขต,Outer Ring
-บางใหญ่,เขต,Outer Ring
-พระประแดง,เขต,Outer Ring
-เมืองสมุทรปราการ,เขต,Outer Ring
-สมุทรปราการ,เขต,Outer Ring
-บางพลี,เขต,Outer Ring
-บางเสาธง,เขต,Outer Ring
-บางบ่อ,เขต,Outer Ring
-พระสมุทรเจดีย์,เขต,Outer Ring
-ดอนเมือง,เขต,Outer Ring
-บึงกุ่ม,เขต,Outer Ring
-สะพานสูง,เขต,Outer Ring
-ลาดกระบัง,เขต,Outer Ring
-คลองสามวา,เขต,Outer Ring
-ตลิ่งชัน,เขต,Outer Ring
-ทวีวัฒนา,เขต,Outer Ring
-ภาษีเจริญ,เขต,Outer Ring
-หนองแขม,เขต,Outer Ring
-บางบอน,เขต,Outer Ring
-บางขุนเทียน,เขต,Outer Ring
-ราษฎร์บูรณะ,เขต,Outer Ring
-ทุ่งครุ,เขต,Outer Ring
-เมืองนนทบุรี,เขต,Outer Ring
-นนทบุรี,เขต,Outer Ring
-บางกรวย,เขต,Outer Ring
-บางบัวทอง,เขต,Outer Ring
-ลำลูกกา,เขต,Outer Ring
-หนองจอก,เขต,Other
-เมืองพัทยา,เขต,Pattaya
-พัทยา,เขต,Pattaya
-บางละมุง,เขต,Pattaya
+ปทุมวัน,เขต,Green
+คลองเตย,เขต,Green
+ดินแดง,เขต,Green
+คลองเตยเหนือ,แขวง,Green
+คลองตัน,แขวง,Green
+คลองตันเหนือ,แขวง,Green
+วัฒนา,เขต,Green
+ลุมพินี,แขวง,Grey
+สีลม,แขวง,Grey
+บางรัก,เขต,Grey
+ยานนาวา,เขต,Grey
+สัมพันธวงศ์,เขต,Grey
+พระนคร,เขต,Grey
+ป้อมปราบศัตรูพ่าย,เขต,Grey
+ดุสิต,เขต,Grey
+จตุจักร,เขต,Grey
+บางซื่อ,เขต,Grey
+พระโขนง,เขต,Grey
+สวนหลวง,เขต,Grey
+บางนา,เขต,Grey
+ธนบุรี,เขต,Grey
+สาทร,เขต,Grey
+ราชเทวี,เขต,Grey
+พญาไท,เขต,Grey
+ห้วยขวาง,เขต,Grey
+วังทองหลาง,เขต,Grey
+ลาดพร้าว,เขต,Grey
+บางคอแหลม,เขต,Grey
+คลองสาน,เขต,Grey
+บางกอกใหญ่,เขต,Grey
+บางกอกน้อย,เขต,Grey
+บางพลัด,เขต,Grey
+บางกะปิ,เขต,Grey
+จอมทอง,เขต,Grey
+ประเวศ,เขต,Orange
+บางเขน,เขต,Orange
+หลักสี่,เขต,Orange
+สายไหม,เขต,Orange
+คันนายาว,เขต,Orange
+มีนบุรี,เขต,Orange
+บางแค,เขต,Orange
+ปากเกร็ด,เขต,Orange
+บางใหญ่,เขต,Orange
+พระประแดง,เขต,Orange
+เมืองสมุทรปราการ,เขต,Orange
+สมุทรปราการ,เขต,Orange
+บางพลี,เขต,Orange
+บางเสาธง,เขต,Orange
+บางบ่อ,เขต,Orange
+พระสมุทรเจดีย์,เขต,Orange
+ดอนเมือง,เขต,Orange
+บึงกุ่ม,เขต,Orange
+สะพานสูง,เขต,Orange
+ลาดกระบัง,เขต,Orange
+คลองสามวา,เขต,Orange
+ตลิ่งชัน,เขต,Orange
+ทวีวัฒนา,เขต,Orange
+ภาษีเจริญ,เขต,Orange
+หนองแขม,เขต,Orange
+บางบอน,เขต,Orange
+บางขุนเทียน,เขต,Orange
+ราษฎร์บูรณะ,เขต,Orange
+ทุ่งครุ,เขต,Orange
+เมืองนนทบุรี,เขต,Orange
+นนทบุรี,เขต,Orange
+บางกรวย,เขต,Orange
+บางบัวทอง,เขต,Orange
+ลำลูกกา,เขต,Orange
+หนองจอก,เขต,Blue
+เมืองพัทยา,เขต,Pink
+พัทยา,เขต,Pink
+บางละมุง,เขต,Pink

@@ -78,7 +78,7 @@ def zone_for(district=None, province_code=None, address=None, on_date=None) -> s
 # customer named overrides its district: Lumphini is named apart from Pathum Wan. Slips carry no
 # coordinates, so a "polygon" is decided by the names in the address, never by a map line.
 TABLE_PATH = __import__("pathlib").Path(__file__).with_name("zone_table.csv")
-TABLE_OTHER = "Other"          # the customer's blue: anywhere the other zones do not name
+TABLE_OTHER = "Blue"           # the customer's "Other": anywhere the other zones do not name
 _table = None
 
 

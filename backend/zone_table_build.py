@@ -17,6 +17,14 @@ from collections import Counter
 from pathlib import Path
 
 LEVELS = {"แขวง", "เขต", "อำเภอ", "เมือง"}
+# The file shows the team's colours (Fiat, 2026-11-08). Whatever the sheet says, area name, colour
+# or Thai colour, comes out as the colour.
+COLOUR = {}
+for colour, *names in (("Green", "City Center", "เขียว"), ("Grey", "Inner City", "เทา", "Gray"),
+                       ("Orange", "Outer Ring", "ส้ม"), ("Pink", "Pattaya", "ชมพู", "พัทยา"),
+                       ("Blue", "Other", "น้ำเงิน")):
+    for n in (colour, *names):
+        COLOUR[n.lower()] = colour
 OUT = Path(__file__).with_name("zone_table.csv")
 
 
@@ -45,6 +53,7 @@ def build(rows):
         zone = said if said and said not in ("✓", "/", "ok", "OK") else (r.get("โซนที่เสนอ") or "").strip()
         if not zone or zone.startswith("?"):
             continue
+        zone = COLOUR.get(zone.lower(), zone)
         for n in names_of(r.get("พื้นที่") or ""):
             table.append((n, "แขวง" if level == "แขวง" else "เขต", zone))
     return table
