@@ -9,9 +9,9 @@
 นอกจากในชีต ขอถามเพิ่ม 3 ข้อครับ
 
 1.1 ชื่อโซนในไฟล์ ให้ใช้แบบไหน
-- Green / Grey / Orange / Pattaya / Other
-- City Center / Inner City / Outer Ring / Pattaya / Other
-- เขียว / เทา / ส้ม / พัทยา / อื่นๆ
+- ชื่อสีตามตารางของทีม: Green / Grey / Orange / Pink / Blue (Pink = Pattaya, Blue = Other)
+- ชื่อพื้นที่: City Center / Inner City / Outer Ring / Pattaya / Other
+- ชื่อสีภาษาไทย: เขียว / เทา / ส้ม / ชมพู / น้ำเงิน
 
 1.2 สลิปไม่มีพิกัด GPS ระบบจึงแบ่งโซนจากชื่อเขตหรือแขวงในที่อยู่ ไม่ได้ตามเส้นบนแผนที่แบบเป๊ะๆ ยอมรับได้ไหมครับ
 
