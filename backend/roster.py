@@ -59,6 +59,39 @@ def _list_all(drive, parent_id):
     return drive._list(f"'{parent_id}' in parents and trashed=false", "id, name")
 
 
+DRIVER_ID_HEADERS = {"driver id", "driver_id", "driverid", "รหัส", "รหัสคนขับ", "รหัสไรเดอร์"}
+
+
+def driver_id_text(v):
+    """1 / '1' / '0001' -> '0001'; blank -> None; anything else is kept as written so the check
+    below can name it."""
+    if v is None or str(v).strip() == "":
+        return None
+    s = str(v).strip()
+    if s.endswith(".0") and s[:-2].isdigit():
+        s = s[:-2]
+    return s.zfill(4) if s.isdigit() and len(s) <= 4 else s
+
+
+def check_driver_ids(rows):
+    """What is wrong with the ids in Ops' list: missing, not 4 digits, or one id on two people."""
+    issues, seen = [], {}
+    rows = [r for r in rows if len(r) > 3]
+    if not any(r[3] for r in rows):
+        return issues                                    # a list without ids: nothing to check
+    for name, _wheel, kind, did in rows:
+        who = f"{name} {kind}"
+        if not did:
+            issues.append(f"{who}: ไม่มีรหัส")
+        elif not (did.isdigit() and len(did) == 4):
+            issues.append(f"{who}: รหัส {did!r} ไม่ใช่ตัวเลข 4 หลัก")
+        elif did in seen and seen[did] != who:
+            issues.append(f"รหัส {did} ซ้ำกัน: {seen[did]} กับ {who}")
+        else:
+            seen[did] = who
+    return issues
+
+
 def import_pool(path) -> int:
     """path: a local .xlsx, or bytes already fetched from Drive."""
     import io
@@ -70,12 +103,19 @@ def import_pool(path) -> int:
         if sheet not in wb.sheetnames:
             log(f"⚠ ไม่มีชีต {sheet!r} ในไฟล์ — ข้าม")
             continue
-        for (v,) in wb[sheet].iter_rows(min_row=2, max_col=1, values_only=True):
+        it = wb[sheet].iter_rows(values_only=True)
+        head = [str(h or "").strip().lower() for h in (next(it, None) or ())]
+        id_col = next((i for i, h in enumerate(head) if h in DRIVER_ID_HEADERS), None)
+        for row in it:
+            v = row[0] if row else None
             if v and str(v).strip():
-                rows.append((str(v).strip(), wheel, kind))
+                did = row[id_col] if id_col is not None and id_col < len(row) else None
+                rows.append((str(v).strip(), wheel, kind, driver_id_text(did)))
+    for problem in check_driver_ids(rows):
+        log(f"⚠ {problem}")
     n = db.name_pool_load(rows)
     for wheel in ("2W", "4W"):
-        log(f"  {wheel}: {sum(1 for _, w, _ in rows if w == wheel)} ชื่อ")
+        log(f"  {wheel}: {sum(1 for r in rows if r[1] == wheel)} ชื่อ")
     return n
 
 

@@ -1,0 +1,44 @@
+name: Zone preview — ลองโซนใหม่กับเที่ยวจริง (อ่านอย่างเดียว)
+
+# Runs backend/zone_table.csv (the customer's zone sheet, proposed or confirmed) over the pick-up
+# and drop-off of every approved trip in the range: how many land in each zone, and which district
+# names the table does not name. Writes nothing. Prints zones, district names and counts only,
+# never an address: this repository and its Actions logs are public.
+
+on:
+  workflow_dispatch:
+    inputs:
+      date_from:
+        description: "วันแรก (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-08-31"
+      date_to:
+        description: "วันสุดท้าย (YYYY-MM-DD)"
+        type: string
+        required: true
+        default: "2026-10-04"
+
+concurrency:
+  group: zone-preview
+  cancel-in-progress: false
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+      - name: Try the zone table on real trips
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          TZ: Asia/Bangkok
+          DFROM: ${{ inputs.date_from }}
+          DTO: ${{ inputs.date_to }}
+        run: python -u zone_preview.py --from "$DFROM" --to "$DTO"

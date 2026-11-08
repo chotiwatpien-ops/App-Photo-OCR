@@ -1080,11 +1080,9 @@ def trips_view(date_from: str = None, date_to: str = None, driver: str = None,
                status: str = "all", q: str = None, page: int = 1, size: int = 50):
     size = max(1, min(size, 200))
     rows, total = db.search_trips(date_from, date_to, driver, status, q, size, (max(page, 1) - 1) * size)
-    from zones import zone_for
     for r in rows:  # the same derived values Sheet1 shows (คอลัมน์ C/F/G/J/P/Q)
         r["time_band"] = excel_writer.time_band(r.get("trip_time"))
-        r["pickup_zone"] = zone_for(r.get("pickup_district"), r.get("pickup_code"), r.get("pickup_text"))
-        r["dropoff_zone"] = zone_for(r.get("dropoff_district"), r.get("dropoff_code"), r.get("dropoff_text"))
+        r["pickup_zone"], r["dropoff_zone"] = excel_writer.trip_zones(r)
         pf = excel_writer.passenger_fare(r)
         net = None
         if r.get("base_fare") is not None:

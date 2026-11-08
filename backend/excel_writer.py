@@ -186,7 +186,14 @@ def passenger_fare_estimated(t) -> bool:
             and bool(t.get("base_fare")))
 
 
-def place(address, district, province_code) -> str:
+def trip_zones(t):
+    """(pick-up zone, drop-off zone) of a trip, by the zones in force on its date."""
+    on = t.get("trip_date")
+    return (zone_for(t.get("pickup_district"), t.get("pickup_code"), t.get("pickup_text"), on_date=on),
+            zone_for(t.get("dropoff_district"), t.get("dropoff_code"), t.get("dropoff_text"), on_date=on))
+
+
+def place(address, district, province_code, on_date=None) -> str:
     """What Sheet1 shows for pick-up and drop-off.
 
     It used to be the zone, and 10,942 of 13,077 rows came out "Downtown" — the fallback for any
@@ -195,7 +202,7 @@ def place(address, district, province_code) -> str:
     when there is no address: rows read between 2026-09-02 and 2026-09-05 have none, because the
     field was switched off to save output tokens, and a blank cell would be worse than a coarse
     one. Analysis keeps the zone columns, so nothing is lost by this."""
-    return (address or "").strip() or zone_for(district, province_code, None)
+    return (address or "").strip() or zone_for(district, province_code, None, on_date=on_date)
 
 
 def _write_main_row(ws, row, driver_name, t, locations=False):
@@ -210,10 +217,10 @@ def _write_main_row(ws, row, driver_name, t, locations=False):
         time_band(t.get("trip_time")),                          # C  6-hour band (team format)
         t.get("service_type"),                                  # D
         t.get("payment_method"),                                # E
-        (place(t.get("pickup_text"), t.get("pickup_district"), t.get("pickup_code")) if locations
-         else zone_for(t.get("pickup_district"), t.get("pickup_code"), t.get("pickup_text"))),   # F
-        (place(t.get("dropoff_text"), t.get("dropoff_district"), t.get("dropoff_code")) if locations
-         else zone_for(t.get("dropoff_district"), t.get("dropoff_code"), t.get("dropoff_text"))),  # G
+        (place(t.get("pickup_text"), t.get("pickup_district"), t.get("pickup_code"), t.get("trip_date"))
+         if locations else trip_zones(t)[0]),                   # F
+        (place(t.get("dropoff_text"), t.get("dropoff_district"), t.get("dropoff_code"), t.get("trip_date"))
+         if locations else trip_zones(t)[1]),                   # G
         t.get("distance_km"),                                   # H
         t.get("duration_mins"),                                 # I
         f"=K{row}+M{row}+N{row}",                               # J net (template formula)
@@ -352,8 +359,7 @@ def _write_analysis_row(ws, row, driver_name, t):
     values = [
         driver_name, d, _parse_time(t.get("trip_time")), t.get("booking_code"),
         f"=ISOWEEKNUM(B{row})",
-        zone_for(t.get("pickup_district"), t.get("pickup_code"), t.get("pickup_text")),
-        zone_for(t.get("dropoff_district"), t.get("dropoff_code"), t.get("dropoff_text")),
+        *trip_zones(t),
         t.get("pickup_district"), t.get("dropoff_district"),
         t.get("pickup_code"), t.get("dropoff_code"),
         "Y" if t.get("surge") else None, t.get("queue_type"), t.get("num_stops"),
@@ -448,8 +454,7 @@ def build_location_workbook(rows: list[dict]) -> bytes | None:
     for i, t in enumerate(sorted(wanted, key=lambda x: (x.get("trip_date") or "", x["driver_name"])),
                           start=2):
         _write_main_row(ws, i, t["driver_name"], t, locations=True)
-        for col, z in enumerate((zone_for(t.get("pickup_district"), t.get("pickup_code"), t.get("pickup_text")),
-                                 zone_for(t.get("dropoff_district"), t.get("dropoff_code"), t.get("dropoff_text"))),
+        for col, z in enumerate(trip_zones(t),
                                 start=len(HEADERS) + 1):
             cell = ws.cell(row=i, column=col, value=z)
             cell.font, cell.border = _BODY_FONT, _BORDER
@@ -476,8 +481,7 @@ def build_fare_lines_workbook(rows: list[dict], every_week=False) -> bytes | Non
     for i, t in enumerate(sorted(wanted, key=lambda x: (x.get("trip_date") or "", x["driver_name"])),
                           start=2):
         _write_fare_row(ws, i, t["driver_name"], t)
-        for col, z in enumerate((zone_for(t.get("pickup_district"), t.get("pickup_code"), t.get("pickup_text")),
-                                 zone_for(t.get("dropoff_district"), t.get("dropoff_code"), t.get("dropoff_text"))),
+        for col, z in enumerate(trip_zones(t),
                                 start=zone_col):
             cell = ws.cell(row=i, column=col, value=z)
             cell.font, cell.border = _BODY_FONT, _BORDER

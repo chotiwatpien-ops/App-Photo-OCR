@@ -220,6 +220,7 @@ name_pool = Table(
     Column("wheel", String(4), nullable=False),        # 2W | 4W
     Column("kind", String(8), nullable=False),         # Win | Home | Taxi
     Column("added_at", String(19), nullable=False),
+    Column("driver_id", String(8)),                     # the customer's 4-digit id, '0001'
 )
 
 # What kind of picture a rider sends. A round only sees the pictures it is moving, but a rider
@@ -359,7 +360,7 @@ def init_db():
         # older local DBs: add columns that appeared after they were created (safe no-op otherwise)
         with engine.begin() as c:
             c.execute(text("PRAGMA journal_mode=WAL"))
-            for tbl in (trips, jobs, ingest_runs, batch_jobs):
+            for tbl in (trips, jobs, ingest_runs, batch_jobs, name_pool):
                 existing = {r[1] for r in c.execute(text(f"PRAGMA table_info({tbl.name})"))}
                 for col in tbl.c:
                     if col.name not in existing:
@@ -374,6 +375,7 @@ def init_db():
             c.execute(text("ALTER TABLE batch_jobs ADD COLUMN IF NOT EXISTS job_ids TEXT"))
             c.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS drive_folder_id VARCHAR(64)"))
             c.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS source_album TEXT"))
+            c.execute(text("ALTER TABLE name_pool ADD COLUMN IF NOT EXISTS driver_id VARCHAR(8)"))
             for col in ("discount", "insurance_fee", "passenger_tolls"):
                 c.execute(text(f"ALTER TABLE trips ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION"))
 
@@ -1809,13 +1811,24 @@ def rider_styles_save(week_id, mapping) -> int:
 
 
 def name_pool_load(rows) -> int:
-    """Replace the pool with `rows` of (name, wheel, kind). Returns how many went in."""
+    """Replace the pool with `rows` of (name, wheel, kind) or (name, wheel, kind, driver_id).
+    Returns how many went in."""
     with engine.begin() as c:
         c.execute(name_pool.delete())
         now = _now()
-        c.execute(name_pool.insert(), [{"name": n.strip(), "wheel": w, "kind": k, "added_at": now}
-                                       for n, w, k in rows if n and n.strip()])
+        c.execute(name_pool.insert(), [{"name": r[0].strip(), "wheel": r[1], "kind": r[2], "added_at": now,
+                                        "driver_id": r[3] if len(r) > 3 else None}
+                                       for r in rows if r[0] and r[0].strip()])
         return c.execute(select(func.count()).select_from(name_pool)).scalar() or 0
+
+
+def driver_ids() -> dict:
+    """{'ตฤณ Win': '0001'}: the customer's driver id per rider as the folders and the workbook
+    name them, name then kind. 'ตฤณ Win' and 'ตฤณ Taxi' are two people with two ids."""
+    with engine.begin() as c:
+        rows = c.execute(select(name_pool.c.name, name_pool.c.kind, name_pool.c.driver_id)
+                         .where(name_pool.c.driver_id.isnot(None))).all()
+    return {f"{n} {k}": d for n, k, d in rows}
 
 
 def name_pool_for(wheel):

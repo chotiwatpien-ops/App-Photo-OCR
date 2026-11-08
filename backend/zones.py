@@ -49,8 +49,14 @@ def _norm(s):
     return _STRIP.sub("", (s or "").strip())
 
 
-def zone_for(district=None, province_code=None, address=None) -> str:
-    """Best zone for a location. Order: district table → keywords in the address → province → Downtown."""
+def zone_for(district=None, province_code=None, address=None, on_date=None) -> str:
+    """Best zone for a location. Trips dated from config.ZONE_TABLE_FROM on use the customer's
+    zone table (zone_table.csv); earlier ones keep the zones they were delivered with.
+    Old zones' order: district table → keywords in the address → province → Downtown."""
+    import config
+    start = getattr(config, "ZONE_TABLE_FROM", None)
+    if start and on_date and str(on_date) >= start:
+        return table_zone(district, province_code, address)
     d = _norm(district)
     if d:
         for name, members in ZONES:
@@ -65,3 +71,51 @@ def zone_for(district=None, province_code=None, address=None) -> str:
     if province_code in PROVINCE_ZONE:
         return PROVINCE_ZONE[province_code]
     return "Downtown" if (d or address) else ""
+
+
+# ---- the customer's zone table (requirement 2026-11-08) ------------------------------------
+# zone_table.csv: one row per area, `level` แขวง | เขต | อำเภอ | เมือง. A sub-district (แขวง) the
+# customer named overrides its district: Lumphini is named apart from Pathum Wan. Slips carry no
+# coordinates, so a "polygon" is decided by the names in the address, never by a map line.
+TABLE_PATH = __import__("pathlib").Path(__file__).with_name("zone_table.csv")
+TABLE_OTHER = "Other"          # Bangkok, not named in the table
+_table = None
+
+
+def load_table(path=None):
+    """(sub-districts, districts): [(name, zone)] longest name first, so 'คลองตันเหนือ' wins
+    over 'คลองตัน' when an address is searched."""
+    import csv
+    subs, dists = [], []
+    with open(path or TABLE_PATH, encoding="utf-8") as fh:
+        for r in csv.DictReader(fh):
+            name, zone = (r.get("name") or "").strip(), (r.get("zone") or "").strip()
+            if not name or not zone:
+                continue
+            (subs if r.get("level") == "แขวง" else dists).append((name, zone))
+    by_len = lambda kv: -len(kv[0])                                     # noqa: E731
+    return sorted(subs, key=by_len), sorted(dists, key=by_len)
+
+
+def table_zone(district=None, province_code=None, address=None, table=None) -> str:
+    """Zone by the customer's table. Order: a named sub-district in the address → the district
+    the reader gave → a named district in the address → Bangkok's 'Other' → outside (blank).
+    Outside Bangkok and unnamed stays blank until the customer says what it should be."""
+    global _table
+    if table is None:
+        _table = _table or load_table()
+        table = _table
+    subs, dists = table
+    d, addr = _norm(district), address or ""
+    for name, zone in subs:
+        if name in addr or d == name:
+            return zone
+    for name, zone in dists:
+        if d == name:
+            return zone
+    for name, zone in dists:
+        if name in addr:
+            return zone
+    if province_code == "BKK" or "กรุงเทพ" in addr:
+        return TABLE_OTHER
+    return ""
