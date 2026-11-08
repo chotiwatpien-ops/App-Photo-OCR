@@ -82,6 +82,20 @@ TABLE_OTHER = "Other"          # Bangkok, not named in the table
 _table = None
 
 
+def _subdistricts():
+    """{แขวง: เขต} for Bangkok. The reader sometimes gives the sub-district where the district
+    belongs (เสนานิคม for จตุจักร), which left the trip in Other. Only the district field is
+    translated, never words in the address, and a name two districts share (บางจาก, บางมด) is
+    left out of the file."""
+    import csv
+    path = __import__("pathlib").Path(__file__).with_name("bkk_subdistricts.csv")
+    with open(path, encoding="utf-8") as fh:
+        return {r["khwaeng"].strip(): r["khet"].strip() for r in csv.DictReader(fh)}
+
+
+SUBDISTRICT_OF = _subdistricts()
+
+
 def load_table(path=None):
     """(sub-districts, districts): [(name, zone)] longest name first, so 'คลองตันเหนือ' wins
     over 'คลองตัน' when an address is searched."""
@@ -107,6 +121,7 @@ def table_zone(district=None, province_code=None, address=None, table=None) -> s
         table = _table
     subs, dists = table
     d, addr = _norm(district), address or ""
+    d = SUBDISTRICT_OF.get(d, d)
     for name, zone in subs:
         if name in addr or d == name:
             return zone

@@ -37,6 +37,19 @@ check("ไม่มีเขต แต่ที่อยู่มีชื่อ
 check("เขตในกรุงเทพฯ ที่ตารางไม่ได้ระบุ เป็น Other", tz("เขตที่ไม่มีในตาราง", "BKK") == "Other")
 check("นอกกรุงเทพฯ ที่ไม่มีในตาราง เว้นว่าง (รอลูกค้าตอบ)", tz("เมืองเชียงใหม่", "CMI", "เชียงใหม่") == "")
 
+check("ตัวอ่านให้ชื่อแขวงมาแทนเขต: แปลงเป็นเขตก่อน (เสนานิคม → จตุจักร)",
+      tz("แขวงเสนานิคม", "BKK") == "Inner City", tz("แขวงเสนานิคม", "BKK"))
+check("หัวหมาก → บางกะปิ", tz("หัวหมาก", "BKK") == tz("บางกะปิ", "BKK"))
+check("ชื่อแขวงที่ซ้ำสองเขต (บางจาก) ไม่ถูกเดา", "บางจาก" not in zones.SUBDISTRICT_OF)
+check("แปลงเฉพาะช่องเขต ไม่ไปค้นชื่อแขวงในข้อความที่อยู่",
+      tz(None, "BKK", "ร้านกาแฟหน้าวัดอรุณ") == "Other")
+table_names = {n for part in zones.load_table() for n, _z in part}
+bkk_khet = set(zones.SUBDISTRICT_OF.values())
+check("ไม่มีชื่อแขวงในไฟล์แปลงที่ซ้ำกับชื่อเขต หรือแขวงที่ลูกค้าระบุ",
+      not (set(zones.SUBDISTRICT_OF) & (bkk_khet | table_names)),
+      set(zones.SUBDISTRICT_OF) & (bkk_khet | table_names))
+check("ทุกเขตปลายทางของไฟล์แปลงอยู่ในตารางโซน", bkk_khet <= table_names, bkk_khet - table_names)
+
 config.ZONE_TABLE_FROM = None
 t_new = {"trip_date": "2026-11-10", "pickup_district": "ดินแดง", "pickup_code": "BKK",
          "dropoff_district": "ลาดกระบัง", "dropoff_code": "BKK"}
