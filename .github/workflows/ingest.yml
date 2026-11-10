@@ -53,9 +53,9 @@ on:
     outputs:
       due: ${{ steps.ask.outputs.due || 'true' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         if: github.event_name == 'schedule'
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         if: github.event_name == 'schedule'
         with:
           python-version: "3.12"
@@ -82,8 +82,8 @@ on:
       group: drive-write
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip

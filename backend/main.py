@@ -16,37 +16,32 @@ from urllib.parse import quote
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from itsdangerous import BadSignature, TimestampSigner
-
+import auth
 import config
 import db
 import excel_writer
 import pipeline
 
-app = FastAPI(title="Photo OCR")
+# The API's self-description (/docs, /redoc, /openapi.json) listed every route, diag ones
+# included, to anyone without a login. Kept on a developer's machine, off in the cloud.
+_docs = {} if not config.IS_CLOUD else {"docs_url": None, "redoc_url": None, "openapi_url": None}
+app = FastAPI(title="Photo OCR", **_docs)
 db.init_db()
 _pool = ThreadPoolExecutor(max_workers=config.MAX_PARALLEL_EXTRACTIONS)
-_signer = TimestampSigner(config.SECRET_KEY)
+_throttle = auth.Throttle()
 
 MIME_BY_EXT = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}
 COOKIE = "pocr_session"
-SESSION_MAX_AGE = 60 * 60 * 24 * 30  # 30 days
+SESSION_MAX_AGE = auth.SESSION_MAX_AGE
 PUBLIC_API = {"/api/health", "/api/login", "/api/logout", "/api/me"}
 
 
-# ---------- auth (single shared password; disabled when APP_PASSWORD unset) ----------
+# ---------- auth (single shared password; off only on a developer's machine without one) ----------
 
 def _logged_in(request: Request) -> bool:
-    if not config.APP_PASSWORD:
+    if not auth.password_required():
         return True
-    tok = request.cookies.get(COOKIE)
-    if not tok:
-        return False
-    try:
-        _signer.unsign(tok, max_age=SESSION_MAX_AGE)
-        return True
-    except BadSignature:
-        return False
+    return auth.session_id(request.cookies.get(COOKIE)) is not None
 
 
 def _diag_ok(request: Request) -> bool:
@@ -60,6 +55,9 @@ def _diag_ok(request: Request) -> bool:
 @app.middleware("http")
 async def auth_gate(request: Request, call_next):
     p = request.url.path
+    if auth.password_missing() and p.startswith("/api/") and p != "/api/health":
+        return JSONResponse({"detail": "ยังไม่ได้ตั้งรหัสผ่านของแอป (APP_PASSWORD) บนเซิร์ฟเวอร์ — "
+                                       "ระบบปิดไว้ก่อนจนกว่าจะตั้ง"}, status_code=503)
     if p.startswith("/api/diag/") or p == "/api/ingest/cron":
         if _diag_ok(request) or _logged_in(request):
             return await call_next(request)
@@ -67,6 +65,19 @@ async def auth_gate(request: Request, call_next):
     if p.startswith("/api/") and p not in PUBLIC_API and not _logged_in(request):
         return JSONResponse({"detail": "login_required"}, status_code=401)
     return await call_next(request)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    # registered after auth_gate so it wraps it: a refused request gets the headers too
+    response = await call_next(request)
+    h = response.headers
+    h.setdefault("X-Content-Type-Options", "nosniff")
+    h.setdefault("X-Frame-Options", "DENY")
+    h.setdefault("Referrer-Policy", "same-origin")
+    if config.IS_CLOUD:
+        h.setdefault("Strict-Transport-Security", "max-age=31536000")
+    return response
 
 
 # ---------- action log: who changed what, when, from where (support / MA) ----------
@@ -121,24 +132,31 @@ async def action_log(request: Request, call_next):
 
 @app.get("/api/me")
 def me(request: Request):
-    return {"auth_required": bool(config.APP_PASSWORD), "logged_in": _logged_in(request)}
+    return {"auth_required": auth.password_required(), "logged_in": _logged_in(request)}
 
 
 @app.post("/api/login")
-async def login(body: dict, response: Response):
-    if not config.APP_PASSWORD:
+def login(body: dict, response: Response):
+    if not auth.password_required():
         return {"ok": True}
     _note("auth.login")
-    if body.get("password") != config.APP_PASSWORD:
+    wait = _throttle.wait()
+    if wait:
+        _note(refused="throttled")
+        raise HTTPException(429, f"ใส่รหัสผิดหลายครั้งเกินไป ลองใหม่ในอีก {max(1, round(wait / 60))} นาที")
+    if not auth.password_ok(body.get("password")):
+        _throttle.failed()
         raise HTTPException(401, "รหัสผ่านไม่ถูกต้อง")
-    response.set_cookie(COOKIE, _signer.sign("ok").decode(), max_age=SESSION_MAX_AGE,
+    response.set_cookie(COOKIE, auth.new_token(), max_age=SESSION_MAX_AGE,
                         httponly=True, samesite="lax", secure=config.IS_CLOUD)
     return {"ok": True}
 
 
 @app.post("/api/logout")
-def logout(response: Response):
+def logout(request: Request, response: Response):
+    """Ends this session on the server too: the cookie stops working even where it was copied."""
     _note("auth.logout")
+    auth.revoke(auth.session_id(request.cookies.get(COOKIE)))
     response.delete_cookie(COOKIE)
     return {"ok": True}
 
