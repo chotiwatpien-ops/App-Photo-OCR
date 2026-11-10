@@ -327,6 +327,14 @@ def plan(weeks, extra=()):
 
 
 # ---------------------------------------------------------------- applying -----------------------
+def _drive_id(row):
+    """The file id in '.../file/d/<id>/view'. Read up to '/view' rather than to the next '/', so
+    the tests' local file paths, which hold '/' on Linux, read as ids the way Drive's do."""
+    url = row.get("source_url") or ""
+    m = re.search(r"/file/d/(.+?)/view", url) or re.search(r"/d/([^/]+)", url)
+    return m.group(1)
+
+
 def apply(drive, exports_id, planned, log=print):
     """File every row the plan placed. Returns how many were filed."""
     placed = [p for p in planned if p[1]]
@@ -352,8 +360,7 @@ def apply(drive, exports_id, planned, log=print):
         name = next_name(rider, wkn, taken[(d, rider)], used[d])
         if (wk, group) not in folders:
             folders[(wk, group)] = drive.ensure_folder(drive.ensure_folder(exports_id, wk), group)
-        m = re.search(r"/d/([^/]+)", r.get("source_url") or "")
-        drive.upload_file(folders[(wk, group)], name, drive.download(m.group(1)), "image/jpeg")
+        drive.upload_file(folders[(wk, group)], name, drive.download(_drive_id(r)), "image/jpeg")
         i = have[jid] + per_job[jid]
         per_job[jid] += 1
         day = (date.fromisoformat(d) + timedelta(days=i % 7)).isoformat()
@@ -424,8 +431,7 @@ def renumber(drive, exports_id, weeks, log=print):
             if rider not in taken:
                 taken[rider] = {k for k in (_number_in(x, rider, wkn) for x in used) if k}
             folder = drive.ensure_folder(drive.ensure_folder(exports_id, wk), r["category"])
-            m = re.search(r"/d/([^/]+)", r.get("source_url") or "")
-            data = drive.download(m.group(1))
+            data = drive.download(_drive_id(r))
             # apply() uploaded the staged bytes as they were: ours is the same-named file holding them
             same = [f for f in drive.list_images(folder) if f["name"] == r["customer_image"]]
             ours = [f for f in same if hashlib.sha1(drive.download(f["id"])).digest() == hashlib.sha1(data).digest()]
