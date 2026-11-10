@@ -1940,9 +1940,14 @@ def review_queue():
         for r in group:
             twin = twins.get(trip_key(r))
             r["seen_in_job"] = twin["job_id"] if twin else None
-    for r in rows:
-        del r["wk_from"], r["wk_to"]
+            r["seen_trip"] = twin["id"] if twin else None      # its picture goes beside this one
     return rows
+
+
+def review_queue_count() -> int:
+    """How many rows wait for a person: the tab badge, without building the whole queue."""
+    with engine.begin() as c:
+        return c.execute(select(func.count()).select_from(_trip_join(0).subquery())).scalar() or 0
 
 
 def approve_trip(trip_id) -> dict:

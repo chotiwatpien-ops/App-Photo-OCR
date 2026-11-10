@@ -161,8 +161,11 @@ def build(d_from, d_to, albums=(), now=None):
                              + " — ไม่ต้องส่งรูปซ้ำ", "action": "", "go": ""})
     if errors:
         todos.append({"kind": "errors", "tone": "warn", "mark": f"{errors:,}",
-                      "title": f"รูปที่อ่านไม่สำเร็จ {errors:,} รูป", "sub": "จะไม่อยู่ในไฟล์ส่งลูกค้า ถ้าไม่ได้แก้",
-                      "action": "ดูรายการ", "go": "queue"})
+                      "title": f"รูปที่อ่านไม่สำเร็จ {errors:,} รูป",
+                      # these never reach the review queue (it lists rows that were read), so a
+                      # button to it led nowhere; the round re-reads them by itself
+                      "sub": "ระบบอ่านใหม่เองทุกรอบ ถ้ายังค้างหลังปิดสัปดาห์ จะไม่อยู่ในไฟล์ส่งลูกค้า",
+                      "action": "", "go": ""})
     if not todos:
         todos.append({"kind": "done", "tone": "ok", "mark": "✓", "title": "ไม่มีอะไรค้าง",
                       "sub": "ทุกกลุ่มครบเป้า ไม่มีแถวรอตรวจ — ไปปิดสัปดาห์ได้เมื่อสัปดาห์จบ",

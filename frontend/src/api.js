@@ -83,6 +83,7 @@ export const api = {
   summary: (params = {}) => fetch(`/api/summary?${new URLSearchParams(params)}`).then(handle),
   trips: (params = {}) => fetch(`/api/trips?${new URLSearchParams(params)}`).then(handle),
   reviewQueue: () => fetch('/api/review-queue').then(handle),
+  reviewQueueCount: () => fetch('/api/review-queue/count').then(handle),
   completeness: () => fetch('/api/completeness').then(handle),
   // the 'งานซ้ำ' tab — every album of a week and whether it repeats (from W39)
   duplicateAlbums: (week = '') => fetch(`/api/duplicates/albums?week=${week}`).then(handle),

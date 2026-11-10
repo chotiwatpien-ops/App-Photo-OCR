@@ -58,12 +58,18 @@ function ExportBar() {
   )
 }
 
+const TABS = ['overview', 'queue', 'dups', 'data', 'close', 'tools', 'home', 'dashboard']
+
 export default function App() {
   const [auth, setAuth] = useState(null) // {auth_required, logged_in}
   const [health, setHealth] = useState(null)
   const [jobList, setJobList] = useState([])
   const [activeJob, setActiveJob] = useState(null)
-  const [view, setView] = useState('overview') // overview | queue | dups | data | close · legacy: home | dashboard
+  // the tab lives in the address (#queue), so a reload or a bookmark opens where you were
+  const [view, setView] = useState(() => {
+    const h = window.location.hash.slice(1)
+    return TABS.includes(h) ? h : 'overview'
+  }) // overview | queue | dups | data | close · legacy: home | dashboard
   const [queueCount, setQueueCount] = useState(0)
 
   const refreshJobs = useCallback(() => {
@@ -88,7 +94,7 @@ export default function App() {
     if (!loggedIn) return
     api.health().then(setHealth).catch(() => setHealth({ ok: false }))
     refreshJobs()
-    api.reviewQueue().then((r) => setQueueCount(r.rows.length)).catch(() => {})
+    api.reviewQueueCount().then((r) => setQueueCount(r.count)).catch(() => {})
   }, [loggedIn, refreshJobs, view, activeJob])
 
   // poll active job while extraction is running
@@ -119,7 +125,10 @@ export default function App() {
   ]
   // what is needed now and then lives behind the gear, off the five tabs
   const MORE = [['tools', 'เครื่องมือเพิ่มเติม'], ['home', 'หน้าจอเดิม: การอ่านรูป'], ['dashboard', 'หน้าจอเดิม: Dashboard']]
-  const go = (k) => { setActiveJob(null); setView(k); window.scrollTo(0, 0) }
+  const go = (k) => {
+    setActiveJob(null); setView(k); window.scrollTo(0, 0)
+    try { window.history.replaceState(null, '', `#${k}`) } catch { /* sandboxed */ }
+  }
   const logout = () => api.logout().then(() => { setActiveJob(null); boot() })
   const badge = (k) => (k === 'queue' && queueCount ? queueCount : 0)
 

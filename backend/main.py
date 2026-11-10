@@ -213,7 +213,7 @@ MONEY_FIELDS = {"net_earnings", "base_fare", "bonus", "turbo", "passenger_total"
 
 
 @app.patch("/api/trips/{trip_id}")
-async def patch_trip(trip_id: int, fields: dict):
+def patch_trip(trip_id: int, fields: dict):
     t = db.get_trip(trip_id)
     if not t:
         raise HTTPException(404, "ไม่พบรายการ")
@@ -1123,7 +1123,12 @@ def trips_view(date_from: str = None, date_to: str = None, driver: str = None,
 
 @app.get("/api/review-queue")
 def review_queue():
-    return {"rows": db.review_queue(), "issues": db.list_ingest_issues(50)}
+    return {"rows": db.review_queue()}
+
+
+@app.get("/api/review-queue/count")
+def review_queue_count():
+    return {"count": db.review_queue_count()}
 
 
 @app.post("/api/review-queue/approve-passing")
