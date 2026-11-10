@@ -240,17 +240,46 @@ for r in page["runs"]:              # the test's earlier runs stand for history;
     db.update_close_run(r["id"], finished_at="2026-01-01T00:00:00")
 res = web.post(f"/api/close-week/{W39[0]}/apply")
 check("❗ ปิดจริงโดยไม่มีแผนล่าสุด → ไม่ให้กด", res.status_code == 409 and "ดูแผน" in res.json()["detail"])
+import threading                                                # noqa: E402
+import time                                                     # noqa: E402
+
+gate = threading.Event()
+real_go = cw.Runner.go
+
+
+def held_go(self):
+    gate.wait(30)                   # keeps the plan 'running' while the test presses again
+    return real_go(self)
+
+
+cw.Runner.go = held_go
+n_sent = len(sent)
 res = web.post(f"/api/close-week/{W39[0]}/plan")
-check("กดดูแผน → สร้างรอบและสั่ง workflow พร้อมเลขรอบ",
-      res.status_code == 200 and sent[-1][0] == "close-week.yml"
-      and sent[-1][1] == {"week_from": "2026-09-21", "week_to": "2026-09-27", "mode": "plan",
-                          "run_id": str(res.json()["id"])})
+check("กดดูแผน → ทำแผนในเว็บเลย ไม่ส่งไปรอ GitHub", res.status_code == 200 and len(sent) == n_sent)
 check("กดซ้ำระหว่างรอบยังไม่จบ → ไม่ให้กด", web.post(f"/api/close-week/{W39[0]}/plan").status_code == 409)
-db.update_close_run(res.json()["id"], status="done", finished_at=db._now())
+gate.set()
+for _ in range(120):
+    if db.get_close_run(res.json()["id"])["status"] not in ("queued", "running"):
+        break
+    time.sleep(0.5)
+cw.Runner.go = real_go
+plan_run = db.get_close_run(res.json()["id"])
+check("แผนในเว็บทำครบและบันทึกผล", plan_run["status"] == "done"
+      and {s["key"]: s["status"] for s in plan_run["steps"]}["pictures"] == "skipped")
 check("แผนเสร็จแล้ว → หน้าเว็บเปิดปุ่มปิดจริง", web.get(f"/api/close-week?week={W39[0]}").json()["plan_ok"])
+r = web.post("/api/close-week/2026-10-12/recheck")
+check("สัปดาห์ที่ยังไม่เคยปิดจริง → ตรวจซ้ำแล้วติดป้ายไม่ได้", r.status_code == 409 and "ยังไม่เคยปิดจริง" in r.json()["detail"])
 res = web.post(f"/api/close-week/{W39[0]}/apply")
 check("มีแผนล่าสุด → ปิดจริงได้", res.status_code == 200 and sent[-1][1]["mode"] == "apply")
-check("ดูรอบเดียวได้พร้อม log", web.get(f"/api/close-week/runs/{res.json()['id']}").json()["mode"] == "apply")
+apply_id = res.json()["id"]
+db.update_close_run(apply_id, status="done", finished_at=db._now(),
+                    result={"closed": False, "file": "https://drive.google.com/file/d/FILE123/view",
+                            "audit_file": "https://drive.google.com/file/d/audit-file/view"})
+res = web.post(f"/api/close-week/{W39[0]}/recheck")
+check("ปิดจริงแล้ว audit ไม่ผ่าน → ตรวจซ้ำแล้วติดป้ายได้ โดยไม่ต้องทำแผนใหม่",
+      res.status_code == 200 and sent[-1][1]["mode"] == "recheck")
+db.update_close_run(res.json()["id"], status="done", finished_at=db._now(), result={"closed": False})
+check("ดูรอบเดียวได้พร้อม log", web.get(f"/api/close-week/runs/{apply_id}").json()["mode"] == "apply")
 files = web.get(f"/api/close-week?week={W39[0]}").json()["files"]
 check("หน้าเว็บได้ลิงก์ไฟล์ Phase 3 และรายงานตรวจจากรอบปิดล่าสุด",
       files["phase3"].endswith("FILE123/view") and files["audit"].endswith("audit-file/view"))
@@ -258,6 +287,23 @@ x = web.get(f"/api/export/week?week={W39[0]}")
 check("ดาวน์โหลดไฟล์ส่งลูกค้าของสัปดาห์ได้", x.status_code == 200 and "Phase%203" in x.headers["content-disposition"]
       and int(x.headers["x-row-count"]) > 0)
 check("สัปดาห์ที่ยังไม่มีแถว → 404 พร้อมเหตุผล", web.get("/api/export/week?week=2020-01-06").status_code == 404)
+
+real_pre = cw.preflight
+cw.preflight = lambda a, b, today=None: dict(real_pre(a, b), ok=True)
+roster._drive = lambda: FakeDrive()
+cw.week_folder = lambda *a: "Week 21-27 Sep"
+week_audit.audit = lambda rows, pics: dict(clean)
+week_audit.pictures_on_drive = lambda *a: {}
+calls.clear()
+rid = db.create_close_run(*W39, "recheck")
+cw.Runner(rid, *W39, "recheck").go()
+cw.preflight = real_pre
+rr = db.get_close_run(rid)
+st = {s["key"]: s["status"] for s in rr["steps"]}
+check("ตรวจซ้ำแล้วติดป้าย: ไม่ย้าย ไม่ยกงาน ไม่สร้างรูป ไม่ออกไฟล์ — ตรวจอย่างเดียว",
+      all(st[k] == "skipped" for k in ("rehome", "carry", "carry_back", "staged", "pictures", "phase3"))
+      and st["audit"] == "done" and rr["status"] == "done" and not calls)
+check("ตรวจซ้ำผ่าน → ติดป้ายปิด", st["lock"] == "done" and db.week_closed(W39[0]))
 
 print("\nผ่านทั้งหมด" if ok else "\n✗ มีข้อที่ไม่ผ่าน")
 sys.exit(0 if ok else 1)

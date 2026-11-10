@@ -122,6 +122,28 @@ def rider_display_name(folder_name):
     return clean_name(NUM_PREFIX_RE.sub("", clean_name(folder_name)))
 
 
+def _today():
+    return date.today()
+
+
+def _nearest_year(month, day):
+    """The year that puts this day closest to today, for a folder name that gives none.
+
+    Taking today's year broke every New Year: on 2 Jan 2027 'Week 21-27 Dec' became December
+    2027, so a delivered week no longer matched its closed record and would have been walked
+    and read again. The nearest year is the one anybody means, a week either side of 1 Jan."""
+    today = _today()
+    best = None
+    for y in (today.year - 1, today.year, today.year + 1):
+        try:
+            d = date(y, month, min(day, 28) if month == 2 and day == 29 else day)
+        except ValueError:
+            continue
+        if best is None or abs((d - today).days) < abs((best - today).days):
+            best = d
+    return best.year if best else today.year
+
+
 def parse_range(text, default_year=None):
     """'10-16 Aug' / '31 Aug-6 Sep' / '3-9 Aug 2026' -> (date_from, date_to) or None."""
     m = RANGE_RE.search(text or "")
@@ -131,8 +153,8 @@ def parse_range(text, default_year=None):
     m1 = MONTHS.get((m.group("m1") or "")[:3].lower(), m2)
     if not m2:
         return None
-    y = int(m.group("y") or default_year or date.today().year)
     try:
+        y = int(m.group("y") or default_year or _nearest_year(m1, int(m.group("d1"))))
         d1, d2 = date(y, m1, int(m.group("d1"))), date(y, m2, int(m.group("d2")))
     except ValueError:
         return None
@@ -150,8 +172,8 @@ def parse_rider_folder(name, default_year=None):
     m1 = MONTHS.get((m.group("m1") or "")[:3].lower(), m2)
     if not m2:
         return None
-    y = int(m.group("y") or default_year or date.today().year)
     try:
+        y = int(m.group("y") or default_year or _nearest_year(m2, int(m.group("d2"))))
         d1, d2 = date(y, m1, int(m.group("d1"))), date(y, m2, int(m.group("d2")))
     except ValueError:
         return None
@@ -695,12 +717,54 @@ BATCH_FLUSH_ITEMS = 240
 BATCH_FLUSH_BYTES = 24 * 1024 * 1024
 
 
+def weeks_to_prepare(today):
+    """Mondays whose Inbox folders should exist: this week's, and from Friday the next one, so
+    Ops always has somewhere to drop the albums that arrive over the weekend."""
+    monday = today - timedelta(days=today.weekday())
+    out = [monday]
+    if today.weekday() >= 4:
+        out.append(monday + timedelta(days=7))
+    return out
+
+
+def prepare_weeks(drive, inbox_id):
+    """The round makes the week folders itself (prepare_week.py, which reuses whatever Ops
+    already made), instead of someone pressing Prepare week and typing a Monday each week."""
+    import prepare_week
+    closed = set(db.closed_weeks())
+    for monday in weeks_to_prepare(_today()):
+        if monday.isoformat() in closed:
+            continue
+        try:
+            res = prepare_week.prepare(drive, inbox_id, monday.isoformat(), log=lambda *_a: None)
+            if res["made"]:
+                log(f"📁 เตรียมโฟลเดอร์ {res['week']}: สร้าง {', '.join(res['made'])}")
+        except Exception as e:  # noqa: BLE001 — a missing folder is Ops' to notice; the round goes on
+            log(f"  ⚠ เตรียมโฟลเดอร์สัปดาห์ {monday} ไม่สำเร็จ: {str(e)[:120]}")
+
+
 def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cancel_batches=False):
+    """One reading round. A round that dies on an exception still stamps its row as finished
+    with an error, so the schedule never waits on a corpse; a runner killed outright cannot,
+    and round_gate treats a row running past STALE_RUN_HOURS as dead for the same reason."""
     run_id = None if dry_run else db.start_ingest_run()
+    try:
+        return _run(drive, inbox_id, exports_id, run_id, dry_run=dry_run, limit=limit, only=only,
+                    cancel_batches=cancel_batches)
+    except BaseException as e:
+        if run_id is not None:
+            db.fail_ingest_run(run_id, f"รอบนี้ล้มกลางทาง: {type(e).__name__}: {str(e)[:300]}")
+        raise
+
+
+def _run(drive, inbox_id, exports_id, run_id, dry_run=False, limit=None, only=None,
+         cancel_batches=False):
     t0 = time.time()
     issues = []  # (key, kind, message) — synced to ingest_issues at the end (auto-resolve)
     mark = _utc_now()                       # everything after this moment belongs to the next round
     staged_jobs = set()                     # jobs that received rows filed after reading
+    if isinstance(drive, DriveClient) and not dry_run and not only:
+        prepare_weeks(drive, inbox_id)
     quiet = nothing_new(drive) if not only else None
     if quiet:
         log("⏭ ไม่มีรูปใหม่ใน Drive ตั้งแต่รอบก่อน — ข้ามการเดินโฟลเดอร์ (ยังเก็บผล batch/อนุมัติตามปกติ)")
@@ -1059,17 +1123,15 @@ def run(drive, inbox_id, exports_id, dry_run=False, limit=None, only=None, cance
                 continue
             seen_hashes[digest] = f["name"]
             # the photo stays on Drive; only its bytes travel through this round in memory
-            tid = db.create_trip(job_id, f["name"],
-                                 data if config.STORE_DRIVE_IMAGES else None,
-                                 f["mime"], source_url=f.get("url"), image_hash=digest,
-                                 # ไรเดอร์ที่ส่งรูปนี้มา ไม่ใช่ไรเดอร์ที่โฟลเดอร์นี้เป็นของเขา:
-                                 # pool วางงานไว้กับใครก็ได้ที่ยังมีที่ว่าง ว่างไว้ = Ops อัปเข้า
-                                 # โฟลเดอร์ไรเดอร์เอง ซึ่งชื่อโฟลเดอร์ก็คือคนส่งอยู่แล้ว
-                                 source_album=albums.get(f["id"]))
+            tid = db.create_ingested_trip(job_id, f["id"], f["name"],
+                                          data if config.STORE_DRIVE_IMAGES else None,
+                                          f["mime"], source_url=f.get("url"), image_hash=digest,
+                                          # ไรเดอร์ที่ส่งรูปนี้มา ไม่ใช่ไรเดอร์ที่โฟลเดอร์นี้เป็นของเขา:
+                                          # pool วางงานไว้กับใครก็ได้ที่ยังมีที่ว่าง ว่างไว้ = Ops อัปเข้า
+                                          # โฟลเดอร์ไรเดอร์เอง ซึ่งชื่อโฟลเดอร์ก็คือคนส่งอยู่แล้ว
+                                          source_album=albums.get(f["id"]),
+                                          trip_date=i["trip_date"] or None)
             images[tid] = (data, f["mime"])
-            if i["trip_date"]:
-                db.update_trip(tid, {"trip_date": i["trip_date"]})
-            db.record_ingested(f["id"], f["name"], job_id, tid)
             trip_ids.append(tid)
 
         if n_same:
@@ -1369,16 +1431,14 @@ def main():
         # GitHub fires roughly one scheduled run in three, and late. The answer is to let it try
         # every hour and have the round decide: if one finished recently there is nothing to do,
         # and saying so costs seconds instead of the minutes a real round takes.
-        last = db.latest_ingest_run()
-        if last and last.get("finished_at"):
-            from datetime import datetime
-            age = (datetime.now(db._TZ_BKK).replace(tzinfo=None)
-                   - datetime.fromisoformat(last["finished_at"])).total_seconds() / 3600
-            if age < a.min_gap:
-                log(f"⏭ รอบล่าสุดเพิ่งจบไป {age:.1f} ชม. (เกณฑ์ {a.min_gap} ชม.) — ยังไม่ถึงเวลา ข้ามรอบนี้")
-                sys.exit(0)
-        elif last and not last.get("finished_at"):
-            log("⏭ มีรอบกำลังรันอยู่ — ข้ามรอบนี้")
+        import round_gate
+        from datetime import datetime
+        batches = db.open_batches()
+        due, why = round_gate.decide(datetime.now(db._TZ_BKK).replace(tzinfo=None),
+                                     db.latest_ingest_run(), batches[0] if batches else None,
+                                     min_gap=a.min_gap)
+        log(("▶ " if due else "⏭ ") + why)
+        if not due:
             sys.exit(0)
     if not (a.exports_only or a.xlsx_only or a.exports_jobs or a.fix_hidden_turbo
             or a.delete_jobs or a.delete_trips):

@@ -14,7 +14,7 @@ import secrets
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-CONFIG_PATH = BASE_DIR / "photo_ocr_config.json"
+CONFIG_PATH = Path(os.environ.get("PHOTO_OCR_CONFIG") or BASE_DIR / "photo_ocr_config.json")
 # fallback: reuse a sibling app's Gemini key on the developer's own machine (local dev only).
 # Written out in full here until the repository went public, which put one person's username,
 # employer and folder layout in it; point PHOTO_OCR_SIBLING_CONFIG at the file instead.
@@ -180,10 +180,23 @@ CLEAN_DUP_SEATS = str(_setting("CLEAN_DUP_SEATS", "clean_dup_seats", "1")).lower
 DUP_REPORT_IN_ROUND = str(_setting("DUP_REPORT_IN_ROUND", "dup_report_in_round", "1")).lower() in ("1", "true", "yes")
 # เพดานต่อรอบ: เกินเท่านี้ให้รายงานแล้วไม่ย้าย ปล่อยให้คนดูก่อน (ดู free_dup_seats.SWEEP_CAP)
 CLEAN_DUP_SEATS_MAX = int(_setting("CLEAN_DUP_SEATS_MAX", "clean_dup_seats_max", 150))
-# Images wait in the DB (blob and all) while a batch reads them, so one round must not park
-# more than the free Neon tier can hold: ~131 KB a slip, 500 MB the ceiling. 1,500 keeps a
-# round near 200 MB, and six rounds a day still clear 9,000 images — more than a full week's.
-MAX_NEW_PER_ROUND = int(_setting("MAX_NEW_PER_ROUND", "max_new_per_round", 1500))
+# New pictures one round takes on. It was 1,500 while pictures waited in the database during a
+# batch read; they no longer do (STORE_DRIVE_IMAGES below), and the runner's memory is bounded by
+# the batch hand-over every 240 pictures. So the ceiling is now about time: 4,000 downloads at
+# 12 lanes is roughly 2.5 hours, inside the 330-minute job limit with the pool step in front.
+# A late whole-week drop is then read in one round instead of three.
+MAX_NEW_PER_ROUND = int(_setting("MAX_NEW_PER_ROUND", "max_new_per_round", 4000))
+
+# When a scheduled round is due (round_gate.py). The schedule asks hourly.
+#   ROUND_MIN_GAP_HOURS  a round runs when the last one finished at least this long ago
+#   BATCH_COLLECT_MIN    ...or sooner, when a batch has been out this long: the answers are
+#                        usually back in 40-90 minutes, and collecting them is what puts work
+#                        in the review queue
+#   STALE_RUN_HOURS      a round still marked running after this long is dead (a cancelled
+#                        or killed runner never stamps its row); the job limit is 5.5 hours
+ROUND_MIN_GAP_HOURS = float(_setting("ROUND_MIN_GAP_HOURS", "round_min_gap_hours", 2.5))
+BATCH_COLLECT_MIN = float(_setting("BATCH_COLLECT_MIN", "batch_collect_min", 45))
+STALE_RUN_HOURS = float(_setting("STALE_RUN_HOURS", "stale_run_hours", 6))
 
 # ask Drive in one call whether anything new arrived before walking 600-odd folders for five
 # minutes. Set to 0 to always walk (the old behaviour) if the probe ever looks untrustworthy.

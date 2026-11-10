@@ -19,7 +19,7 @@ from pipeline import CATEGORY_SERVICE, car_is_standard
 
 SERVICES = ("Saver Bike", "Standard Bike", "Standard Car")
 GROUP_OF = {"Saver Bike": "2 W Saver", "Standard Bike": "2 W Standard", "Standard Car": "4 W Standard"}
-ROUND_HOURS, ROUND_MINUTE, ROUND_FIRST_HOUR, MIN_GAP_HOURS = 3, 23, 1, 2.5   # ingest.yml: 23 */3 UTC
+ROUND_MINUTE = 23            # ingest.yml asks at xx:23 every hour; round_gate decides
 
 
 def _service(row):
@@ -86,17 +86,17 @@ def review_reasons(d_from, d_to):
     return out
 
 
-def next_round(now, last_finished=None):
-    """When the next reading round should run: the schedule's next slot that the gate lets
-    through (a round finished less than MIN_GAP_HOURS ago makes the next slot skip)."""
+def next_round(now, last_finished=None, oldest_batch=None):
+    """When the next reading round should run: the first hourly slot the gate lets through."""
+    import round_gate
+    last = {"finished_at": last_finished.isoformat(timespec="seconds")} if last_finished else None
     slot = now.replace(minute=ROUND_MINUTE, second=0, microsecond=0)
     if slot <= now:
         slot += timedelta(hours=1)
-    while slot.hour % ROUND_HOURS != ROUND_FIRST_HOUR:
+    for _ in range(24):
+        if round_gate.decide(slot, last, oldest_batch)[0]:
+            break
         slot += timedelta(hours=1)
-    if last_finished:
-        while slot < last_finished + timedelta(hours=MIN_GAP_HOURS):
-            slot += timedelta(hours=ROUND_HOURS)
     return slot
 
 
@@ -132,6 +132,8 @@ def build(d_from, d_to, albums=(), now=None):
     reading = sum(g["reading"] for g in groups) + unplaced
     last = db.latest_ingest_run()
     finished = datetime.fromisoformat(last["finished_at"]) if last and last.get("finished_at") else None
+    batches = db.open_batches()
+    oldest = batches[0] if batches else None
     running = bool(last and not last.get("finished_at"))
     short = {g["service"]: g["short"] for g in groups if g["short"]}
     riders = riders_with_room(rows, set(short))
@@ -152,7 +154,7 @@ def build(d_from, d_to, albums=(), now=None):
                               else "ไรเดอร์ที่มีอยู่รับครบโควตาแล้ว ต้องหาคนเพิ่ม"),
                       "action": "ดูรายชื่อ" if riders else "", "go": "riders"})
     if reading:
-        nxt = next_round(now, finished)
+        nxt = next_round(now, finished, oldest)
         todos.append({"kind": "reading", "tone": "wait", "mark": "…",
                       "title": f"รอผลอ่าน {reading:,} รูป",
                       "sub": ("กำลังอ่านอยู่ตอนนี้" if running else f"จะเข้าระบบรอบถัดไป ประมาณ {nxt:%H:%M}")
@@ -174,8 +176,8 @@ def build(d_from, d_to, albums=(), now=None):
         "reading": {"total": reading, "running": running,
                     "last_started": last and last.get("started_at"),
                     "last_finished": last and last.get("finished_at"),
-                    "next": next_round(now, finished).strftime("%H:%M"),
-                    "batch": sum(b.get("n_trips") or 0 for b in db.open_batches()),
+                    "next": next_round(now, finished, oldest).strftime("%H:%M"),
+                    "batch": sum(b.get("n_trips") or 0 for b in batches),
                     "albums_today": sum(1 for a in albums if (a.get("first") or "").startswith(today))},
         "riders": riders[:8], "riders_total": len(riders),
         "albums": albums[::-1][:5], "albums_total": len(albums),

@@ -166,11 +166,13 @@ export default function CloseWeek() {
 
   const latest = data?.runs?.[0]
   const live = latest && (latest.status === 'queued' || latest.status === 'running')
+  // a plan runs in the web app and takes about a minute, so it is watched more closely
+  const every = latest?.mode === 'plan' ? 3000 : 8000
   useEffect(() => {
     if (!live) return
-    const t = setInterval(() => load(data.week), 8000)
+    const t = setInterval(() => load(data.week), every)
     return () => clearInterval(t)
-  }, [live, data?.week, load])
+  }, [live, every, data?.week, load])
 
   if (error && !data) return <p className="text-sm text-danger-ink">โหลดไม่ได้: {error}</p>
   if (!data) return <p className="text-sm text-muted">กำลังโหลด…</p>
@@ -184,13 +186,23 @@ export default function CloseWeek() {
   const n = data.label.match(/W(\d+)$/)
   const nextLabel = n ? `WK${+n[1] + 1}` : 'สัปดาห์หน้า'
   const label = wk(data.label)
-  const applying = live && latest.mode === 'apply'
+  const applying = live && latest.mode !== 'plan'
   // A close that failed, or that the checks stopped, says so where the eye is. It used to show only
   // inside the folded history while this card went back to 'พร้อมกด' (run drive5, 2026-10-31).
-  const lastApply = !live && !closed && latest?.mode === 'apply'
+  const lastApply = !live && !closed && (latest?.mode === 'apply' || latest?.mode === 'recheck')
     && (latest.status === 'failed' || latest.status === 'blocked') ? latest : null
+  // a real close ran every step but the audit kept the label off: once the problem is fixed,
+  // checking again and locking is enough — no new plan, nothing moved or remade
+  const lastDone = data.runs.find((r) => (r.mode === 'apply' || r.mode === 'recheck') && r.status === 'done')
+  const canRecheck = !closed && !live && !!lastDone && !lastDone.result?.closed
 
   const start = (mode) => {
+    if (mode === 'recheck' && !window.confirm(
+      `ตรวจ ${label} ซ้ำแล้วติดป้ายปิด?
+
+ไม่ย้าย ไม่ยกงาน ไม่สร้างรูปใหม่ — ตรวจอย่างเดียว ถ้าผ่านจะติดป้ายปิดให้
+
+ใช้เวลาประมาณ 5–10 นาที`)) return
     if (mode === 'apply' && !window.confirm(
       `ปิด ${label} จริง?\n\nระบบจะย้ายแถวตาม Service Type ยกงานที่เกินไป ${nextLabel} ดึงงานกลับถ้ากลุ่มไหนขาด ` +
       'สร้างรูปใหม่ ออกไฟล์ แล้วตรวจซ้ำ — ถ้าตรวจผ่านจะติดป้ายปิดให้เอง\n\nใช้เวลาประมาณ 10–30 นาที')) return
@@ -257,7 +269,8 @@ export default function CloseWeek() {
           {lastApply.message && <p className="text-sm text-ink break-words">{lastApply.message}</p>}
           <p className="text-sm text-ink-soft">
             {lastApply.status === 'blocked'
-              ? 'แก้เรื่องที่ค้างในรายการความพร้อมด้านล่าง แล้วกดปิดใหม่'
+              ? (canRecheck ? 'แก้เรื่องที่ค้างในรายการความพร้อมด้านล่าง แล้วกด "ตรวจซ้ำแล้วติดป้ายปิด"'
+                : 'แก้เรื่องที่ค้างในรายการความพร้อมด้านล่าง แล้วกดปิดใหม่')
               : 'สัปดาห์นี้ยังไม่ปิด กดปิดใหม่ได้ — ถ้ายังไม่ผ่าน แจ้งผู้ดูแลระบบพร้อมเวลาด้านบน'}
           </p>
           {lastApply.steps?.some((s) => s.status === 'done' || s.status === 'failed') && <Steps run={lastApply} />}
@@ -291,7 +304,11 @@ export default function CloseWeek() {
           </div>
           {live ? (
             <>
-              <p className="text-sm text-ink-soft">ใช้เวลาประมาณ 10–30 นาที หน้านี้อัปเดตเองทุก 8 วินาที ปิดหน้าไปก่อนได้</p>
+              <p className="text-sm text-ink-soft">
+                {latest.mode === 'plan' ? 'ใช้เวลาประมาณ 1 นาที'
+                  : latest.mode === 'recheck' ? 'ใช้เวลาประมาณ 5–10 นาที' : 'ใช้เวลาประมาณ 10–30 นาที'}
+                {' '}หน้านี้อัปเดตเอง ปิดหน้าไปก่อนได้
+              </p>
               <Steps run={latest} />
             </>
           ) : show ? (
@@ -317,12 +334,19 @@ export default function CloseWeek() {
               </button>
             ) : (
               <>
+                {canRecheck && (
+                  <button onClick={() => start('recheck')}
+                    disabled={busy || live || other || !ready || !data.can_dispatch}
+                    className="min-h-11 px-5 rounded-lg bg-accent hover:bg-accent-hover text-white text-[15px] font-semibold disabled:opacity-40">
+                    ตรวจซ้ำแล้วติดป้ายปิด
+                  </button>
+                )}
                 <button onClick={() => start('apply')}
                   disabled={busy || live || other || !ready || !data.plan_ok || !data.can_dispatch}
                   className="min-h-11 px-5 rounded-lg bg-accent hover:bg-accent-hover text-white text-[15px] font-semibold disabled:opacity-40">
                   ปิดสัปดาห์ {label}
                 </button>
-                <button onClick={() => start('plan')} disabled={busy || live || other || !data.can_dispatch}
+                <button onClick={() => start('plan')} disabled={busy || live || other}
                   className="min-h-11 px-4 rounded-lg border border-line bg-white hover:bg-ground text-sm disabled:opacity-40">
                   {data.plan_ok ? 'ทำแผนใหม่' : 'ดูแผน'}
                 </button>

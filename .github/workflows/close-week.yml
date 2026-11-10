@@ -22,9 +22,9 @@ on:
         type: string
         required: true
       mode:
-        description: "plan = ดูแผนอย่างเดียว · apply = ปิดจริง · lock = ล็อกอย่างเดียว (สัปดาห์ที่ทิ้ง ไม่ส่งลูกค้า)"
+        description: "plan = ดูแผนอย่างเดียว · apply = ปิดจริง · recheck = ตรวจซ้ำแล้วติดป้าย (หลังปิดจริงแล้ว audit ไม่ผ่าน) · lock = ล็อกอย่างเดียว (สัปดาห์ที่ทิ้ง ไม่ส่งลูกค้า)"
         type: choice
-        options: [plan, apply, lock]
+        options: [plan, apply, recheck, lock]
         default: plan
       run_id:
         description: "เลขรอบปิดที่เว็บสร้างไว้ (ว่างได้)"

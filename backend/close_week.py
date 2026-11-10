@@ -10,6 +10,9 @@ for the page to show.
     plan   every step report-only, then the audit from the database: what pressing would do
     apply  the steps for real; the week is locked (week_locks) only if the audit finds nothing
            that would put a wrong row or a missing picture in front of the customer
+    recheck  after an apply the audit stopped, and the problem was fixed by hand: the audit
+           again and the lock, nothing moved or remade. It used to take a new plan and a whole
+           second apply, two Actions runs, to lock a week whose rows were already right.
 
 Not included: the chip audit. It reads the chip on every picture with OCR (sharded, ~an hour)
 and since 2026-09-09 the reader lets the chip decide the tier as it reads.
@@ -191,7 +194,8 @@ class Runner:
         self.step(key).update(status="skipped", summary=why)
 
     def go(self):
-        d_from, d_to, apply = self.d_from, self.d_to, self.mode == "apply"
+        d_from, d_to, apply = self.d_from, self.d_to, self.mode in ("apply", "recheck")
+        recheck = self.mode == "recheck"
         n_from, n_to = next_week(d_from, d_to)
         db.update_close_run(self.id, status="running", started_at=db._now())
         pre = preflight(d_from, d_to)
@@ -225,6 +229,10 @@ class Runner:
         rng = ["--from", d_from, "--to", d_to]
         target = ["--target", str(config.WEEKLY_TARGET_PER_GROUP)]     # the tools default to 1470
         try:
+            if recheck:
+                for key in ("rehome", "carry", "carry_back", "staged", "pictures", "phase3"):
+                    self.skip(key, "ทำไปแล้วตอนปิดจริงครั้งก่อน — รอบนี้ตรวจซ้ำแล้วติดป้ายอย่างเดียว")
+                return self._audit_and_lock(drive, d_from, d_to, n_from, n_to, apply)
             self.run_step("rehome", lambda: rehome_by_service.main(rng + ["--week", name] + flag))
             self.run_step("carry", lambda: carry_excess.main(rng + ["--week", name] + target + flag))
             self.run_step("carry_back", lambda: carry_back.main(rng + ["--week", name] + target + flag))
@@ -240,28 +248,31 @@ class Runner:
             else:
                 self.skip("pictures", PLAN_SKIPS["pictures"])
                 self.run_step("phase3", lambda: week_phase3.main(rng))
-            found = self.audit(drive)
-            blocking = {k: n for k, n in found.items() if k in BLOCKING and n}
-            if not apply:
-                self.skip("lock", PLAN_SKIPS["lock"])
-            elif blocking:
-                self.skip("lock", "ไม่ติดป้าย — audit พบ " + " · ".join(f"{k} {n}" for k, n in blocking.items()))
-            else:
-                db.close_week(d_from, d_to, by="close-week")
-                self.step("lock").update(status="done", summary="ปิดแล้ว — งานอัตโนมัติจะไม่แตะสัปดาห์นี้อีก")
-            after = _card(db.week_scorecard(d_from, d_to))
-            if not apply:
-                after = self.projected(after)
-            self.result.update(after=after, next_week=_card(db.week_scorecard(n_from, n_to)),
-                               audit=found, closed=apply and not blocking)
-            self.save(status="done", finished_at=db._now(), message=self.verdict(after, blocking))
-            return 0
+            return self._audit_and_lock(drive, d_from, d_to, n_from, n_to, apply)
         except Exception as e:  # noqa: BLE001
             for s in self.steps:
                 if s["status"] == "waiting":
                     s["status"] = "skipped"
             self.save(status="failed", finished_at=db._now(), message=str(e)[:500])
             return 1
+
+    def _audit_and_lock(self, drive, d_from, d_to, n_from, n_to, apply):
+        found = self.audit(drive)
+        blocking = {k: n for k, n in found.items() if k in BLOCKING and n}
+        if not apply:
+            self.skip("lock", PLAN_SKIPS["lock"])
+        elif blocking:
+            self.skip("lock", "ไม่ติดป้าย — audit พบ " + " · ".join(f"{k} {n}" for k, n in blocking.items()))
+        else:
+            db.close_week(d_from, d_to, by="close-week")
+            self.step("lock").update(status="done", summary="ปิดแล้ว — งานอัตโนมัติจะไม่แตะสัปดาห์นี้อีก")
+        after = _card(db.week_scorecard(d_from, d_to))
+        if not apply:
+            after = self.projected(after)
+        self.result.update(after=after, next_week=_card(db.week_scorecard(n_from, n_to)),
+                           audit=found, closed=apply and not blocking)
+        self.save(status="done", finished_at=db._now(), message=self.verdict(after, blocking))
+        return 0
 
     def projected(self, now):
         """What the week would hold after a real close, from the plan's own arithmetic: a group
@@ -334,7 +345,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="ปิดสัปดาห์ในครั้งเดียว (ปุ่มบนเว็บ)")
     ap.add_argument("--from", dest="d_from")
     ap.add_argument("--to", dest="d_to")
-    ap.add_argument("--mode", choices=("plan", "apply", "lock"), default="plan",
+    ap.add_argument("--mode", choices=("plan", "apply", "recheck", "lock"), default="plan",
                     help="lock = ล็อกอย่างเดียว ไม่ย้าย ไม่ยกงาน ไม่ออกไฟล์ (เหมือนปุ่ม 🔒 ในหน้าจอเดิม)")
     ap.add_argument("--run-id", type=int, help="แถวใน close_runs ที่เว็บสร้างไว้ (ว่าง = สร้างใหม่)")
     ap.add_argument("--mark-failed", type=int, metavar="RUN_ID",

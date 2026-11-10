@@ -644,14 +644,19 @@ def last_close_run(week_from, mode="apply", status="done"):
     return _close_run_dict(r) if r else None
 
 
-def close_run_active(hours=3):
+def close_run_active(hours=3, plan_minutes=20):
     """The close run that is queued or running now, if any. One stuck for longer than `hours`
-    is treated as dead (its runner was cancelled before it could say so) and does not count."""
-    since = (datetime.now(_TZ_BKK).replace(tzinfo=None) - timedelta(hours=hours)).isoformat(timespec="seconds")
+    is treated as dead (its runner was cancelled before it could say so) and does not count.
+    A plan runs inside the web process and takes about a minute, so a plan still 'running'
+    after `plan_minutes` died with a restart and must not hold the page for three hours."""
+    now = datetime.now(_TZ_BKK).replace(tzinfo=None)
+    since = (now - timedelta(hours=hours)).isoformat(timespec="seconds")
+    plan_since = (now - timedelta(minutes=plan_minutes)).isoformat(timespec="seconds")
     with engine.begin() as c:
         r = c.execute(select(close_runs)
                       .where(close_runs.c.status.in_(("queued", "running")),
-                             close_runs.c.created_at >= since)
+                             close_runs.c.created_at >= since,
+                             (close_runs.c.mode != "plan") | (close_runs.c.created_at >= plan_since))
                       .order_by(close_runs.c.id.desc()).limit(1)).mappings().first()
     return _close_run_dict(r) if r else None
 
@@ -718,6 +723,25 @@ def record_ingested(drive_id, name, job_id, trip_id):
     with engine.begin() as c:
         c.execute(insert(ingested_files).values(
             drive_id=drive_id, name=name, job_id=job_id, trip_id=trip_id, ingested_at=_now()))
+
+
+def create_ingested_trip(job_id, drive_id, file_name, image_bytes, mime, source_url=None,
+                         image_hash=None, source_album=None, trip_date=None) -> int:
+    """The row for a Drive picture and the record that it was taken, in one transaction.
+
+    Written as three separate commits, a round killed between them left a pending row with no
+    record: the next round then saw its sha1 as 'already read', filed the real picture as a
+    re-send, and the row stayed pending with nothing to retry it from, which also blocked the
+    week's close for good."""
+    with engine.begin() as c:
+        tid = c.execute(insert(trips).values(
+            job_id=job_id, file_name=file_name, image_blob=image_bytes, image_mime=mime,
+            status="pending", committed=0, auto_approved=0, source_url=source_url,
+            image_hash=image_hash, source_album=source_album,
+            trip_date=trip_date)).inserted_primary_key[0]
+        c.execute(insert(ingested_files).values(
+            drive_id=drive_id, name=file_name, job_id=job_id, trip_id=tid, ingested_at=_now()))
+        return tid
 
 
 def delete_jobs(job_ids) -> list:
@@ -1216,6 +1240,15 @@ def finish_ingest_run(run_id, **stats):
     with engine.begin() as c:
         c.execute(update(ingest_runs).where(ingest_runs.c.id == run_id)
                   .values(finished_at=_now(), **stats))
+
+
+def fail_ingest_run(run_id, note):
+    """Stamp a round that died on an exception, unless it already finished."""
+    with engine.begin() as c:
+        c.execute(update(ingest_runs).where(ingest_runs.c.id == run_id,
+                                            ingest_runs.c.finished_at.is_(None))
+                  .values(finished_at=_now(), errors=func.coalesce(ingest_runs.c.errors, 0) + 1,
+                          notes=note))
 
 
 def delete_model_trips(model_substring: str) -> dict:

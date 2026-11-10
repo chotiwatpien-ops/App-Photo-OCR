@@ -694,8 +694,8 @@ def close_week_start(date_from: str, mode: str):
     from datetime import date, timedelta
 
     import close_week as cw
-    if mode not in ("plan", "apply"):
-        raise HTTPException(400, "mode ต้องเป็น plan หรือ apply")
+    if mode not in ("plan", "apply", "recheck"):
+        raise HTTPException(400, "mode ต้องเป็น plan, apply หรือ recheck")
     try:
         d_to = (date.fromisoformat(date_from) + timedelta(days=6)).isoformat()
     except ValueError:
@@ -710,9 +710,25 @@ def close_week_start(date_from: str, mode: str):
             raise HTTPException(409, "ยังปิดไม่ได้ — " + " · ".join(bad))
         if not _plan_fresh(db.close_runs_of_week(date_from)):
             raise HTTPException(409, f"กด 'ดูแผน' ก่อน — ต้องมีแผนที่ทำไม่เกิน {PLAN_FRESH_HOURS} ชม.")
+    if mode == "recheck":
+        if db.week_closed(date_from):
+            raise HTTPException(409, "สัปดาห์นี้ปิดแล้ว")
+        if not db.last_close_run(date_from):
+            raise HTTPException(409, "ยังไม่เคยปิดจริง — ตรวจซ้ำได้หลังปิดจริงแล้ว audit ไม่ผ่านเท่านั้น")
+        pre = cw.preflight(date_from, d_to)
+        if not pre["ok"]:
+            bad = [f"{c['label']}: {c['detail']}" for c in pre["checks"] if c["level"] == "block" and not c["ok"]]
+            raise HTTPException(409, "ยังตรวจซ้ำไม่ได้ — " + " · ".join(bad))
     _note(f"close.{mode}", f"week:{date_from}")
     run_id = db.create_close_run(date_from, d_to, mode)
     _note(run=run_id)
+    if mode == "plan":
+        # A plan moves nothing and opens no Drive file (close_week.Runner with mode 'plan'), so it
+        # runs here in about a minute instead of queueing a GitHub run that spent most of its
+        # 10-30 minutes installing the OCR libraries it never uses.
+        import threading
+        threading.Thread(target=_plan_in_web, args=(run_id, date_from, d_to), daemon=True).start()
+        return db.get_close_run(run_id)
     try:
         _dispatch("close-week.yml", {"week_from": date_from, "week_to": d_to, "mode": mode,
                                      "run_id": str(run_id)})
@@ -720,6 +736,15 @@ def close_week_start(date_from: str, mode: str):
         db.update_close_run(run_id, status="failed", finished_at=db._now(), message=str(e.detail))
         raise
     return db.get_close_run(run_id)
+
+
+def _plan_in_web(run_id, d_from, d_to):
+    import close_week as cw
+    try:
+        cw.Runner(run_id, d_from, d_to, "plan").go()
+    except BaseException as e:  # noqa: BLE001 — the page must hear about it, whatever it was
+        db.update_close_run(run_id, status="failed", finished_at=db._now(),
+                            message=f"ทำแผนไม่สำเร็จ: {type(e).__name__}: {str(e)[:300]}")
 
 
 @app.get("/api/completeness")
@@ -878,15 +903,20 @@ def _dispatch(workflow, inputs=None):
 
 
 @app.post("/api/ingest/trigger")
-def trigger_ingest():
-    """Kick the GitHub Actions ingest workflow (workflow_dispatch)."""
-    _note("ingest.trigger")
-    return {"ok": _dispatch_ingest(), "url": f"https://github.com/{config.GITHUB_REPO}/actions"}
+def trigger_ingest(force_walk: bool = False, cancel_batches: bool = False):
+    """Kick the GitHub Actions ingest workflow (workflow_dispatch). The two options are the
+    workflow's own tick boxes: walk every folder (albums moved into Drive keep their old
+    modified time, so the quick 'anything new?' probe misses them), and give up on a stalled
+    batch and read its pictures live."""
+    _note("ingest.trigger", force_walk=force_walk, cancel_batches=cancel_batches)
+    inputs = {k: "true" for k, on in (("force_walk", force_walk), ("cancel_batches", cancel_batches)) if on}
+    return {"ok": _dispatch(config.GITHUB_WORKFLOW, inputs),
+            "url": f"https://github.com/{config.GITHUB_REPO}/actions"}
 
 
 @app.get("/api/ingest/cron")
 @app.post("/api/ingest/cron")
-def cron_ingest(min_gap_hours: float = 4.0):
+def cron_ingest(min_gap_hours: float = None):
     """Start a round from OUTSIDE GitHub, for a free external cron service to call.
 
     GitHub's own scheduler is the weak link: it silently dropped both of 2026-08-27's rounds
@@ -894,19 +924,16 @@ def cron_ingest(min_gap_hours: float = 4.0):
     login, refuses to pile a second round on top of a running one, and ignores calls that
     come too soon after the last round — so a pinger firing more often than intended, or
     twice by accident, costs nothing."""
-    runs = db.list_ingest_runs(1)
-    last = runs[0] if runs else None
+    import round_gate
+    from datetime import datetime
     _note("ingest.cron")
-    if last and not last.get("finished_at"):
-        return {"ok": False, "skipped": "มีรอบกำลังรันอยู่", "run": last.get("started_at")}
-    if last and last.get("started_at"):
-        from datetime import datetime
-        age = (datetime.now(db._TZ_BKK).replace(tzinfo=None)
-               - datetime.fromisoformat(last["started_at"])).total_seconds() / 3600
-        if age < min_gap_hours:
-            return {"ok": False, "skipped": f"รอบล่าสุดเพิ่งจบไป {age:.1f} ชม.",
-                    "run": last.get("started_at")}
-    return {"ok": _dispatch_ingest(), "dispatched_at": db._now()}
+    last = db.latest_ingest_run()
+    batches = db.open_batches()
+    due, why = round_gate.decide(datetime.now(db._TZ_BKK).replace(tzinfo=None), last,
+                                 batches[0] if batches else None, min_gap=min_gap_hours)
+    if not due:
+        return {"ok": False, "skipped": why, "run": (last or {}).get("started_at")}
+    return {"ok": _dispatch_ingest(), "dispatched_at": db._now(), "why": why}
 
 
 @app.patch("/api/jobs/{job_id}/rider")
@@ -1100,10 +1127,12 @@ def review_queue():
 
 
 @app.post("/api/review-queue/approve-passing")
-def approve_passing():
-    """One click for the whole queue: approve every waiting row that passed the checks, is not
-    a duplicate, and has a date. Anything the system is unsure about stays put."""
-    rows = db.review_queue()
+def approve_passing(job_id: int = None):
+    """One click for the whole queue, or for one rider's rows with job_id: approve every waiting
+    row that passed the checks, is not a duplicate, and has a date. Anything the system is
+    unsure about stays put. The rider button used to call the whole-job commit instead, which
+    approved rows whose numbers did not add up without saying so."""
+    rows = [r for r in db.review_queue() if job_id is None or r.get("job_id") == job_id]
     ok = [r for r in rows if r.get("check_status") == "pass" and not r.get("duplicate_of")
           and r.get("trip_date") and not r.get("seen_in_job")]
     done, failed, ids = 0, [], []
@@ -1114,8 +1143,8 @@ def approve_passing():
         else:
             done += 1
             ids.append(r["id"])
-    _note("queue.approve_passing", approved=done, trip_ids=ids, failed=len(failed))
-    return {"approved": done, "skipped": len(rows) - len(ok), "failed": failed}
+    _note("queue.approve_passing", approved=done, trip_ids=ids, failed=len(failed), job_id=job_id)
+    return {"approved": done, "skipped": len(rows) - len(ok), "failed": failed, "ids": ids}
 
 
 @app.post("/api/trips/{trip_id}/approve")

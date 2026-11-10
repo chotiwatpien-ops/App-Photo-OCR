@@ -74,7 +74,8 @@ export const api = {
   batches: () => fetch('/api/batches').then(handle),
   collectBatches: () => fetch('/api/batches/collect', { method: 'POST' }).then(handle),
   renameJobRider: (jobId, name) => fetch(`/api/jobs/${jobId}/rider`, json('PATCH', { name })).then(handle),
-  triggerIngest: () => fetch('/api/ingest/trigger', { method: 'POST' }).then(handle),
+  triggerIngest: ({ forceWalk = false, cancelBatches = false } = {}) =>
+    fetch(`/api/ingest/trigger?force_walk=${forceWalk}&cancel_batches=${cancelBatches}`, { method: 'POST' }).then(handle),
   // the two customer workbooks, rebuilt from the database right now and pushed to Drive —
   // without waiting for an ingest round (Ops, 2026-09-09)
   exportSync: () => fetch('/api/export/sync', { method: 'POST' }).then(handle),
@@ -92,7 +93,7 @@ export const api = {
   spreadDates: (jobId, allRows = false) =>
     fetch(`/api/jobs/${jobId}/spread-dates?all_rows=${allRows}`, { method: 'POST' }).then(handle),
   approveTrip: (id) => fetch(`/api/trips/${id}/approve`, { method: 'POST' }).then(handle),
-  approvePassing: () => fetch('/api/review-queue/approve-passing', { method: 'POST' }).then(handle),
+  approvePassing: (jobId) => fetch('/api/review-queue/approve-passing' + (jobId ? `?job_id=${jobId}` : ''), { method: 'POST' }).then(handle),
   discarded: (everything = false) =>
     fetch(`/api/review-queue/discarded?everything=${everything}`).then(handle),
   clearDiscarded: () =>

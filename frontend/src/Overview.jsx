@@ -65,6 +65,8 @@ function Todos({ todos, onAct }) {
 }
 
 function Reading({ r, onRead, busy, note }) {
+  const [walk, setWalk] = useState(false)
+  const [cancel, setCancel] = useState(false)
   return (
     <Card aria-labelledby="read-h" className="p-4 sm:px-6 sm:py-5 flex flex-col gap-3">
       <h2 id="read-h" className="text-[17px] font-semibold">การอ่านรูป</h2>
@@ -75,9 +77,23 @@ function Reading({ r, onRead, busy, note }) {
         <dt className="text-muted">รอผลอ่าน</dt><dd>{fmt(r.total)} รูป</dd>
         <dt className="text-muted">อัลบั้มใหม่วันนี้</dt><dd>{r.albums_today == null ? '–' : `${fmt(r.albums_today)} อัลบั้ม`}</dd>
       </dl>
-      <p className="text-sm text-muted bg-ground rounded-lg px-3 py-2.5">รูปที่วางใน Drive จะถูกอ่านเองทุก 3 ชั่วโมง ไม่ต้องกดอะไร</p>
+      <p className="text-sm text-muted bg-ground rounded-lg px-3 py-2.5">
+        รูปที่วางใน Drive ระบบอ่านเองทุก 2–3 ชั่วโมง และเก็บผลอ่านทันทีที่พร้อม ไม่ต้องกดอะไร
+      </p>
       {note && <p className="text-sm text-ink-soft">{note}</p>}
-      <button onClick={onRead} disabled={busy || r.running}
+      {/* the two exceptions that used to mean a trip to GitHub's Run workflow form */}
+      <details className="text-sm">
+        <summary className="cursor-pointer min-h-9 flex items-center text-ink-soft">ตัวเลือกเพิ่มเติม</summary>
+        <label className="flex items-start gap-2 py-1.5">
+          <input type="checkbox" checked={walk} onChange={(e) => setWalk(e.target.checked)} className="mt-1" />
+          <span>เดินทุกโฟลเดอร์ <span className="text-muted">— ใช้เมื่อย้ายอัลบั้มที่มีอยู่แล้วเข้า Drive แล้วระบบไม่เห็น</span></span>
+        </label>
+        <label className="flex items-start gap-2 py-1.5">
+          <input type="checkbox" checked={cancel} onChange={(e) => setCancel(e.target.checked)} className="mt-1" />
+          <span>ยกเลิกผลอ่านที่ค้างแล้วอ่านสด <span className="text-muted">— ใช้เมื่อรอผลจาก Gemini เกิน 3 ชั่วโมง (จ่ายเต็มราคาเฉพาะรูปที่ค้าง)</span></span>
+        </label>
+      </details>
+      <button onClick={() => onRead({ forceWalk: walk, cancelBatches: cancel })} disabled={busy || r.running}
         className="mt-auto min-h-10 rounded-lg border border-line hover:bg-ground text-sm disabled:opacity-50">
         อ่านรูปที่วางใหม่เดี๋ยวนี้
       </button>
@@ -193,9 +209,9 @@ export default function Overview({ onGo }) {
     if (go === 'riders') ridersRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     else if (go) onGo(go)
   }
-  const readNow = () => {
+  const readNow = (opts) => {
     setBusy(true); setNote('')
-    api.triggerIngest().then(() => setNote('สั่งแล้ว — รูปใหม่จะขึ้นในไม่กี่นาที (ผลอ่านบางส่วนมาในรอบถัดไป)'))
+    api.triggerIngest(opts).then(() => setNote('สั่งแล้ว — รูปใหม่จะขึ้นในไม่กี่นาที (ผลอ่านบางส่วนมาในรอบถัดไป)'))
       .catch((e) => setNote(`สั่งไม่สำเร็จ: ${e.message}`)).finally(() => setBusy(false))
   }
   const current = data.weeks.find((w) => w.date_from === data.week)

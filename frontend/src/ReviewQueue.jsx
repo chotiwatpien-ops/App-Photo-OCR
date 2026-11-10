@@ -274,17 +274,27 @@ export default function ReviewQueue({ onOpenJob, onCount }) {
     } catch (e) { setMsg(e.message) } finally { setBusy(false) }
   }
 
-  const approveRest = async (jobId, name, force = false) => {
+  // only the rider's rows whose numbers pass; the rest stay in the queue and the note says so
+  const approveRest = async (jobId, name) => {
+    const mine = rows.filter((t) => t.job_id === jobId)
+    const ok = mine.filter((t) => t.check_status === 'pass' && !t.duplicate_of && t.trip_date && !t.seen_in_job)
+    if (!ok.length) return setMsg(`${name} ไม่มีแถวที่ตัวเลขผ่านให้อนุมัติ — ต้องตรวจทีละแถว`)
+    const left = mine.length - ok.length
+    if (!confirm(`อนุมัติ ${ok.length} แถวของ ${name} ที่ตัวเลขผ่าน?` + (left ? `
+
+อีก ${left} แถวที่ระบบไม่แน่ใจจะยังอยู่ในคิว` : ''))) return
+    setBusy(true)
     try {
-      const r = await api.commit(jobId, force)
-      setInfo(`อนุมัติ ${fmt(r.written)} แถวของ ${name} แล้ว`)
-      setRows((rs) => rs.filter((x) => x.job_id !== jobId))
-    } catch (e) {
-      if (!force && e.message.includes('บันทึกซ้ำ') && confirm(`${e.message}\n\nยืนยันอนุมัติทั้งหมดหรือไม่?`)) {
-        return approveRest(jobId, name, true)
-      }
-      setMsg(e.message)
-    }
+      const r = await api.approvePassing(jobId)
+      const done = new Set(r.ids || [])
+      setRows((rs) => {
+        const keep = rs.filter((x) => !done.has(x.id))
+        setAt((i) => Math.min(i, Math.max(0, keep.length - 1)))
+        return keep
+      })
+      setInfo(`อนุมัติ ${fmt(r.approved)} แถวของ ${name} แล้ว` + (r.skipped ? ` · เหลือรอตรวจ ${fmt(r.skipped)} แถว` : ''))
+      setMsg(r.failed?.length ? `อนุมัติไม่ได้ ${r.failed.length} แถว: ${r.failed[0].error}` : '')
+    } catch (e) { setMsg(e.message) } finally { setBusy(false) }
   }
 
   // hands stay on the keyboard: the queue is hundreds of rows on a busy week
@@ -436,11 +446,14 @@ export default function ReviewQueue({ onOpenJob, onCount }) {
                     <button onClick={() => setZoom(true)} className="relative w-full" title="กดเพื่อขยาย (Z)">
                       {/* two halves side by side is unreadable under ~640px: stack them there */}
                       <span className="flex flex-col sm:flex-row gap-2 justify-center">
-                        <img src={`/api/trips/${cur.id}/image`} alt="รูปสลิปของเที่ยวนี้"
+                        {/* key: a new element per row, so a picture that failed to load cannot
+                            hide every later row's picture, and the last row's slip never sits
+                            beside this row's numbers while the new one loads */}
+                        <img key={`a${cur.id}`} src={`/api/trips/${cur.id}/image`} alt="รูปสลิปของเที่ยวนี้"
                           className="mx-auto max-h-[46vh] sm:max-h-[60vh] w-auto object-contain rounded-lg border border-line bg-white"
                           onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} />
                         {two && (
-                          <img src={`/api/trips/${cur.id}/image?part=2`} alt="รูปครึ่งที่สองของเที่ยวนี้"
+                          <img key={`b${cur.id}`} src={`/api/trips/${cur.id}/image?part=2`} alt="รูปครึ่งที่สองของเที่ยวนี้"
                             className="mx-auto max-h-[46vh] sm:max-h-[60vh] w-auto object-contain rounded-lg border border-line bg-white"
                             onError={(e) => { e.currentTarget.style.display = 'none' }} />
                         )}
@@ -511,9 +524,9 @@ export default function ReviewQueue({ onOpenJob, onCount }) {
                       </button>
                     </div>
                     <p className="hidden lg:block text-xs text-muted">ปุ่มลัด: A อนุมัติ · S ข้าม · X ลบ · J/K แถวก่อน/ถัดไป · Z ขยายรูป · E ช่องที่ต้องกรอก</p>
-                    <button onClick={() => confirm(`อนุมัติทุกแถวที่เหลือของ ${cur.driver_name}?`) && approveRest(cur.job_id, cur.driver_name)}
+                    <button onClick={() => approveRest(cur.job_id, cur.driver_name)} disabled={busy}
                       className="self-start min-h-10 text-sm text-accent hover:underline">
-                      อนุมัติที่เหลือทั้งหมดของ {cur.driver_name}
+                      อนุมัติแถวที่ตัวเลขผ่านของ {cur.driver_name}
                     </button>
 
                     <details className="text-sm">
