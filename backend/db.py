@@ -1925,6 +1925,22 @@ def committed_fingerprint() -> str:
     return f"{r[0] or 0}|{r[1] or 0}|{round(float(r[2] or 0), 2)}|{r[3] or 0}|{r[4] or 0}"
 
 
+def week_fingerprint(date_from, date_to) -> str:
+    """committed_fingerprint for one week, plus the picture names: a week's file shows each
+    row's picture name and Order ID, and those are given after approval, so a renamed picture
+    has to make the file come out different too."""
+    with engine.begin() as c:
+        r = c.execute(select(func.count(), func.max(trips.c.id), func.sum(trips.c.net_earnings),
+                             func.sum(trips.c.base_fare), func.sum(trips.c.job_id),
+                             func.sum(case((trips.c.service_type.like("Saver%"), 1), else_=0)),
+                             func.count(trips.c.customer_image),
+                             func.sum(func.length(trips.c.customer_image)))
+                      .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+                      .where(trips.c.committed == 1, trips.c.status == "done",
+                             jobs.c.date_from == date_from, jobs.c.date_to == date_to)).first()
+    return "|".join(str(round(float(x), 2)) if x is not None else "0" for x in r)
+
+
 def review_queue():
     """Every done-but-unapproved row across all jobs, oldest job first.
     Adds seen_in_job: the job that already approved this trip in the same week (why auto-approve
@@ -2191,7 +2207,7 @@ def trips_with_images(job_id):
     """Done trips of a job with their image blobs — the merged bottom half's blob attached as
     `bottom_blob`. Only useful while blobs exist (before approval clears them)."""
     with engine.begin() as c:
-        rows = c.execute(select(trips.c.id, trips.c.file_name, trips.c.trip_date,
+        rows = c.execute(select(trips.c.id, trips.c.file_name, trips.c.trip_date, trips.c.trip_time,
                                 trips.c.customer_image, trips.c.image_blob, trips.c.source_url)
                          .where(trips.c.job_id == job_id, trips.c.status == "done")).mappings().all()
         bottoms = {r["merged_into"]: (r["id"], r["image_blob"], r["source_url"]) for r in c.execute(
@@ -2201,6 +2217,7 @@ def trips_with_images(job_id):
     for r in rows:
         b = bottoms.get(r["id"])
         out.append({"id": r["id"], "file_name": r["file_name"], "trip_date": r["trip_date"],
+                    "trip_time": r["trip_time"],
                     "customer_image": r["customer_image"], "source_url": r["source_url"],
                     "top_blob": bytes(r["image_blob"]) if r["image_blob"] else None,
                     "bottom_id": b[0] if b else None,

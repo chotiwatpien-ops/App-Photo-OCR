@@ -245,7 +245,6 @@ def _discover_category(drive, cat_folder, category, d_from, d_to, wk_name, skipp
 
 
 PROBE_KEY = "drive_probe_at"
-XLSX_KEY = "xlsx_fingerprint"
 PROBE_MARGIN = 15 * 60      # seconds of overlap, so a file saved mid-round is never missed
 PROBE_PAGE = 100
 
@@ -369,6 +368,36 @@ def discover(drive, inbox_id, walk=None, closed=None):
     if shut_seen:
         print(f"🔒 ข้ามสัปดาห์ที่ปิดแล้ว {len(shut_seen)} สัปดาห์: {' · '.join(sorted(shut_seen))}", flush=True)
     return items, skipped
+
+
+RENAMED_DIR = "_ชื่อเดิม"
+
+
+def make_customer_images(drive, folder, job_id, display, **kw) -> int:
+    """Make and upload a job's customer pictures; return how many were uploaded.
+
+    A picture that was renamed (a rider or date changed, or the naming moved to Order ID on
+    2026-11-10) leaves its old file behind under the old name, and the customer would get the
+    same trip twice. Old names no row of the week uses any more are moved into _ชื่อเดิม beside
+    them: out of the customer's folder, not deleted."""
+    before = {r["id"]: r.get("customer_image") for r in db.trips_with_images(job_id)}
+    imgs = list(pipeline.customer_images(job_id, display, fetch=drive.download, **kw))
+    with ThreadPoolExecutor(max_workers=max(1, min(DRIVE_PARALLEL, len(imgs)))) as ex:
+        list(ex.map(lambda nd: drive.upload_file(folder, nd[0], nd[1], "image/jpeg"), imgs))
+    n = len(imgs)
+    after = {r["id"]: r.get("customer_image") for r in db.trips_with_images(job_id)}
+    stale = {old for tid, old in before.items() if old and after.get(tid) != old}
+    if stale:
+        meta = db.get_job_meta(job_id) or {}
+        still = set(db.customer_images_in_week(meta.get("date_from"), meta.get("date_to")))             if meta.get("date_from") else set()
+        stale -= still
+    if stale:
+        parked = None
+        for f in drive.list_images(folder):
+            if f["name"] in stale:
+                parked = parked or drive.ensure_folder(folder, RENAMED_DIR)
+                drive.move_file(f["id"], parked)
+    return n
 
 
 def keep_images_for_waiting(job_id, among=None, memory=None, drive=None) -> int:
@@ -582,14 +611,12 @@ def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True, force=Fals
     def one(t):
         """(job id, n pictures, error) for one rider."""
         try:
-            imgs = list(pipeline.customer_images(t["job"]["id"], t["display"], fetch=drive.download,
-                                                 only_missing=not force))
-            for name, data in imgs:
-                drive.upload_file(t["dir"], name, data, "image/jpeg")
+            n = make_customer_images(drive, t["dir"], t["job"]["id"], t["display"],
+                                     only_missing=not force)
             # a finished row still without a picture name was skipped for want of its bytes —
             # say so, rather than leave a blank in the workbook for someone else to find
             bare_rows = [r for r in db.trips_with_images(t["job"]["id"]) if not r.get("customer_image")]
-            return t["job"]["id"], len(imgs), None, len(bare_rows)
+            return t["job"]["id"], n, None, len(bare_rows)
         except Exception as e:  # noqa: BLE001
             return t["job"]["id"], 0, e, 0
 
@@ -620,21 +647,9 @@ def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True, force=Fals
                 if bare_n:
                     log(f"⚠ {t['display']} (job #{jid}): {bare_n} แถวไม่มีรูปต้นทางให้ต่อ — ในไฟล์จะไม่มีชื่อรูป")
     if with_xlsx:
-        rows = db.query_trips(committed_only=True)
-        try:
-            fid = drive.upload_xlsx(exports_id, "Rider Trips.xlsx", excel_writer.build_workbook(rows))
-            for later, data in excel_writer.later_workbooks(rows):
-                drive.upload_xlsx(exports_id, later, data)
-            for (d_from, _), _js in db.jobs_by_week().items():
-                db.record_drive_file(week_label(d_from), "xlsx", fid, "Rider Trips.xlsx")
-            old_n = sum(1 for t in rows if not excel_writer.in_location_scope(t.get("trip_date")))
-            p3_n = sum(1 for t in rows if excel_writer.in_fare_lines_scope(t.get("trip_date")))
-            log(f"📄 Rider Trips.xlsx: {old_n} แถว (ก่อน {excel_writer.LOCATION_FROM_WEEK}) · "
-                f"Phase 2: {len(rows) - old_n - p3_n} แถว · "
-                f"Phase 3: {p3_n} แถว (ตั้งแต่ {excel_writer.FARE_LINES_FROM_WEEK})")
-        except Exception as e:  # noqa: BLE001
-            log(f"✗ upload xlsx: {e}")
-            errors += 1
+        import week_files
+        _n, errs_files = week_files.write(drive, exports_id, force=True, log=log)
+        errors += errs_files
     return errors, failed
 
 
@@ -658,14 +673,9 @@ def cleanup(drive, exports_id, delete_job_ids=None, delete_trip_ids=None) -> int
             else:
                 log(f"   (ไม่พบแถว #{r['id']})")
         log(f"🧹 ลบแถวที่สั่งไว้ {sum(1 for r in gone if r['found'])} แถว (฿{baht:,.0f})")
-    rows = db.query_trips(committed_only=True)
-    try:
-        drive.upload_xlsx(exports_id, "Rider Trips.xlsx", excel_writer.build_workbook(rows))
-        log(f"📄 อัพเดต Rider Trips.xlsx: เหลือ {len(rows)} แถว")
-    except Exception as e:  # noqa: BLE001
-        log(f"✗ upload xlsx: {e}")
-        return 1
-    return 0
+    import week_files
+    _n, errs_files = week_files.write(drive, exports_id, log=log)
+    return 1 if errs_files else 0
 
 
 def fix_hidden_turbo() -> int:
@@ -1187,11 +1197,8 @@ def _run(drive, inbox_id, exports_id, run_id, dry_run=False, limit=None, only=No
             cat_dir = drive.ensure_folder(week_dir, meta.get("category") or "อัปโหลดมือ")
             db.record_drive_file(wk, "rider_folder", cat_dir, meta.get("category"), ref=job_id)
             display = display_names.get(job_id, rider)
-            imgs = list(pipeline.customer_images(job_id, display, fetch=drive.download,
-                                                 cache=images))
-            with ThreadPoolExecutor(max_workers=DRIVE_PARALLEL) as ex:
-                list(ex.map(lambda nd: drive.upload_file(cat_dir, nd[0], nd[1], "image/jpeg"), imgs))
-            log(f"  🖼 รูปส่งลูกค้า {len(imgs)} ไฟล์ → Exports/{wk}/{meta.get('category') or 'อัปโหลดมือ'}/ (ชื่อ {display}N.jpg)")
+            n = make_customer_images(drive, cat_dir, job_id, display, cache=images)
+            log(f"  🖼 รูปส่งลูกค้า {n} ไฟล์ → Exports/{wk}/{meta.get('category') or 'อัปโหลดมือ'}/")
         except Exception as e:  # noqa: BLE001
             log(f"  ✗ customer images: {e}")
             issues.append((f"images:{job_id}", "images", f"อัพโหลดรูปส่งลูกค้าของ {rider} ไม่สำเร็จ: {e}"))
@@ -1251,39 +1258,13 @@ def _run(drive, inbox_id, exports_id, run_id, dry_run=False, limit=None, only=No
         errors += errs_st
 
 
-    # ONE continuous workbook for the whole project (all weeks appended). Regenerated EVERY
-    # run — not just when new photos arrived — so edits/approvals made in the web app between
-    # runs always reach the Drive copy too.
-    # The workbook is one continuous file for the whole project, rewritten from every approved
-    # row — 13,000 of them, pulled out of Neon. It used to be rebuilt every round so that edits
-    # made in the web app between rounds still reached Drive; four quiet rounds a day was
-    # 5 MB each of a 5 GB monthly transfer allowance spent producing a byte-identical file.
-    # The fingerprint answers the same question for three numbers.
-    stamp = f"{excel_writer.LAYOUT}:{db.committed_fingerprint()}"
-    if stamp == db.state_get(XLSX_KEY):
-        log("📄 Rider Trips.xlsx: ไม่มีอะไรเปลี่ยนตั้งแต่รอบก่อน — ไม่ต้องเขียนใหม่")
-        rows = []
-    else:
-        rows = db.query_trips(committed_only=True)
-    if rows:
-        name = "Rider Trips.xlsx"
-        try:
-            fid = drive.upload_xlsx(exports_id, name, excel_writer.build_workbook(rows))
-            for (d_from, _), _js in db.jobs_by_week().items():
-                db.record_drive_file(week_label(d_from), "xlsx", fid, name)
-            old_n = sum(1 for t in rows if not excel_writer.in_location_scope(t.get("trip_date")))
-            log(f"📄 {name}: {old_n} แถว — หยุดที่ก่อน {excel_writer.LOCATION_FROM_WEEK} "
-                f"(อีก {len(rows) - old_n} แถวอยู่ใน Phase 2 และ Phase 3)")
-            # the later files ride along on the same trigger: same rows, same moment, so they
-            # never disagree about what is approved
-            for later, data in excel_writer.later_workbooks(rows):
-                drive.upload_xlsx(exports_id, later, data)
-                log(f"📄 {later}")
-            db.state_set(XLSX_KEY, stamp)
-        except Exception as e:  # noqa: BLE001
-            log(f"✗ upload {name}: {e}")
-            issues.append(("xlsx", "xlsx", f"อัพโหลด {name} ขึ้น Drive ไม่สำเร็จ: {e}"))
-            errors += 1
+    # Each open week's own customer file, rewritten only when its rows changed (week_files.py).
+    # The three files that held every week stopped at W45 (Fiat 2026-11-10).
+    import week_files
+    _n, errs_files = week_files.write(drive, exports_id, log=log)
+    if errs_files:
+        issues.append(("xlsx", "xlsx", f"เขียนไฟล์รายสัปดาห์ไม่สำเร็จ {errs_files} สัปดาห์ — ดู log ของรอบนี้"))
+        errors += errs_files
 
     if config.CLEAN_DUP_SEATS and not dry_run and not only and touched_weeks:
         # A picture is only known to be a repeat after Gemini has read it and the booking-code
@@ -1405,7 +1386,7 @@ def main():
     ap.add_argument("--limit", type=int)
     ap.add_argument("--exports-only", action="store_true", help="regenerate Excel + customer images for existing jobs")
     ap.add_argument("--xlsx-only", action="store_true",
-                    help="rewrite Rider Trips.xlsx from the database only — no pictures, no reading. "
+                    help="rewrite every open week's file from the database only — no pictures, no reading. "
                          "For a column-rule change: the workbook holds every week, so one pass fixes all")
     ap.add_argument("--exports-jobs", metavar="IDS",
                     help="regenerate customer images for these job ids only (comma-separated)")

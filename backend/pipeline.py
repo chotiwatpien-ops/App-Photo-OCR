@@ -300,6 +300,15 @@ def customer_images(job_id, rider, fetch=None, cache=None, only_missing=True):
     rows = db.trips_with_images(job_id)
     rows.sort(key=lambda r: (r["trip_date"] or "9999", _natural_key(r["file_name"])))
     cache = cache or {}
+    # From ORDER_ID_FROM the picture is named by its Order ID (order_id.py), when the rider has a
+    # driver id; anything that cannot be named that way falls through to the week-and-number name.
+    import order_id
+    did = db.driver_ids().get(rider) if job and order_id.applies(job.get("date_from")) else None
+    if did:
+        named = order_id.assign(rows, did, db.customer_images_in_week(job["date_from"], job["date_to"]))
+        for r in rows:
+            if r["id"] in named:
+                r["_name"] = named[r["id"]]
     taken = set()
     if config.CUSTOMER_IMAGE_NUMBERING == "append":
         # Numbers already handed out to THIS rider anywhere in the week, not just in this job.
@@ -315,8 +324,9 @@ def customer_images(job_id, rider, fetch=None, cache=None, only_missing=True):
         for r in rows:
             k = _number_in(r.get("customer_image"), rider, wk)
             if k:                       # a name this rider's own naming produced — keep it
-                r["_name"], r["_num"] = r["customer_image"], k
                 taken.add(k)
+                if not r.get("_name"):
+                    r["_name"], r["_num"] = r["customer_image"], k
     nxt = 1
     for r in rows:                      # everything else numbers after what is already out
         if r.get("_name"):

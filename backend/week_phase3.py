@@ -347,6 +347,10 @@ def main(argv=None):
         where = config.DRIVE_EXPORTS_FOLDER_ID
         if a.folder:
             where = drive.ensure_folder(where, a.folder)
+        elif len(froms) == 1 and not a.name and not a.drop_repeats:
+            # one week's file lives in that week's folder, where the round keeps it current
+            import week_files
+            where = week_files.folder(drive, where, froms[0])
         fid = drive.upload_xlsx(where, name, data)
         print(f"วางลง Drive แล้ว: {(a.folder + '/') if a.folder else ''}{name}"
               f" → https://drive.google.com/file/d/{fid}/view")

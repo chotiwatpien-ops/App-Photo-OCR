@@ -58,6 +58,10 @@ db.update_trip(t1, {"status": "done", "trip_date": "2026-08-25", "net_earnings":
 db.approve_trip(t1)
 first = db.committed_fingerprint()
 check("ลายนิ้วมือคงที่ถ้าไม่มีอะไรเปลี่ยน", db.committed_fingerprint() == first)
+wk_first = db.week_fingerprint("2026-08-24", "2026-08-30")
+db.update_trip(t1, {"customer_image": "005625082601.jpg"})
+check("ไฟล์รายสัปดาห์: เปลี่ยนชื่อรูปแล้วลายนิ้วมือเปลี่ยน (คอลัมน์ Order ID มาจากชื่อรูป)",
+      db.week_fingerprint("2026-08-24", "2026-08-30") != wk_first)
 
 # Ops 2026-09-06: เปลี่ยนคอลัมน์ Phase 2 แล้วไฟล์ไม่ถูกเขียนใหม่ เพราะประตูดูแค่ข้อมูล ไม่ดูรูปแบบ
 import excel_writer                                             # noqa: E402
@@ -150,6 +154,7 @@ walked = []
 real_discover = ingest.discover
 ingest.discover = lambda *a, **k: (walked.append(1) or ([], []))
 
+config.WEEK_FILES_FROM = "2026-08-24"          # this test's week has its own file
 uploads = []
 real_xlsx = LocalDrive.upload_xlsx
 LocalDrive.upload_xlsx = lambda self, parent, name, data: (
@@ -159,16 +164,18 @@ try:
     db.state_set(ingest.PROBE_KEY, None)
     ingest.run(drive, inbox, exports)                     # ยังไม่มีหมุดเวลา → ต้องเดิน
     check("รอบแรก (ยังไม่มีหมุดเวลา): เดินโฟลเดอร์", len(walked) == 1)
-    check("รอบแรก: เขียน workbook", uploads == ["Rider Trips.xlsx"])
+    check("รอบแรก: เขียนไฟล์ของแต่ละสัปดาห์ แยกกัน",
+          sorted(uploads) == ["Rider Trips 2026-W35 Phase 3.xlsx", "Rider Trips 2026-W36 Phase 3.xlsx"])
     check("รอบแรก: จดหมุดเวลาไว้ให้รอบหน้า", bool(db.state_get(ingest.PROBE_KEY)))
 
     ingest.run(drive, inbox, exports)                     # Drive บอกว่าไม่มีอะไรใหม่
     check("รอบสอง (เงียบ): ไม่เดินโฟลเดอร์เลย", len(walked) == 1)
-    check("รอบสอง (เงียบ): ไม่เขียน workbook ซ้ำ", len(uploads) == 1)
+    check("รอบสอง (เงียบ): ไม่เขียนไฟล์ซ้ำ", len(uploads) == 2)
 
     db.update_trip(t2, {"net_earnings": 999})             # มีคนแก้เงินในเว็บระหว่างรอบ
     ingest.run(drive, inbox, exports)
-    check("แก้ในเว็บระหว่างรอบ: ยังเขียน workbook ขึ้น Drive ให้", len(uploads) == 2)
+    check("แก้ในเว็บระหว่างรอบ: เขียนใหม่เฉพาะไฟล์ของสัปดาห์ที่แก้", len(uploads) == 3
+          and uploads[-1] == "Rider Trips 2026-W35 Phase 3.xlsx")
     check("แต่ยังไม่ต้องเดินโฟลเดอร์เพราะเรื่องนั้น", len(walked) == 1)
 finally:
     ingest.discover = real_discover

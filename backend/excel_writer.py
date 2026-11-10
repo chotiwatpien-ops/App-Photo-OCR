@@ -46,7 +46,7 @@ FARE_LINES_FILE = "Rider Trips Phase 3.xlsx"
 # Uploads are skipped when no row has changed since the last round, which is right for data and
 # wrong for layout: the Phase 2 file would have kept its old columns until the next approval
 # happened to come along. Folding this into that fingerprint forces exactly one rewrite.
-LAYOUT = "2026-09-21"
+LAYOUT = "2026-11-10"
 
 HEADERS = [
     "Driver Name", "Date & Time", "Time", "Service Type", "Payment Method",
@@ -64,6 +64,8 @@ COL_WIDTHS = [11.4, 9.7, 12.9, 12.5, 13.5, 12.5, 13.4, 10.5, 12.0, 14.1, 11.9, 1
 LOCATION_EXTRA = ["Pick-up Zone", "Drop-off Zone"]
 LOCATION_HEADERS = HEADERS + LOCATION_EXTRA
 
+# Driver ID and Order ID follow the driver's name from ORDER_ID_FROM (W46, Fiat 2026-11-10), so
+# a row and its picture, named '<Order ID>.jpg', match by name; earlier rows leave both empty.
 # Phase 3 (from FARE_LINES_FROM_WEEK). A–O as the customer knows them, except that L is printed
 # as the slip prints it (negative), M no longer carries the tip, and J includes the toll refund. Then the passenger's block in
 # slip order, each line its own column, signs as printed — so a reader can check any row:
@@ -72,7 +74,7 @@ LOCATION_HEADERS = HEADERS + LOCATION_EXTRA
 # fee"; Fiat 2026-09-21 chose it): Grab's cut on the slip plus the app fee the passenger paid.
 # Grab Service Fee stays as the slip prints it beside it, so both are there to compare.
 FARE_HEADERS = [
-    "Driver Name", "Date & Time", "Time", "Service Type", "Payment Method",
+    "Driver Name", "Driver ID", "Order ID", "Date & Time", "Time", "Service Type", "Payment Method",
     "Pick-up Location", "Drop-off Location", "Distance (km)", "Duration (mins)",
     "Net Earnings (THB)", "Base Fare (THB)", "International Fee", "Bonus",
     "Turbo Incentive (THB)", "Reimbursements / Tolls (THB)", "Tip (THB)",
@@ -80,7 +82,7 @@ FARE_HEADERS = [
     "Passenger Fare (THB)", "Ride Fare (THB)", "Grab Service Fee (THB)", "Total Commission (THB)",
     "Image",
 ]
-FARE_WIDTHS = [11.4, 9.7, 12.9, 12.5, 13.5, 46, 46, 10.5, 12.0, 14.1, 11.9, 13.2, 7.8, 16.4, 22.3,
+FARE_WIDTHS = [11.4, 9, 14.5, 9.7, 12.9, 12.5, 13.5, 46, 46, 10.5, 12.0, 14.1, 11.9, 13.2, 7.8, 16.4, 22.3,
                9.5, 13.5, 10.5, 16.5, 14.5, 11.5, 15.9, 13.5, 17.1, 17.5, 18]
 FARE_LINES_HEADERS = FARE_HEADERS + LOCATION_EXTRA
 _FARE_COL = {h: i for i, h in enumerate(FARE_HEADERS, start=1)}
@@ -295,8 +297,12 @@ def _write_fare_row(ws, row, driver_name, t):
                  + _n(t.get("insurance_fee")) + _n(t.get("passenger_tolls")) + _n(t.get("other_adj")))
         if abs(total - lines) < 0.51:
             tip = 0
+    import order_id
+    named = order_id.applies(t.get("trip_date"))
     values = {
         "Driver Name": driver_name,
+        "Driver ID": t.get("driver_id") if named else None,
+        "Order ID": order_id.of_picture(t.get("customer_image")) if named else None,
         "Date & Time": d,
         "Time": time_band(t.get("trip_time")),
         "Service Type": t.get("service_type"),
@@ -489,9 +495,10 @@ def build_fare_lines_workbook(rows: list[dict], every_week=False) -> bytes | Non
     _style_header(ws, FARE_LINES_HEADERS, FARE_WIDTHS + [14, 14], medium=True)
     ws.freeze_panes = "A2"
     zone_col = len(FARE_HEADERS) + 1
+    ids = _driver_ids()
     for i, t in enumerate(sorted(wanted, key=lambda x: (x.get("trip_date") or "", x["driver_name"])),
                           start=2):
-        _write_fare_row(ws, i, t["driver_name"], t)
+        _write_fare_row(ws, i, t["driver_name"], dict(t, driver_id=ids.get(t["driver_name"])))
         for col, z in enumerate(trip_zones(t),
                                 start=zone_col):
             cell = ws.cell(row=i, column=col, value=z)
@@ -499,6 +506,15 @@ def build_fare_lines_workbook(rows: list[dict], every_week=False) -> bytes | Non
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def _driver_ids():
+    """{'สถาพร Win': '0056'} from the roster; empty when the database cannot say."""
+    try:
+        import db
+        return db.driver_ids()
+    except Exception:  # noqa: BLE001 — a file without ids beats no file
+        return {}
 
 
 def build_fare_lines_header() -> bytes:

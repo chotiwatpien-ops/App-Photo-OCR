@@ -237,6 +237,12 @@ DRIVE_EXPORTS_FOLDER_ID = _setting("DRIVE_EXPORTS_FOLDER_ID", "drive_exports_fol
 # customer's colour zones; earlier trips keep the zones they were delivered with. Fiat
 # (2026-11-08): use the table as built, from W46 on, without waiting for the customer's sheet.
 ZONE_TABLE_FROM = _setting("ZONE_TABLE_FROM", "zone_table_from", "2026-11-09") or None
+# From this week on, customer pictures are named by Order ID and the file carries Driver ID and
+# Order ID after the driver's name (order_id.py; Fiat 2026-11-10). Empty turns it off.
+ORDER_ID_FROM = _setting("ORDER_ID_FROM", "order_id_from", "2026-11-09") or None
+# From this week on each week has its own customer file in its own Exports folder
+# (week_files.py; Fiat 2026-11-10) instead of three files that hold every week.
+WEEK_FILES_FROM = _setting("WEEK_FILES_FROM", "week_files_from", "2026-11-09") or None
 # Phase 2 "pool": whole LINE albums dropped as Inbox/<Week …>/Pool/<vehicle group>/<album>/
 # (ingest skips a "Pool" folder inside a week). pool.py pairs the halves there and, once
 # trusted, distributes trips into that week's rider folders. Set DRIVE_POOL_FOLDER_ID only for

@@ -97,7 +97,8 @@ book = openpyxl.load_workbook(io.BytesIO(xw.build_fare_lines_workbook(
 ws = book[book.sheetnames[0]]
 head = [c.value for c in ws[1]]
 cols = [i for i, h in enumerate(head) if h in ("Pick-up Zone", "Drop-off Zone")]
-got = {str(r[1])[:10]: [r[i] for i in cols] for r in ws.iter_rows(min_row=2, values_only=True)}
+di = head.index("Date & Time")
+got = {str(r[di])[:10]: [r[i] for i in cols] for r in ws.iter_rows(min_row=2, values_only=True)}
 check("ไฟล์ Phase 3: เที่ยวก่อน W46 คงโซนเดิม", got.get("2026-09-30") == ["Downtown", "East-SVB"], got)
 check("ไฟล์ Phase 3: เที่ยว W46 ได้โซนสี", got.get("2026-11-10") == ["Green", "Orange"], got)
 

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The 'sync Excel now' button (Ops, 2026-09-09).
 
-An ingest round rewrites both customer workbooks on Drive, but only every few hours and only
+An ingest round rewrites each open week's file on Drive, but only every few hours and only
 after the whole round. This button does the same rewrite from the same rows, on demand, in the
 background — and says plainly when the server cannot write to Drive at all, instead of
 pretending. Downloading either workbook works whatever the server's Drive access is.
@@ -49,10 +49,22 @@ r = c.get("/api/export")
 check("ดาวน์โหลด Rider Trips ได้เสมอ", r.status_code == 200 and r.content[:2] == b"PK")
 
 
+# one approved trip in an open week from WEEK_FILES_FROM: that week gets its own file
+import db                                                       # noqa: E402
+config.WEEK_FILES_FROM = "2026-11-09"
+_job = db.create_job("ทดสอบ Win", "Trips", "2026-11-09", "2026-11-15", category="2 W Standard")
+_t = db.create_trip(_job, "a.jpg", None, "image/jpeg")
+db.update_trip(_t, {"status": "done", "trip_date": "2026-11-10", "net_earnings": 50, "base_fare": 50})
+db.approve_trip(_t)
+
+
 # with Drive access, the work runs in the background and the status follows it
 class FakeDrive:
     def __init__(self):
         self.uploaded = []
+
+    def ensure_folder(self, parent, name):
+        return f"{parent}/{name}"
 
     def upload_xlsx(self, parent, name, data):
         self.uploaded.append((parent, name, len(data)))
@@ -71,10 +83,12 @@ for _ in range(100):
         break
     time.sleep(0.1)
 st = c.get("/api/export/sync").json()
-check("ทำเสร็จเอง → done พร้อมจำนวนแถวและเวลา", st["state"] == "done" and st["rows"] == 0 and st.get("finished_at"))
-check("เขียน Rider Trips.xlsx ขึ้นโฟลเดอร์ Exports", ("exports", "Rider Trips.xlsx") in [(p, n) for p, n, _ in fake.uploaded])
-check("ไม่มีแถว W36 ก็ไม่เขียนไฟล์ Phase 2 (ไม่มีอะไรจะเขียน)",
-      all(n != "Rider Trips Phase 2.xlsx" for _, n, _ in fake.uploaded))
+check("ทำเสร็จเอง → done พร้อมจำนวนไฟล์และเวลา", st["state"] == "done" and st["rows"] == 1 and st.get("finished_at"))
+check("เขียนไฟล์ของสัปดาห์ลงโฟลเดอร์ของสัปดาห์นั้น",
+      [(p, n) for p, n, _ in fake.uploaded] == [("exports/2026-W46", "Rider Trips 2026-W46 Phase 3.xlsx")])
+check("ไม่เขียนไฟล์รวมทุกสัปดาห์อีก",
+      all(n not in ("Rider Trips.xlsx", "Rider Trips Phase 2.xlsx", "Rider Trips Phase 3.xlsx")
+          for _, n, _ in fake.uploaded))
 
 # a second click while one is running does not start a second one
 main._sync.update(state="running")
@@ -93,21 +107,19 @@ check("กดซ้ำเมื่อไม่มีอะไรเปลี่�
       main._sync["state"] == "done" and main._sync.get("unchanged") is True and len(fake.uploaded) == n_before)
 
 # a Drive failure is reported, not swallowed
-class BadDrive:
+class BadDrive(FakeDrive):
     def upload_xlsx(self, *a):
         raise RuntimeError("EOF occurred in violation of protocol")
 
 
-import db                                                       # noqa: E402
-import ingest                                                   # noqa: E402
-db.state_set(ingest.XLSX_KEY, "")                               # something changed since
+db.state_set("week_file:2026-11-09", "")                        # something changed since
 roster._drive = lambda: BadDrive()
 c.post("/api/export/sync")
 for _ in range(100):
     if main._sync["state"] != "running":
         break
     time.sleep(0.1)
-check("Drive ล้ม → สถานะ error พร้อมเหตุผล", main._sync["state"] == "error" and "EOF" in main._sync["error"])
+check("Drive ล้ม → สถานะ error พร้อมเหตุผล", main._sync["state"] == "error" and "ไม่สำเร็จ" in main._sync["error"])
 
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

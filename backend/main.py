@@ -1067,28 +1067,15 @@ _sync_lock = __import__("threading").Lock()
 
 
 def _sync_workbooks():
-    import ingest
     import roster
     try:
-        # The same fingerprint an ingest round uses: three numbers from one small query. When
-        # nothing approved has changed since the workbooks were last written, there is nothing
-        # to write — and no 13,000-row pull from Neon for a click that changes nothing.
-        stamp = f"{excel_writer.LAYOUT}:{db.committed_fingerprint()}"
-        if stamp == db.state_get(ingest.XLSX_KEY):
-            _sync.update(state="done", rows=0, unchanged=True, error=None,
-                         finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-            return
-        drive = roster._drive()
-        rows = db.query_trips(committed_only=True)
-        fid = drive.upload_xlsx(config.DRIVE_EXPORTS_FOLDER_ID, "Rider Trips.xlsx",
-                                excel_writer.build_workbook(rows))
-        for later, data in excel_writer.later_workbooks(rows):
-            drive.upload_xlsx(config.DRIVE_EXPORTS_FOLDER_ID, later, data)
-        for (d_from, _), _js in db.jobs_by_week().items():
-            db.record_drive_file(ingest.week_label(d_from), "xlsx", fid, "Rider Trips.xlsx")
-        db.state_set(ingest.XLSX_KEY, f"{excel_writer.LAYOUT}:{db.committed_fingerprint()}")
-        _sync.update(state="done", rows=len(rows), finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                     error=None)
+        # Each open week's own file, only those whose rows changed (week_files.py, 2026-11-10).
+        import week_files
+        n, errs = week_files.write(roster._drive(), config.DRIVE_EXPORTS_FOLDER_ID)
+        if errs:
+            raise RuntimeError(f"เขียนไฟล์ไม่สำเร็จ {errs} สัปดาห์")
+        _sync.update(state="done", rows=n, unchanged=n == 0, error=None,
+                     finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     except Exception as e:  # noqa: BLE001 — the page shows the reason; nothing else is affected
         _sync.update(state="error", error=str(e)[:200], finished_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 

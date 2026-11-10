@@ -79,9 +79,10 @@ def adds_up(key):
 # --- the layout ---------------------------------------------------------------------------
 check("หัวคอลัมน์ตรงกับแบบที่ตกลง A–Y แล้วโซนต่อท้าย",
       [ws.cell(1, c).value for c in range(1, ws.max_column + 1)] == xw.FARE_LINES_HEADERS)
-check("A–K ชื่อเดิมตำแหน่งเดิม (ลูกค้าอ้างตัวอักษรได้เหมือนเดิม)",
-      xw.FARE_HEADERS[:11] == xw.HEADERS[:11])
-check("L–O ชื่อเดิมตำแหน่งเดิม", xw.FARE_HEADERS[11:15] == xw.HEADERS[11:15])
+check("Driver ID และ Order ID ต่อจากชื่อไรเดอร์ (Fiat 2026-11-10)",
+      xw.FARE_HEADERS[:3] == ["Driver Name", "Driver ID", "Order ID"])
+check("คอลัมน์ที่ลูกค้ารู้จักเรียงเหมือนเดิม แค่เลื่อนไป 2 ช่อง",
+      xw.FARE_HEADERS[3:13] == xw.HEADERS[1:11] and xw.FARE_HEADERS[13:17] == xw.HEADERS[11:15])
 check("ชื่อ Ride Fare ตามที่ Joe ขอ", "Ride Fare (THB)" in H and "Total Passenger Fare" not in str(H))
 check("ความกว้างครบทุกคอลัมน์", len(xw.FARE_WIDTHS) == len(xw.FARE_HEADERS))
 check("ชีตชื่อเดียวกับ Phase 2 (อะไรที่อ่าน Phase 2 อยู่ หาเจอ)", ws.title == xw.LOCATION_SHEET)
@@ -89,11 +90,11 @@ check("LAYOUT เปลี่ยนแล้ว — ไฟล์บน Drive ถ
 
 # --- formulas point at the right columns ------------------------------------------------------
 r = by_name["สมชาย"]
-check("J = K+M+N+O+P (ทิปมีช่องของตัวเอง + ค่าทางด่วนที่ได้คืน)",
-      ws.cell(r, H["Net Earnings (THB)"]).value == f"=K{r}+M{r}+N{r}+O{r}+P{r}")
-check("X = W−K (ค่าบริการ Grab จากค่ารอบ)", ws.cell(r, H["Grab Service Fee (THB)"]).value == f"=W{r}-K{r}")
+check("L = M+O+P+Q+R (ทิปมีช่องของตัวเอง + ค่าทางด่วนที่ได้คืน)",
+      ws.cell(r, H["Net Earnings (THB)"]).value == f"=M{r}+O{r}+P{r}+Q{r}+R{r}")
+check("Z = Y−M (ค่าบริการ Grab จากค่ารอบ)", ws.cell(r, H["Grab Service Fee (THB)"]).value == f"=Y{r}-M{r}")
 check("Y Total Commission = X − Q (ค่าบริการ Grab + ค่าแอปที่ผู้โดยสารจ่าย · ลูกค้า นิยาม ข.)",
-      ws.cell(r, H["Total Commission (THB)"]).value == f"=X{r}-Q{r}")
+      ws.cell(r, H["Total Commission (THB)"]).value == f"=Z{r}-S{r}")
 check("สลิปของ Ops: Total Commission = 4 − (−1) = 5",
       (v("ops", "Ride Fare (THB)") - v("ops", "Base Fare (THB)")) - v("ops", "Application Fee") == 5)
 check("Total Commission อยู่ถัดจาก Grab Service Fee ก่อน Image",
@@ -107,8 +108,8 @@ check("ไม่มีเลขผู้โดยสาร: ค่ารอบ�
 check("ไม่มีอะไรให้คำนวณเลย: ช่องค่าบริการและ Total Commission ว่าง ไม่มีสูตรลอย ๆ",
       _nr.cell(_none, H["Grab Service Fee (THB)"]).value is None
       and _nr.cell(_none, H["Total Commission (THB)"]).value is None)
-check("K คือ Base Fare, P คือ Tip, W คือ Ride Fare",
-      (H["Base Fare (THB)"], H["Tip (THB)"], H["Ride Fare (THB)"]) == (11, 16, 23))
+check("M คือ Base Fare, R คือ Tip, Y คือ Ride Fare",
+      (H["Base Fare (THB)"], H["Tip (THB)"], H["Ride Fare (THB)"]) == (13, 18, 25))
 
 # --- every row adds up, on real slips ---------------------------------------------------------
 for key in ("ops", "promo_31153", "both_32256", "tolls_31974", "everything_31420", "tip_31962"):

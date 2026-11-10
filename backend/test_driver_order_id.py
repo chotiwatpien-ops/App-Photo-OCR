@@ -56,21 +56,32 @@ check("รหัสที่ไม่ใช่ตัวเลข 4 หลัก�
 
 # --- Order ID -------------------------------------------------------------------------------
 rows = [
-    {"id": 1, "driver_name": "ตฤณ Win", "trip_date": "2026-11-30", "trip_time": "14:05"},
-    {"id": 2, "driver_name": "ตฤณ Win", "trip_date": "2026-11-30", "trip_time": "08:30"},
-    {"id": 3, "driver_name": "ตฤณ Win", "trip_date": "2026-12-01", "trip_time": "09:00"},
-    {"id": 4, "driver_name": "มานี Win", "trip_date": "2026-11-30", "trip_time": "10:00"},
-    {"id": 5, "driver_name": "ตฤณ Win", "trip_date": None, "trip_time": "10:00"},
-    {"id": 6, "driver_name": "ตฤณ Win", "trip_date": "2026-11-30", "trip_time": None},
+    {"id": 1, "trip_date": "2026-11-30", "trip_time": "14:05", "customer_image": None},
+    {"id": 2, "trip_date": "2026-11-30", "trip_time": "08:30", "customer_image": None},
+    {"id": 3, "trip_date": "2026-12-01", "trip_time": "09:00", "customer_image": None},
+    {"id": 5, "trip_date": None, "trip_time": "10:00", "customer_image": None},
+    {"id": 6, "trip_date": "2026-11-30", "trip_time": None, "customer_image": None},
 ]
-got = order_id.order_ids(rows, ids)
-check("ตรงตามตัวอย่างลูกค้า: 0001 + 301126 + 01", got[2] == "000130112601", got)
-check("ลำดับนับตามเวลาในสลิปของวันนั้น", got[1] == "000130112602")
-check("เที่ยวที่ไม่มีเวลาเรียงท้ายของวัน", got[6] == "000130112603")
-check("วันใหม่เริ่มนับ 01 ใหม่", got[3] == "000101122601")
-check("ไรเดอร์ที่ไม่มีรหัส: ไม่สร้าง Order ID", got[4] is None)
-check("เที่ยวที่ไม่มีวันที่: ไม่สร้าง Order ID", got[5] is None)
-check("ยาว 12 หลักทุกตัว", all(v is None or (len(v) == 12 and v.isdigit()) for v in got.values()))
+got = order_id.assign(rows, ids["ตฤณ Win"], [])
+check("ตรงตามตัวอย่างลูกค้า: 0001 + 301126 + 01", got[2] == "000130112601.jpg", got)
+check("ลำดับนับตามเวลาในสลิปของวันนั้น", got[1] == "000130112602.jpg")
+check("เที่ยวที่ไม่มีเวลาเรียงท้ายของวัน", got[6] == "000130112603.jpg")
+check("วันใหม่เริ่มนับ 01 ใหม่", got[3] == "000101122601.jpg")
+check("เที่ยวที่ไม่มีวันที่: ไม่ได้ชื่อ Order ID", 5 not in got)
+check("อ่าน Order ID กลับจากชื่อรูปได้", order_id.of_picture("000130112601.jpg") == "000130112601")
+check("ชื่อแบบเดิมไม่ใช่ Order ID", order_id.of_picture("WK46-ตฤณ Win1.jpg") is None)
+
+kept = [dict(r, customer_image=got[r["id"]]) for r in rows if r["id"] in got]
+late = {"id": 7, "trip_date": "2026-11-30", "trip_time": "07:00", "customer_image": None}
+again = order_id.assign(kept + [late], "0001", list(got.values()))
+check("ชื่อที่ให้ไปแล้วคงเดิม ไม่เลื่อนเลขเมื่อมีเที่ยวมาเพิ่ม",
+      all(again[r["id"]] == got[r["id"]] for r in kept), again)
+check("เที่ยวที่มาทีหลังได้เลขถัดไปของวันนั้น แม้เวลาจะเช้ากว่า", again[7] == "000130112604.jpg", again.get(7))
+moved = dict(kept[0], trip_date="2026-12-02")
+check("เที่ยวที่ถูกเลื่อนวัน (ยกงาน) ได้ชื่อใหม่ตามวันใหม่",
+      order_id.assign([moved], "0001", [])[moved["id"]] == "000102122601.jpg")
+check("เลขของไรเดอร์คนอื่นในสัปดาห์ไม่กันเลขของเรา",
+      order_id.assign([late], "0001", ["000230112601.jpg"])[7] == "000130112601.jpg")
 
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)
