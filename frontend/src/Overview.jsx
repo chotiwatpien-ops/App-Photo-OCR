@@ -64,9 +64,28 @@ function Todos({ todos, onAct }) {
   )
 }
 
+/** What Gemini is doing with the pictures handed to it, asked live (/api/batches asks Gemini
+ *  about each open batch). It lived on the old reading screen behind the gear; it is the one
+ *  question asked between rounds: are the answers back yet? */
+function useBatches() {
+  const [b, setB] = useState(null)
+  useEffect(() => {
+    let alive = true
+    const load = () => api.batches().then((d) => { if (alive) setB(d) }).catch(() => {})
+    load()
+    const t = setInterval(load, 60000)
+    return () => { alive = false; clearInterval(t) }
+  }, [])
+  return b
+}
+
 function Reading({ r, onRead, busy, note }) {
   const [walk, setWalk] = useState(false)
   const [cancel, setCancel] = useState(false)
+  const b = useBatches()
+  const out = b?.waiting_images || 0
+  const ready = b?.ready_images || 0
+  const oldest = (b?.batches || []).filter((x) => !x.finished_at).map((x) => x.created_at).sort()[0]
   return (
     <Card aria-labelledby="read-h" className="p-4 sm:px-6 sm:py-5 flex flex-col gap-3">
       <h2 id="read-h" className="text-[17px] font-semibold">การอ่านรูป</h2>
@@ -75,11 +94,19 @@ function Reading({ r, onRead, busy, note }) {
         <dd>{r.running ? 'กำลังอ่านอยู่' : r.last_finished ? `${clock(r.last_finished)} · ${ago(r.last_finished)}` : 'ยังไม่เคยอ่าน'}</dd>
         <dt className="text-muted">รอบถัดไป</dt><dd>ประมาณ {r.next}</dd>
         <dt className="text-muted">รอผลอ่าน</dt><dd>{fmt(r.total)} รูป</dd>
+        <dt className="text-muted">ส่งให้ AI อ่าน</dt>
+        <dd>{!b ? '…' : out === 0 ? 'ไม่มีค้าง' : ready >= out ? `อ่านเสร็จแล้ว ${fmt(ready)} รูป`
+          : `${fmt(out)} รูป · เสร็จแล้ว ${fmt(ready)}${oldest ? ` · ส่งไป ${ago(oldest)}` : ''}`}</dd>
         <dt className="text-muted">อัลบั้มใหม่วันนี้</dt><dd>{r.albums_today == null ? '–' : `${fmt(r.albums_today)} อัลบั้ม`}</dd>
       </dl>
       <p className="text-sm text-muted bg-ground rounded-lg px-3 py-2.5">
-        รูปที่วางใน Drive ระบบอ่านเองทุก 2–3 ชั่วโมง และเก็บผลอ่านทันทีที่พร้อม ไม่ต้องกดอะไร
+        รูปที่วางใน Drive ระบบอ่านเองทุก 2–3 ชั่วโมง และกลับมาเก็บผลภายในราว 1 ชั่วโมงหลังส่งให้ AI ไม่ต้องกดอะไร
       </p>
+      {ready > 0 && !r.running && (
+        <p role="status" className="text-sm text-ok-ink bg-ok-bg rounded-lg px-3 py-2.5">
+          AI อ่านเสร็จแล้ว {fmt(ready)} รูป กดปุ่มด้านล่างเพื่อเก็บผลเข้าระบบเลย ไม่ต้องรอรอบถัดไป
+        </p>
+      )}
       {note && <p className="text-sm text-ink-soft">{note}</p>}
       {/* the two exceptions that used to mean a trip to GitHub's Run workflow form */}
       <details className="text-sm">
@@ -94,8 +121,10 @@ function Reading({ r, onRead, busy, note }) {
         </label>
       </details>
       <button onClick={() => onRead({ forceWalk: walk, cancelBatches: cancel })} disabled={busy || r.running}
-        className="mt-auto min-h-10 rounded-lg border border-line hover:bg-ground text-sm disabled:opacity-50">
-        อ่านรูปที่วางใหม่เดี๋ยวนี้
+        className={`mt-auto min-h-10 rounded-lg text-sm disabled:opacity-50 ${ready > 0 ? 'bg-accent hover:bg-accent-hover text-white font-semibold' : 'border border-line hover:bg-ground'}`}>
+        {/* one round both collects what Gemini finished and files it into riders' folders;
+            collecting inside the web app cannot reach Drive, so it is not offered here */}
+        {ready > 0 ? `เก็บผลที่อ่านเสร็จเดี๋ยวนี้ (${fmt(ready)} รูป)` : 'อ่านรูปที่วางใหม่เดี๋ยวนี้'}
       </button>
     </Card>
   )
