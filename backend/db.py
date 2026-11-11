@@ -785,7 +785,7 @@ def mark_orphan_bottom_duplicates(job_id) -> int:
         n = 0
         for o in orphans:
             amt = o["net_earnings"] if o["net_earnings"] is not None else o["base_fare"]
-            if amt is None:
+            if amt is None or KEPT in (o["note"] or ""):
                 continue
             twin = next((a for a in approved
                          if (a["net_earnings"] is not None and abs(a["net_earnings"] - amt) <= 0.01)
@@ -806,6 +806,7 @@ def mark_orphan_bottom_duplicates(job_id) -> int:
 # not an identity, and has to agree on fare and clock time before anything is called a repeat.
 DUP_FULL_CODE = 15
 SUSPECT = "สงสัยว่าซ้ำ"     # same_trip.SUSPECT: a note carrying it is never parked automatically
+KEPT = "กู้คืนโดยผู้ใช้"    # a person said "not a repeat": the round leaves the row to people from then on
 
 
 def trip_key(row):
@@ -905,8 +906,8 @@ def discard_settled_duplicates(job_id) -> int:
             .where(trips.c.id.in_([r["duplicate_of"] for r in rows if r["duplicate_of"]]))).mappings().all()}
         n = 0
         for r in rows:
-            if SUSPECT in (r["note"] or ""):
-                continue                                   # held on looser evidence — a person decides
+            if SUSPECT in (r["note"] or "") or KEPT in (r["note"] or ""):
+                continue                                   # held on looser evidence, or kept by a person
             twin = twins.get(r["duplicate_of"]) if r["duplicate_of"] else _approved_twin(c, r, week)
             if not twin or not twin["committed"]:
                 continue                                   # twin not approved — decide together
@@ -1038,13 +1039,30 @@ def restore_voided(trip_id) -> bool:
         return r.rowcount > 0
 
 
+def restore_refusal(trip_id):
+    """Why this parked row cannot be put back, or None. Its booking code is approved in its week
+    under another row: back in the queue it could never be approved (approve_trip refuses it)
+    and the next round would park it again, so it would only go round in circles."""
+    with engine.begin() as c:
+        r = c.execute(select(trips.c.id, trips.c.job_id, trips.c.booking_code, trips.c.base_fare,
+                             trips.c.trip_time).where(trips.c.id == trip_id)).mappings().first()
+        if not r or not r["booking_code"]:
+            return None
+        twin = _approved_twin(c, r, _job_week(c, r["job_id"]))
+    if twin and twin["id"] != trip_id:
+        return (f"เลขจองนี้นับไปแล้วในสัปดาห์นี้ ({twin['file_name']}) — เก็บไว้ไม่ได้ "
+                "ถ้าใบที่นับไปแล้วผิด ให้ลบใบนั้นก่อน แล้วค่อยกดเก็บใบนี้")
+    return None
+
+
 def restore_discarded(trip_id) -> bool:
-    """Put an auto-discarded row back in the queue — the undo behind the log panel's button."""
+    """Put an auto-discarded row back in the queue — the undo behind the log panel's button.
+    The note carries KEPT, so the round never flags, parks or approves it again on its own."""
     with engine.begin() as c:
         r = c.execute(update(trips)
                       .where(trips.c.id == trip_id, trips.c.status == "duplicate")
                       .values(status="done", duplicate_of=None,
-                              note=func.coalesce(trips.c.note, "") + " | กู้คืนโดยผู้ใช้"))
+                              note=func.coalesce(trips.c.note, "") + " | " + KEPT))
         return r.rowcount > 0
 
 
@@ -1136,6 +1154,8 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
                   # lower halves are handled by mark_orphan_bottom_duplicates() above: the
                   # ones matching a counted trip carry duplicate_of and are excluded here.
                   and not _is_repeat(r, seen)
+                  # a person put it back: they approve it, the round does not decide for them
+                  and KEPT not in (r["note"] or "")
                   # a top half read this very round with no lower half yet: wait one round
                   and not (r["kind"] == "top" and r["id"] in fresh_ids and r["id"] not in paired)]
         # A code-less lower half whose amount equals a full/top row approved in the SAME batch is

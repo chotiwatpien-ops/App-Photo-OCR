@@ -106,6 +106,9 @@ def build(rows, twins):
             "twin_id": t.get("id"),          # the web shows the two pictures side by side; not a sheet column
             "twin_url": t.get("source_url"),  # and falls back to Drive in the viewer's own browser
             "committed": r.get("committed"),
+            # the same trip by the guard's own rule as a counted row: cannot be put back (db.restore_refusal)
+            "restorable": not (twin and t.get("committed") == 1 and db.trip_key(r)
+                               and db.trip_key(r) == db.trip_key(t)),
             "รูปที่ส่งลูกค้า": t.get("customer_image"),
             "ประเภทการซ้ำ": kind_of(r, twin),
             "ลิงก์รูป": r.get("source_url"),

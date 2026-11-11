@@ -49,6 +49,9 @@ check("เลขจองต่างกัน 2 ตัว ค่ารอบแ
       same_trip.kind(dict(SLIP, booking_code=A), dict(SLIP, booking_code=B)) == same_trip.CODE)
 check("เลขจองต่างกันชัดเจน แต่เส้นทาง ระยะ ยอดตรง = ให้คนดู (route)",
       same_trip.kind(dict(SLIP, booking_code=A), dict(SLIP, booking_code="A-9XQ27RMNBVCXAV")) == same_trip.ROUTE)
+check("เลขจองสั้น (เช่น A-VRF00019 กับ A-VRF00020) ไม่นับว่าอ่านเพี้ยน แม้ยอดและระยะตรง",
+      same_trip.kind(dict(SLIP, booking_code="A-VRF00019", trip_time="10:19"),
+                     dict(SLIP, booking_code="A-VRF00020", trip_time="10:20")) is None)
 check("ค่ารอบต่างกัน ไม่ใช่เที่ยวเดียวกัน",
       same_trip.kind(dict(SLIP, booking_code=A), dict(SLIP, booking_code=B, base_fare=40)) is None)
 check("เลขจองใกล้กันแต่ระยะต่างกัน และคนละเส้นทาง ไม่ใช่เที่ยวเดียวกัน",
@@ -93,6 +96,13 @@ db.auto_approve_job(j2)
 check("เส้นทางเดียวกันแต่เลขจองต่างชัด ก็รอคนดู ไม่อนุมัติเอง", row(commute)["committed"] == 0)
 r = db.approve_trip(commute)
 check("❗ คนดูแล้วว่าไม่ซ้ำ กดอนุมัติได้", "error" not in r and row(commute)["committed"] == 1, r)
+
+nocode = trip(j2, None)
+db.auto_approve_job(j2)
+check("❗ สลิปที่ไม่มีเลขจอง แต่เส้นทาง ระยะ ยอดตรงกับเที่ยวที่อนุมัติแล้ว ก็รอคนดู",
+      row(nocode)["committed"] == 0 and row(nocode)["duplicate_of"] in (first, commute))
+with db.engine.begin() as c:
+    c.execute(db.trips.delete().where(db.trips.c.id == nocode))
 
 n, twice, suspect = dr.counted_twice(*W)
 check("ผลตรวจหน้างานซ้ำ: ไม่มีอะไรนับสองครั้ง (ใบซ้ำถูกกันไว้ก่อนอนุมัติ)", twice == [] and n == 2, (n, twice))

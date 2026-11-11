@@ -579,7 +579,8 @@ def _dup_pair(c):
             "album": c.get("ไรเดอร์ผู้ส่ง"), "rider": c.get("โฟลเดอร์ที่ระบบวาง"), "date": c.get("วันที่งาน"),
             "code": c.get("รหัสการจอง"), "net": c.get("ยอด"), "twin_net": c.get("ยอดของต้นฉบับ"),
             "url": c.get("ลิงก์รูป"), "twin_url": c.get("twin_url"), "twin_album": c.get("ของไรเดอร์"),
-            "approved": c.get("committed") == 1}
+            "approved": c.get("committed") == 1,
+            "restorable": c.get("restorable", True)}
 
 
 @app.get("/api/duplicates/week")
@@ -1363,6 +1364,9 @@ def clear_discarded():
 def restore_trip(trip_id: int):
     _note("trip.restore", f"trip:{trip_id}")
     _dup_cache.clear()                    # the row stops being a repeat: every week's view is stale
+    why = db.restore_refusal(trip_id)
+    if why:
+        raise HTTPException(409, why)
     if not db.restore_discarded(trip_id):
         raise HTTPException(404, "ไม่พบแถวที่ถูกทิ้ง (หรือถูกกู้คืนไปแล้ว)")
     # ท้ายรอบ ingest ย้ายรูปของแถวที่ถูกพักไปไว้ที่ <สัปดาห์>/_ซ้ำ/ ตั้งแต่ 2026-09-13 กู้คืนแถว

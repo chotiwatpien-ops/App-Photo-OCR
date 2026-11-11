@@ -23,9 +23,9 @@ config.APP_PASSWORD = ""
 ok = True
 
 
-def check(name, cond):
+def check(name, cond, got=None):
     global ok
-    print(("✅" if cond else "✗"), name)
+    print(("✅" if cond else "✗"), name, "" if cond or got is None else f"→ {got}")
     ok = ok and cond
 
 
@@ -84,8 +84,25 @@ check("ชื่อไฟล์เป็นภาษาคน (งานซ้�
 check("❗ คอลัมน์ภายใน twin_id ไม่หลุดไปในไฟล์", all("twin_id" not in [c.value for c in ws[1]] for ws in wb.worksheets))
 
 r = web.post(f"/api/trips/{again}/restore")
+check("❗ เลขจองเดียวกับใบที่นับแล้ว กดเก็บไม่ได้ และบอกว่าทำไม (ไม่วนกลับมาค้างในคิว)",
+      r.status_code == 409 and "นับไปแล้ว" in r.json()["detail"], r.text)
+check("ปุ่มเก็บไว้ไม่ขึ้นสำหรับแถวเลขจองเดียวกัน", not read[0]["restorable"])
+half = trip(file_name="4W-Taxi Meen ชุด 2_7+8_฿80.jpg", status="duplicate", committed=0, kind="bottom",
+            source_album="4W-Taxi Meen ชุด 2", net_earnings=80, trip_date="2026-09-29", duplicate_of=first,
+            note="ครึ่งล่างของงานที่อนุมัติแล้ว (x) — รูปเกิน ลบได้")
+main._dup_cache.clear()
 a2 = next(a for a in web.get(f"/api/duplicates/albums?week={W[0]}").json()["albums"] if a["album"] == "4W-Taxi Meen ชุด 2")
-check("❗ กดเก็บไว้แล้ว ตัวเลขซ้ำอัปเดตทันที ไม่ต้องรอแคช", r.status_code == 200 and a2["post"] == 0)
+r = web.post(f"/api/trips/{half}/restore")
+a3 = next(a for a in web.get(f"/api/duplicates/albums?week={W[0]}").json()["albums"] if a["album"] == "4W-Taxi Meen ชุด 2")
+check("❗ ครึ่งล่างที่ถูกจับด้วยยอดเงินอย่างเดียว กดเก็บไว้ได้ ตัวเลขซ้ำอัปเดตทันที",
+      r.status_code == 200 and a3["post"] == a2["post"] - 1, (r.text, a2["post"], a3["post"]))
+db.auto_approve_job(job)
+with db.engine.begin() as c:
+    kept = dict(c.execute(db.trips.select().where(db.trips.c.id == half)).mappings().first())
+check("❗ แถวที่คนเก็บไว้ รอบถัดไปไม่ตัดซ้ำอีก และไม่อนุมัติแทนคน",
+      kept["status"] == "done" and kept["duplicate_of"] is None and kept["committed"] == 0, kept["status"])
+r = db.approve_trip(half)
+check("คนกดอนุมัติแถวที่เก็บไว้ได้", "error" not in r, r)
 check("สัปดาห์ที่ไม่มีอยู่ → เปิดสัปดาห์ล่าสุดแทน", web.get("/api/duplicates/week?week=2020-01-06").json()["week"] == W[0])
 
 print("\nผ่านทั้งหมด" if ok else "\n✗ มีข้อที่ไม่ผ่าน")

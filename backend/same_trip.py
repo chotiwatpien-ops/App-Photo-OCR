@@ -20,7 +20,10 @@ CODE, ROUTE = "code", "route"
 REASON = {CODE: "เลขจองต่างกันไม่เกิน 2 ตัว ค่ารอบและระยะทางตรงกัน",
           ROUTE: "จุดรับ จุดส่ง ระยะทาง และค่ารอบตรงกัน"}
 _FOLD = str.maketrans({"O": "0", "Q": "0", "I": "1", "L": "1"})
-MIN_CODE = 8
+# A Grab code is 'A-' and 14 random letters. Two different trips whose codes sit two letters apart
+# is only unlikely when the codes are that long: short ones (cut off by the reader, or made-up test
+# codes like A-VRF00019 / A-VRF00020) are not compared this way.
+MIN_CODE = 12
 
 
 def fold(code) -> str:

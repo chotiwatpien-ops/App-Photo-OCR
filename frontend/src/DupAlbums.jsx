@@ -267,10 +267,14 @@ export default function DupAlbums({ onGo }) {
                 <ul className="grid gap-3 md:grid-cols-2">
                   {ps.map((p) => (
                     <PairCard key={p.trip_id} p={p}>
-                      <button onClick={() => keep(p)} disabled={busy}
-                        className="self-start min-h-10 px-3 rounded-lg border border-line hover:bg-ground text-sm disabled:opacity-50">
-                        ไม่ใช่งานซ้ำ · เก็บไว้
-                      </button>
+                      {p.restorable ? (
+                        <button onClick={() => keep(p)} disabled={busy}
+                          className="self-start min-h-10 px-3 rounded-lg border border-line hover:bg-ground text-sm disabled:opacity-50">
+                          ไม่ใช่งานซ้ำ · เก็บไว้
+                        </button>
+                      ) : (
+                        <p className="text-sm text-muted">เลขจองเดียวกับใบที่นับแล้ว ถ้าใบที่นับผิด ให้ลบใบนั้นก่อน</p>
+                      )}
                     </PairCard>
                   ))}
                 </ul>
