@@ -243,9 +243,9 @@ check("❗ เรียงตามเวลาที่เข้าระบบ
       _names.index("2W-Home Kanchana=264") < _names.index("2W-Home Bear = 29") < _names.index("2W-Win Kachana=260"))
 _row = {r[1]: r for r in _al}
 check("❗ อัลบั้มที่ซ้ำบอกว่าซ้ำกับอัลบั้มไหน",
-      _row["2W-Win Kachana=260"][-1] == "ซ้ำ" and "2W-Home Kanchana=264" in _row["2W-Win Kachana=260"][9])
+      _row["2W-Win Kachana=260"][rep.STATUS] == "ซ้ำ" and "2W-Home Kanchana=264" in _row["2W-Win Kachana=260"][9])
 check("อัลบั้มที่ไม่ซ้ำขึ้นว่าไม่ซ้ำ และนับที่ลงงาน",
-      _row["2W-Home Bear = 29"][-1] == "ไม่ซ้ำ" and _row["2W-Home Bear = 29"][4] == 1)
+      _row["2W-Home Bear = 29"][rep.STATUS] == "ไม่ซ้ำ" and _row["2W-Home Bear = 29"][4] == 1)
 check("ครึ่งรูปค้างในกองมาจากรอบ pool ล่าสุด", _row["4W-Taxi Meen=64"][10] == 2)
 _w1 = trip(jx, "2W-Win Kachana1=57_7+8_฿20.jpg", status="pending", source_album="2W-Win Kachana1=57")
 _w2 = trip(jx, "2W-Win Kachana1=57_9+10_฿25.jpg", source_album="2W-Win Kachana1=57", committed=1)

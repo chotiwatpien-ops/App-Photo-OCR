@@ -197,7 +197,12 @@ def backfill_pre_read(d_from, d_to, log=print):
 
 
 ALBUM_COLS = ["ลำดับ", "อัลบั้ม", "เข้าระบบครั้งแรก", "เที่ยวที่อ่าน", "ลงงาน", "ซ้ำก่อนอ่าน",
-              "ซ้ำหลังอ่าน", "ซ้ำรวม", "% ซ้ำ", "ซ้ำกับอัลบั้ม", "ครึ่งรูปค้างในกอง", "รออ่าน", "สถานะ"]
+              "ซ้ำหลังอ่าน", "ซ้ำรวม", "% ซ้ำ", "ซ้ำกับอัลบั้ม", "ครึ่งรูปค้างในกอง", "รออ่าน", "สถานะ",
+              # the album's own count, top to bottom (Fiat 2026-11-11) — see album_overview
+              "รูปทั้งหมด", "ต้นฉบับ", "จับคู่ครบได้", "จับคู่ได้แล้ว", "ลบในคิวตรวจ", "งานจริง", "ค้างในระบบ",
+              "ยอดที่ Ops จด", "ต่างจากยอด Ops"]
+STATUS = ALBUM_COLS.index("สถานะ")
+OPS_COUNT = re.compile(r"(\d[\d,]*)\s*งาน")
 
 
 def album_overview(d_from, d_to, cases, pre=()):
@@ -208,7 +213,14 @@ def album_overview(d_from, d_to, cases, pre=()):
     nearest thing to an upload time the database holds; an album of copies only takes the time
     its first copy was dropped. Half pictures still waiting in the pool come from the latest pool
     run of the week. 'รออ่าน' is what was sent to be read and has not come back (a batch returns
-    in the next round): its repeats can still add to 'ซ้ำหลังอ่าน' (Fiat 2026-09-29)."""
+    in the next round): its repeats can still add to 'ซ้ำหลังอ่าน' (Fiat 2026-09-29).
+
+    The last columns count the album top to bottom (Fiat 2026-11-11): every picture it holds =
+    exact copies + the halves of every trip made from it (two for a stitched pair, one for a long
+    screenshot) + the halves still unpaired; the most trips it can give = trips so far + half the
+    unpaired; real trips = trips less the repeats parked after reading and the rows a person
+    deleted in the review queue (found in action_log, since the row itself is gone). Nothing here
+    is stored: when a later pool run pairs a leftover, the next report says so."""
     import json
     t, j, f = db.trips.c, db.jobs.c, db.ingested_files.c
     src = db.trips.join(db.jobs, j.id == t.job_id).outerjoin(db.ingested_files, f.trip_id == t.id)
@@ -221,8 +233,12 @@ def album_overview(d_from, d_to, cases, pre=()):
         last = c.execute(select(db.pool_runs.c.report).where(db.pool_runs.c.mode == "move",
                                                             db.pool_runs.c.started_at >= d_from)
                          .order_by(db.pool_runs.c.id.desc()).limit(1)).scalar()
+        week_jobs = set(c.execute(select(j.id).where(j.date_from >= d_from, j.date_from <= d_to)).scalars())
+        deleted = c.execute(select(db.action_log.c.detail).where(db.action_log.c.action == "trip.delete",
+                                                                 db.action_log.c.at >= d_from)).scalars().all()
     row = collections.defaultdict(lambda: {"first": None, "read": set(), "filed": set(), "waiting": set(),
-                                           "pre": 0, "post": 0, "with": set(), "left": 0})
+                                           "pre": 0, "post": 0, "with": set(), "left": 0,
+                                           "halves": 0, "deleted": 0})
 
     def seen(a, when):
         if when and (row[a]["first"] is None or when < row[a]["first"]):
@@ -232,7 +248,17 @@ def album_overview(d_from, d_to, cases, pre=()):
         row[a]["waiting" if r.get("status") == "pending" else "read"].add(r["id"])
         if r.get("committed") == 1:
             row[a]["filed"].add(r["id"])
+        row[a]["halves"] += 2 if ALBUM.match(r["file_name"] or "") else 1
         seen(a, r.get("ingested_at"))
+    for d in deleted:
+        try:
+            gone = (json.loads(d or "{}").get("row") or {})
+        except ValueError:
+            continue
+        if gone.get("job_id") in week_jobs and gone.get("file_name"):
+            a = album_of(gone["file_name"])
+            row[a]["deleted"] += 1
+            row[a]["halves"] += 2 if ALBUM.match(gone["file_name"]) else 1
     for c_ in pre:
         a = c_["ไรเดอร์ผู้ส่ง"]
         row[a]["pre"] += 1
@@ -258,9 +284,17 @@ def album_overview(d_from, d_to, cases, pre=()):
         same = any(x == a for x in v["with"])
         with_ = " · ".join((["ในอัลบั้มเดียวกัน"] if same else []) + others)
         base = len(v["read"]) + len(v["waiting"]) + v["pre"]
+        trips_n = len(v["read"]) + len(v["waiting"]) + v["deleted"]
+        real = trips_n - v["post"] - v["deleted"]
+        m = OPS_COUNT.search(a or "")
+        ops = int(m.group(1).replace(",", "")) if m else None
+        most = trips_n + v["left"] // 2
         out.append([None, a, v["first"], len(v["read"]), len(v["filed"]), v["pre"], v["post"],
                     dup, round(dup / base, 3) if base else None, with_,
-                    v["left"] or None, len(v["waiting"]) or None, "ซ้ำ" if dup else "ไม่ซ้ำ"])
+                    v["left"] or None, len(v["waiting"]) or None, "ซ้ำ" if dup else "ไม่ซ้ำ",
+                    v["halves"] + v["pre"] + v["left"], v["halves"] + v["left"], most, trips_n,
+                    v["deleted"] or None, real, real - len(v["filed"]) or None,
+                    ops, ops - (most - v["post"] - v["deleted"]) if ops is not None else None])
     out.sort(key=lambda r: (r[2] is None, r[2] or "", r[1]))
     for i, r in enumerate(out, 1):
         r[0] = i
@@ -501,7 +535,7 @@ def write_xlsx(path, cases, undecided, pre=(), albums=None, admin=None):
         sheet(ws, ALBUM_COLS, albums)
         dup_fill = PatternFill("solid", fgColor="FDE8E8")
         for i, r in enumerate(albums, 2):
-            if r[-1] == "ซ้ำ":
+            if r[STATUS] == "ซ้ำ":
                 for cell in ws[i]:
                     cell.fill = dup_fill
             ws.cell(i, ALBUM_COLS.index("% ซ้ำ") + 1).number_format = "0.0%"
@@ -554,9 +588,9 @@ def main(argv=None):
         print("ไม่พบรูปซ้ำในสัปดาห์นี้")
         return 0
     albums = album_overview(a.d_from, a.d_to, cases, pre)
-    print(f"\nรายอัลบั้ม {len(albums)} อัลบั้ม (เรียงตามเวลาที่เข้าระบบ) · ซ้ำ {sum(1 for r in albums if r[-1] == 'ซ้ำ')}")
+    print(f"\nรายอัลบั้ม {len(albums)} อัลบั้ม (เรียงตามเวลาที่เข้าระบบ) · ซ้ำ {sum(1 for r in albums if r[STATUS] == 'ซ้ำ')}")
     for r in albums:
-        print(f"  {r[0]:>3}. {str(r[2] or '')[:16]:<17}{str(r[1])[:30]:<32}อ่าน {r[3]:>4} · ซ้ำ {r[7]:>3}  {r[-1]}"
+        print(f"  {r[0]:>3}. {str(r[2] or '')[:16]:<17}{str(r[1])[:30]:<32}อ่าน {r[3]:>4} · ซ้ำ {r[7]:>3}  {r[STATUS]}"
               + (f" · กับ {r[9]}" if r[9] else ""))
     if cases:
         print(f"\n{'ไรเดอร์ผู้ส่ง':<26}{'ใบซ้ำ':>7}{'ยอดรวม':>10}  ประเภทที่เจอ")

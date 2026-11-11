@@ -68,8 +68,8 @@ copies = [{"ไรเดอร์ผู้ส่ง": A, "ไฟล์ที่�
           {"ไรเดอร์ผู้ส่ง": A, "ไฟล์ที่ซ้ำ": "9_1.jpg", "ซ้ำกับไฟล์": f"{B}/9_0.jpg",
            "ลิงก์รูป": "https://drive.google.com/file/d/COPY9/view"}]
 half_ids = {(A, "112687_0.jpg"): "ORIG", (B, "9_0.jpg"): "ORIG9"}
-albums = [[1, A, None, 1642, 1637, 2, 1, 3, 0.002, "", None, None, "ซ้ำ"],
-          [2, "2W Karnjana ทดสอบ", None, 20, 20, 0, 0, 0, 0.0, "", None, None, "ไม่ซ้ำ"]]
+albums = [[1, A, None, 1642, 1637, 2, 1, 3, 0.002, "", None, None, "ซ้ำ", 3288, 3286, 1643, 1643, None, 1642, 5, 1748, 104],
+          [2, "2W Karnjana ทดสอบ", None, 20, 20, 0, 0, 0, 0.0, "", None, None, "ไม่ซ้ำ", 40, 40, 20, 20, None, 20, None, None, None]]
 
 found = dx.entries([], [case], copies, half_ids)
 read = next(e for e in found if e.kind == "แคปจอ 2 รอบ")

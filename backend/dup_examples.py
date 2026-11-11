@@ -169,25 +169,56 @@ def render(e, orig, mine, fonts, h=900) -> bytes:
     return _jpeg(im)
 
 
+def summary_lines(row):
+    """[(label, number, unit, note, kind)] of one album, top to bottom, from its line of
+    duplicate_report.album_overview. kind: 'total', 'minus' or 'result'."""
+    (_, _, _, _, filed, pre_n, post_n, _, _, _, left, waiting, _,
+     pictures, originals, most, trips_n, deleted, real, pending, ops, gap) = row
+    lines = [("รูปทั้งหมดในอัลบั้ม", pictures, "รูป", "", "total"),
+             ("ไฟล์ซ้ำ อัปโหลดซ้ำ", -pre_n, "รูป", "ไม่ได้นับเป็นงาน", "minus"),
+             ("รูปต้นฉบับ", originals, "รูป", "", "total"),
+             ("ถ้าจับคู่ได้ครบ", most, "งาน", "1 งาน = รูปบน + รูปล่าง", "total"),
+             ("จับคู่ได้แล้ว", trips_n, "งาน", f"หาคู่ไม่ได้ {left or 0:,} รูป · ระบบกำลังตรวจ" if left else "", "total"),
+             ("แคปจอซ้ำ / งานซ้ำหลังอ่าน", -post_n, "งาน", "", "minus")]
+    if deleted:
+        lines.append(("ลบในคิวตรวจ", -deleted, "งาน", "", "minus"))
+    lines += [("งานจริง", real, "งาน", "", "total"),
+              ("นับในไฟล์ลูกค้า", filed, "งาน", "", "result")]
+    if pending:
+        lines.append(("ค้างในระบบ", pending, "งาน",
+                      f"รออ่าน {waiting:,} รูป" if waiting else "รอตรวจหรือรอลงงาน", "minus"))
+    if ops is not None:
+        lines.append(("ยอดที่ Ops จดในชื่ออัลบั้ม", ops, "งาน",
+                      f"ต่างจากที่รูปให้ได้ {gap:,} งาน" if gap else "ตรงกับที่รูปให้ได้", "total"))
+    return lines
+
+
 def summary_card(week, album, row, fonts) -> bytes:
-    """The album's numbers on one card. `row` is its line of duplicate_report.album_overview."""
+    """The album's numbers on one card, top to bottom, the way the customer's report reads."""
     from PIL import Image, ImageDraw
     reg, bold = fonts
-    filed, pre_n, post_n, waiting = row[4], row[5], row[6], row[11] or 0
-    lines = [(bold(44), f"สรุปรูปซ้ำ {week}"), (reg(34), f"อัลบั้ม {album}  ·  ส่งโดย {sender(album)}"),
-             (reg(30), ""), (reg(34), f"นับในไฟล์ลูกค้า  {filed:,} งาน"),
-             (reg(34), f"แคปจอซ้ำ / งานซ้ำหลังอ่าน  {post_n:,} งาน"),
-             (reg(34), f"ไฟล์ซ้ำ อัปโหลดซ้ำ  {pre_n:,} ไฟล์ (ไม่ได้นับเป็นงาน)")]
-    if waiting:
-        lines.append((reg(34), f"ยังรออ่าน  {waiting:,} รูป ตัวเลขอาจเปลี่ยน"))
-    im = Image.new("RGB", (1100, 80 + 62 * len(lines)), "white")
+    lines = summary_lines(row)
+    width, pad = 1240, 64
+    im = Image.new("RGB", (width, 220 + 100 * len(lines)), "white")
     d = ImageDraw.Draw(im)
-    d.rectangle([0, 0, 1100, 10], fill=RED)
-    y = 36
-    for font, text in lines:
-        d.text((40, y), text, font=font, fill=(20, 20, 20))
-        y += 62
-    return _jpeg(im, 88)
+    d.rectangle([0, 0, width, 12], fill=(30, 58, 95))
+    d.text((pad, 44), f"สรุปอัลบั้ม {week}", font=bold(52), fill=(20, 24, 32))
+    d.text((pad, 120), f"{album}  ·  ส่งโดย {sender(album)}", font=reg(32), fill=GREY)
+    y = 190
+    for label, n, unit, note, kind in lines:
+        color = {"minus": RED, "result": GREEN}.get(kind, (20, 24, 32))
+        if kind == "result":
+            d.rectangle([pad - 20, y - 6, width - pad + 20, y + 84], fill=(234, 246, 240), outline=GREEN, width=3)
+        d.line([pad, y - 10, width - pad, y - 10], fill=(226, 229, 235), width=2)
+        d.text((pad, y + 6), label, font=bold(36) if kind == "result" else reg(36), fill=color if kind == "result" else (20, 24, 32))
+        text = f"{n:,}".replace("-", "−")
+        tw = d.textlength(text, font=bold(44))
+        d.text((width - pad - 100 - tw, y), text, font=bold(44), fill=color)
+        d.text((width - pad - 86, y + 6), unit, font=reg(32), fill=GREY)
+        if note:
+            d.text((pad, y + 52), note, font=reg(24), fill=GREY)
+        y += 100
+    return _jpeg(im.crop((0, 0, width, y + 30)), 88)
 
 
 def write(drive, report_folder, week, found, albums, log=print):
@@ -197,7 +228,7 @@ def write(drive, report_folder, week, found, albums, log=print):
     if fonts is None:
         log("⚠ รูปเปรียบเทียบงานซ้ำ: ไม่พบฟอนต์ภาษาไทย — ข้าม")
         return {}
-    rows = {r[1]: r for r in albums if r[7]}             # albums that repeat work
+    rows = {r[1]: r for r in albums}                     # every album gets its summary card
     if not found and not rows:
         return {}
     week_dir = drive.ensure_folder(report_folder, f"{week} ตัวอย่าง")
