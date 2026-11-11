@@ -69,6 +69,14 @@ def line_photos(file_name):
     return f"รูป {m.group(1)} + {m.group(2)}" if m else (file_name or "").split("/")[-1]
 
 
+def _copy_name(copy, orig, orig_id):
+    """'ไฟล์ซ้ำ 112687_1 (ต้นฉบับ 112687_0).jpg'. Whether the original was found is part of the
+    name, so a picture made without it is made again once it can be found."""
+    stem = lambda f: re.sub(r"\.[A-Za-z]+$", "", f or "")
+    tail = f"(ต้นฉบับ {stem(orig)})" if orig_id else f"(ไม่พบรูปต้นฉบับ {stem(orig)})"
+    return _safe(f"ไฟล์ซ้ำ {stem(copy)} {tail}") + ".jpg"
+
+
 def _safe(s):
     return re.sub(r'[\\/:*?"<>|]', " ", s or "").strip()
 
@@ -98,7 +106,8 @@ def entries(cases, undecided, pre, half_ids):
         out.append(Entry(
             kind=COPY_TITLE, album=p.get("ไรเดอร์ผู้ส่ง") or "", file=p.get("ไฟล์ที่ซ้ำ") or "", file_id=mine,
             orig_album=orig_album, orig_file=orig_file, orig_id=half_ids.get((orig_album, orig_file)),
-            status="ไม่ได้นับเป็นงาน", name=_safe(f"ไฟล์ซ้ำ {p.get('ไฟล์ที่ซ้ำ')}")))
+            status="ไม่ได้นับเป็นงาน", name=_copy_name(p.get("ไฟล์ที่ซ้ำ"), orig_file,
+                                                         half_ids.get((orig_album, orig_file)))))
     return out
 
 

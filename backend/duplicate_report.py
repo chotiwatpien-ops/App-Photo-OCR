@@ -298,8 +298,9 @@ def counted_twice(d_from, d_to):
 
 
 def half_ids(d_from):
-    """{(album, file): Drive id} of every picture the week's pool runs paired or kept whole, so an
-    exact copy can be shown beside the file it copies (skipped_copies names that file by path)."""
+    """{(album, file): Drive id} of the file each exact copy of the week copies, so the copy can be
+    shown beside it (skipped_copies names that file by path only). The pool run's stored report
+    keeps it as same_as_id; it drops the ids of paired pictures to save database transfer."""
     import json
 
     import ingest
@@ -309,18 +310,14 @@ def half_ids(d_from):
                                                                db.pool_runs.c.started_at >= d_from)).scalars().all()
     for rep in reports:
         try:
-            albums = json.loads(rep or "{}").get("albums") or []
+            dups = json.loads(rep or "{}").get("duplicates") or []
         except ValueError:
             continue
-        for e in albums:
+        for e in dups:
             rng = ingest.parse_range(e.get("week") or "")
-            if not rng or rng[0].isoformat() != d_from:
-                continue
-            for x in e.get("pairs") or []:
-                out[(e["album"], x.get("top"))] = x.get("top_id")
-                out[(e["album"], x.get("bottom"))] = x.get("bottom_id")
-            for x in e.get("long") or []:
-                out[(e["album"], x.get("file"))] = x.get("id")
+            if rng and rng[0].isoformat() == d_from and e.get("same_as_id"):
+                album, _, name = (e.get("same_as") or "").rpartition("/")
+                out[(album, name)] = e["same_as_id"]
     return out
 
 

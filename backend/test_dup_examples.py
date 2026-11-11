@@ -89,7 +89,8 @@ links = dx.write(drive, "R", "2026-W46", found, albums, log=log.append)
 folder = f"R/2026-W46 ตัวอย่าง/{A}"
 names = sorted(f["name"] for f in drive.list_images(folder))
 check("❗ รูปเปรียบเทียบรายการละ 1 รูป + การ์ดสรุป",
-      set(names) == {"00 สรุป.jpg", "ไฟล์ซ้ำ 112687_1.jpg", "ไฟล์ซ้ำ 9_1.jpg", "แคปจอ 2 รอบ #40214 ฿34.jpg"}, names)
+      set(names) == {"00 สรุป.jpg", "ไฟล์ซ้ำ 112687_1 (ต้นฉบับ 112687_0).jpg", "ไฟล์ซ้ำ 9_1 (ต้นฉบับ 9_0).jpg",
+                     "แคปจอ 2 รอบ #40214 ฿34.jpg"}, names)
 check("ทุกรายการได้ลิงก์รูป", set(links) == {e.name for e in found}, links)
 pic = Image.open(io.BytesIO(drive.files[links[copy.name]]))
 check("รูปเปรียบเทียบวางสองรูปคู่กัน", pic.width > 2 * 300, pic.size)
@@ -115,6 +116,18 @@ check("❗ แต่ละแถวบอก: ซ้ำกับรูปไห�
       {k: v.value for k, v in first.items()})
 check("รายงานจากหน้าเว็บ (ไม่มีชีทส่งแอดมิน) ยังเริ่มที่รายอัลบั้ม",
       load_workbook(io.BytesIO(dr.build_xlsx([], [], [], [list(r) for r in albums]))).sheetnames[0] == "รายอัลบั้ม")
+
+lost = dx.entries([], [], copies[:1], {})[0]
+check("❗ หาต้นฉบับไม่เจอ: ชื่อบอกไว้ และเจอทีหลังได้ชื่อใหม่ จึงทำรูปใหม่",
+      lost.name == "ไฟล์ซ้ำ 112687_1 (ไม่พบรูปต้นฉบับ 112687_0).jpg" and lost.name != copy.name, lost.name)
+
+import db                                                       # noqa: E402
+db.init_db()
+db.record_pool_run("move", "Week 9-15 Nov", {}, "", {"started_at": "2026-11-11 00:16:25", "duplicates": [
+    {"week": "Week 9-15 Nov", "album": A, "file": f"{A}/112687_1.jpg", "same_as": f"{A}/112687_0.jpg",
+     "same_as_id": "ORIG", "id": "COPY"}]})
+check("❗ หา id ต้นฉบับจากบันทึกการจับคู่ (same_as_id)", dr.half_ids("2026-11-09") == {(A, "112687_0.jpg"): "ORIG"},
+      dr.half_ids("2026-11-09"))
 
 dx.FONTS[:] = [("/nope.ttf", "/nope-b.ttf")]
 check("ไม่มีฟอนต์ไทย: ไม่ทำรูป ไม่ล้ม", dx.write(FakeDrive({}), "R", "W", found, albums, log=log.append) == {})
