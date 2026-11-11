@@ -1,65 +1,55 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from './api.js'
 import Icon from './Icon.jsx'
 
-// งานซ้ำ — every album of the week and whether it repeats (Fiat 2026-09-29: "เช็คงานซ้ำแบบไม่เปิดคอม
-// ง่ายๆ ที่สุด"), redesigned 2026-10 for the customer: four totals, the albums that repeat first,
-// and each repeat beside the picture it repeats, with a way to keep one the system got wrong.
-// Same numbers as the report's first sheet (duplicate_report.album_overview). Counted within the
-// week only: a slip delivered in an earlier week is work again (customer, 2026-09-14).
+// งานซ้ำ — one week answered top to bottom (Fiat 2026-11-11: "ดูง่ายๆ และตรวจสอบง่าย"):
+//   1. the verdict: is any trip counted twice in the customer's file? (checked, not assumed)
+//   2. what a person still has to decide
+//   3. what the system already took out, by reason
+//   4. albums, to know which admin to tell
+// Counted within the week only: a slip delivered in an earlier week is work again (customer,
+// 2026-09-14). One request per week from the server's cache, no polling, and pictures load from
+// Drive in the viewer's browser first, so opening this tab adds next to nothing to the database.
 
 const fmt = (n) => (n ?? 0).toLocaleString('th-TH')
 const TH_MONTHS = ['ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.', 'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.']
 const wk = (label) => (label || '').replace(/^\d{4}-W/, 'WK')
+const day = (iso) => { if (!iso) return ''; const d = new Date(`${iso}T00:00:00`); return `${d.getDate()} ${TH_MONTHS[d.getMonth()]}` }
 const when = (s) => {
   if (!s) return ''
   const d = new Date(String(s).replace(' ', 'T'))
   if (Number.isNaN(d.getTime())) return s
-  const today = new Date()
-  const y = new Date(today); y.setDate(today.getDate() - 1)
-  const t = d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
-  if (d.toDateString() === today.toDateString()) return `วันนี้ ${t}`
-  if (d.toDateString() === y.toDateString()) return `เมื่อวาน ${t}`
-  return `${d.getDate()} ${TH_MONTHS[d.getMonth()]} ${t}`
+  return `${d.getDate()} ${TH_MONTHS[d.getMonth()]} ${d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}`
 }
-const day = (iso) => { if (!iso) return ''; const d = new Date(`${iso}T00:00:00`); return `${d.getDate()} ${TH_MONTHS[d.getMonth()]}` }
-const WHY = {
-  'ไฟล์เดิมส่งซ้ำ': 'ไฟล์รูปเดียวกันทุกจุด',
-  'รหัสการจองซ้ำในสัปดาห์เดียวกัน': 'เลขจองเดียวกันในสัปดาห์นี้',
-  'ครึ่งล่างของงานที่นับไปแล้ว': 'เป็นครึ่งล่างของเที่ยวที่นับไปแล้ว',
-}
+const baht = (n) => (n == null ? '' : `฿${fmt(n)}`)
 
-function Tile({ label, value, sub, tone = 'text-ink' }) {
-  return (
-    <div className="bg-white border border-line rounded-xl px-4 py-3.5 sm:px-5 sm:py-4">
-      <p className="text-sm text-muted">{label}</p>
-      <p className={`text-[26px] leading-tight font-semibold ${tone}`}>{value}</p>
-      {sub && <p className="text-sm text-muted">{sub}</p>}
-    </div>
-  )
+// every reason a repeat is taken out, said the way Ops says it, and whether anyone has to act
+const REASONS = {
+  'ไฟล์เดิมส่งซ้ำ': { title: 'รูปเดียวกันทุกจุด อ่านแล้ว', why: 'ไฟล์เหมือนใบที่นับไปแล้วทุกไบต์' },
+  'รหัสการจองซ้ำในสัปดาห์เดียวกัน': { title: 'เลขจองซ้ำในสัปดาห์นี้', why: 'สลิปคนละรูป แต่เป็นเที่ยวเดียวกัน (เลขจองตรงกัน)' },
+  'ครึ่งล่างของงานที่นับไปแล้ว': { title: 'ครึ่งล่างของเที่ยวที่นับแล้ว', why: 'ส่วนล่างของสลิปที่จับคู่ไปแล้ว' },
 }
+const reason = (k) => REASONS[k] || { title: k, why: '' }
 
 const driveId = (url) => (url || '').match(/\/d\/([\w-]+)|[?&]id=([\w-]+)/)?.slice(1).find(Boolean)
 
-/** A picture from the server, else straight from Drive in the viewer's own browser (a person
- *  who can open the album can see its pictures even when the server cannot reach Drive), else
- *  a link to open it there. */
-function Thumb({ src, drive, label, empty = 'ไม่ได้อ่าน (ตัดก่อนส่งให้ AI)' }) {
+/** Drive first (the viewer's own Google session, no load on our server or database), then the
+ *  copy our server keeps, then a link. */
+function Thumb({ tripId, drive, label }) {
   const id = driveId(drive)
-  const [step, setStep] = useState(src ? 'server' : id ? 'drive' : 'none')
-  const url = step === 'server' ? src : step === 'drive' ? `https://drive.google.com/thumbnail?id=${id}&sz=w600` : null
-  const next = () => setStep((s) => (s === 'server' && id ? 'drive' : 'none'))
-  const open = id ? `https://drive.google.com/file/d/${id}/view` : src
+  const steps = [id && `https://drive.google.com/thumbnail?id=${id}&sz=w600`, tripId && `/api/trips/${tripId}/image`].filter(Boolean)
+  const [i, setI] = useState(0)
+  const open = id ? `https://drive.google.com/file/d/${id}/view` : steps[steps.length - 1]
   return (
-    <figure className="m-0 flex flex-col gap-1">
-      {url ? (
+    <figure className="m-0 flex flex-col gap-1 min-w-0">
+      {i < steps.length ? (
         <a href={open} target="_blank" rel="noreferrer">
-          <img src={url} alt={label} loading="lazy" referrerPolicy="no-referrer" onError={next}
-            className="w-full h-28 object-cover object-top rounded-lg border border-line bg-ground" />
+          <img src={steps[i]} alt={label} loading="lazy" referrerPolicy="no-referrer" onError={() => setI((x) => x + 1)}
+            className="w-full h-40 object-cover object-top rounded-lg border border-line bg-ground" />
         </a>
       ) : (
-        <span className="w-full h-28 rounded-lg border border-line bg-ground flex flex-col items-center justify-center gap-1 text-xs text-muted text-center px-2">
-          {src || id ? 'แสดงรูปในหน้านี้ไม่ได้' : empty}
+        <span className="w-full h-40 rounded-lg border border-line bg-ground flex flex-col items-center justify-center gap-1 text-xs text-muted text-center px-2">
+          แสดงรูปไม่ได้
           {id && <a href={open} target="_blank" rel="noreferrer" className="text-accent hover:underline">เปิดใน Drive</a>}
         </span>
       )}
@@ -68,110 +58,152 @@ function Thumb({ src, drive, label, empty = 'ไม่ได้อ่าน (ต
   )
 }
 
-function Pair({ p, onKeep, busy }) {
-  const why = WHY[p.kind] || p.kind
+function PairCard({ p, children }) {
+  const same = p.net != null && p.net === p.twin_net
   return (
     <li className="border border-line rounded-xl p-3 flex flex-col gap-2.5">
-      <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-center">
-        <Thumb label="ใบใหม่" src={p.pre ? null : `/api/trips/${p.trip_id}/image`} drive={p.pre ? p.link : p.url} />
-        <span className="text-sm text-muted" aria-hidden="true">=</span>
-        <Thumb label="ใบเดิม" src={p.twin_id ? `/api/trips/${p.twin_id}/image` : null} drive={p.twin_url} empty="ไม่พบใบเดิม" />
+      <div className="grid grid-cols-2 gap-2">
+        <Thumb label="ใบนี้" tripId={p.trip_id} drive={p.url} />
+        <Thumb label="ใบที่นับไปแล้ว" tripId={p.twin_id} drive={p.twin_url} />
       </div>
-      <div className="text-sm">
-        {!p.pre && <p className="font-medium">{[p.rider, day(p.date), p.net != null ? `฿${fmt(p.net)}` : ''].filter(Boolean).join(' · ')}</p>}
-        <p className="text-ink-soft">{why}{p.code ? ` · ${p.code}` : ''}</p>
-        <p className="text-muted break-words">ใบเดิมอยู่ใน {p.twin_album || 'รูปที่เคยส่งและอ่านไปแล้ว'}</p>
+      <dl className="text-sm grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+        <dt className="text-muted">เลขจอง</dt><dd className="font-mono break-all">{p.code || '—'}</dd>
+        <dt className="text-muted">ยอด</dt>
+        <dd>{baht(p.net)} · ใบที่นับแล้ว {baht(p.twin_net)} {same && <span className="text-ok-ink">· ตรงกัน</span>}</dd>
+        <dt className="text-muted">ไรเดอร์</dt><dd>{[p.rider, day(p.date)].filter(Boolean).join(' · ')}</dd>
+        <dt className="text-muted">อัลบั้ม</dt><dd className="break-words">{p.album}{p.twin_album && p.twin_album !== p.album ? ` (ใบที่นับอยู่ใน ${p.twin_album})` : ''}</dd>
+      </dl>
+      {children}
+    </li>
+  )
+}
+
+function Verdict({ d, onQueue }) {
+  const twice = d.twice.length, decide = d.decide.length
+  const waiting = d.albums.reduce((s, a) => s + (a.waiting || 0), 0)
+  const [tone, head, body] = twice
+    ? ['danger', `ไฟล์ลูกค้ามีเที่ยวที่นับสองครั้ง ${fmt(twice)} เที่ยว`, 'แจ้งผู้ดูแลระบบ ห้ามส่งไฟล์สัปดาห์นี้จนกว่าจะแก้']
+    : decide
+      ? ['warn', `รอคนตัดสิน ${fmt(decide)} เที่ยว`, 'เที่ยวเหล่านี้ยังไม่อยู่ในไฟล์ลูกค้า ดูรูปคู่กันแล้วตัดสินในคิวตรวจ']
+      : ['ok', 'เรียบร้อย ไม่มีเที่ยวไหนนับซ้ำ', 'ไม่มีอะไรต้องทำในหน้านี้']
+  const box = { ok: 'bg-ok-bg text-ok-ink', warn: 'bg-warn-bg text-warn-ink', danger: 'bg-danger-bg text-danger-ink' }[tone]
+  return (
+    <section aria-label="ผลตรวจ" className={`rounded-xl px-4 py-4 sm:px-5 flex flex-wrap items-center gap-x-6 gap-y-3 ${box}`}>
+      <div className="flex-1 min-w-[16rem]">
+        <p className="text-xl font-semibold">{head}</p>
+        <p className="text-sm">{body}</p>
+        <p className="text-sm mt-1.5 opacity-90">
+          ตรวจแล้ว: เที่ยวที่อนุมัติ {fmt(d.approved)} เที่ยว {twice ? `มีเลขจองซ้ำ ${fmt(twice)} ชุด` : 'เลขจองไม่ซ้ำกันเลย'}
+          {waiting ? ` · ยังรออ่านอีก ${fmt(waiting)} รูป ตัวเลขอาจเปลี่ยน` : ''}
+        </p>
       </div>
-      {p.restorable && (
-        <button onClick={() => onKeep(p)} disabled={busy}
-          className="self-start min-h-10 px-3 rounded-lg border border-line hover:bg-ground text-sm disabled:opacity-50">
-          ไม่ใช่งานซ้ำ · เก็บไว้
+      {decide > 0 && (
+        <button onClick={onQueue} className="min-h-11 px-4 rounded-lg bg-ink text-white text-sm font-semibold">
+          ไปตัดสินในคิวตรวจ ({fmt(decide)})
         </button>
+      )}
+    </section>
+  )
+}
+
+function Section({ title, sub, children }) {
+  return (
+    <section className="bg-white border border-line rounded-xl p-4 sm:p-5 flex flex-col gap-3">
+      <div>
+        <h2 className="text-[17px] font-semibold">{title}</h2>
+        {sub && <p className="text-sm text-muted">{sub}</p>}
+      </div>
+      {children}
+    </section>
+  )
+}
+
+function Copies({ copies }) {
+  const [open, setOpen] = useState(false)
+  const [n, setN] = useState(20)
+  if (!copies.length) return null
+  const albums = new Set(copies.map((c) => c.album)).size
+  return (
+    <li className="border border-line rounded-xl p-3 flex flex-col gap-2">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="font-medium">ไฟล์รูปเดียวกันเป๊ะ ส่งมาซ้ำ <span className="text-danger-ink">{fmt(copies.length)} ใบ</span></p>
+        <button onClick={() => setOpen((o) => !o)} aria-expanded={open} className="min-h-9 text-sm text-accent hover:underline">
+          {open ? 'ซ่อนรายชื่อไฟล์' : 'ดูรายชื่อไฟล์'}
+        </button>
+      </div>
+      <p className="text-sm text-ink-soft">
+        ระบบตัดออกก่อนส่งให้ AI อ่าน จึงไม่เสียค่าอ่าน และไม่ได้นับเป็นงาน ส่วนใหญ่เกิดจาก LINE บันทึกรูปเดิมซ้ำ (ชื่อไฟล์ลงท้าย _1, _2)
+        {albums > 1 ? ` · จาก ${fmt(albums)} อัลบั้ม` : ''} ไม่ต้องทำอะไร
+      </p>
+      {open && (
+        <>
+          <ul className="text-sm divide-y divide-line-soft border-t border-line-soft">
+            {copies.slice(0, n).map((c, i) => (
+              <li key={`${c.file}-${i}`} className="py-1.5 flex flex-wrap gap-x-2">
+                {c.link ? <a href={c.link} target="_blank" rel="noreferrer" className="text-accent hover:underline">{c.file}</a> : <span>{c.file}</span>}
+                <span className="text-muted break-all">= {c.same_as}</span>
+              </li>
+            ))}
+          </ul>
+          {n < copies.length && (
+            <button onClick={() => setN((x) => x + 50)} className="self-start min-h-9 text-sm text-accent hover:underline">
+              ดูเพิ่มอีก {fmt(Math.min(50, copies.length - n))} ใบ (จากทั้งหมด {fmt(copies.length)})
+            </button>
+          )}
+        </>
       )}
     </li>
   )
 }
 
-function Detail({ week, album, onBack, onChanged }) {
-  const [data, setData] = useState(null)
+export default function DupAlbums({ onGo }) {
+  const [week, setWeek] = useState('')
+  const [d, setD] = useState(null)
   const [error, setError] = useState('')
+  const [album, setAlbum] = useState('')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
-  const top = useRef(null)
-  // on a phone the panel replaces the list below the totals: bring it into view
-  useEffect(() => {
-    if (window.innerWidth < 1024) top.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, [album.album])
-  const load = useCallback(() => api.duplicateAlbum(week, album.album).then(setData).catch((e) => setError(e.message)),
-    [week, album.album])
-  useEffect(() => { setData(null); setNote(''); load() }, [load])
 
+  const load = useCallback((w) => api.duplicateWeek(w).then((r) => { setD(r); setError('') })
+    .catch((e) => setError(e.message)), [])
+  useEffect(() => { setAlbum(''); setNote(''); load(week) }, [week, load])
+
+  const toQueue = () => {
+    try { sessionStorage.setItem('queue.only', 'dup') } catch { /* private window: the queue opens on every row */ }
+    onGo?.('queue')
+  }
   const keep = (p) => {
-    if (!window.confirm('เก็บเที่ยวนี้ไว้ ไม่นับเป็นงานซ้ำ?\n\nแถวจะกลับเข้าคิวตรวจ ให้คนกดอนุมัติอีกครั้ง')) return
+    if (!window.confirm('ไม่ใช่งานซ้ำ เก็บเที่ยวนี้ไว้?\n\nแถวจะกลับเข้าคิวตรวจ ให้คนกดอนุมัติอีกครั้ง')) return
     setBusy(true)
     api.restoreTrip(p.trip_id)
-      .then(() => { setNote('เก็บไว้แล้ว — แถวกลับเข้าคิวตรวจ'); load(); onChanged() })
+      .then(() => { setNote('เก็บไว้แล้ว แถวกลับเข้าคิวตรวจ'); load(d.week) })
       .catch((e) => setNote(`เก็บไม่สำเร็จ: ${e.message}`)).finally(() => setBusy(false))
   }
 
-  return (
-    <section ref={top} aria-labelledby="det-h" className="scroll-mt-4 bg-white border border-line rounded-xl p-4 sm:p-5 flex flex-col gap-3.5">
-      <button onClick={onBack} className="lg:hidden self-start flex items-center gap-1 min-h-10 -ml-1 text-sm text-ink-soft">
-        <Icon name="back" size={18} />กลับไปรายการอัลบั้ม
-      </button>
-      <div>
-        <p className="text-sm text-muted">อัลบั้มที่เลือก</p>
-        <h2 id="det-h" className="text-[17px] font-semibold break-words">{album.album}</h2>
-        <p className="text-sm text-ink-soft">
-          วางเมื่อ {when(album.first)} · {album.dup ? `ซ้ำ ${fmt(album.dup)} เที่ยว` : 'ไม่ซ้ำ'}
-        </p>
-      </div>
-      <p className="text-sm text-ink-soft bg-ground rounded-lg px-3 py-2.5">
-        เที่ยวที่ซ้ำไม่ถูกนับในไฟล์ส่งลูกค้า ถ้าคิดว่าไม่ใช่งานซ้ำ กด "เก็บไว้" แถวจะกลับเข้าคิวตรวจ
-      </p>
-      {note && <p className="text-sm text-ok-ink">{note}</p>}
-      {error ? <p className="text-sm text-danger-ink">โหลดไม่ได้: {error}</p>
-        : !data ? <p className="text-sm text-muted">กำลังโหลด…</p>
-          : data.pairs.length === 0 ? <p className="text-sm text-muted">อัลบั้มนี้ไม่มีงานซ้ำ</p>
-            : <ul className="flex flex-col gap-3">{data.pairs.map((p, i) => <Pair key={p.trip_id || `pre-${i}`} p={p} onKeep={keep} busy={busy} />)}</ul>}
-    </section>
-  )
-}
+  if (error && !d) return <p className="text-sm text-danger-ink">โหลดไม่ได้: {error}</p>
+  if (!d) return <p className="text-sm text-muted">กำลังโหลด…</p>
+  if (!d.week) return <p className="text-sm text-muted">ยังไม่มีสัปดาห์ให้ดู</p>
 
-export default function DupAlbums() {
-  const [week, setWeek] = useState('')
-  const [data, setData] = useState(null)
-  const [error, setError] = useState('')
-  const [onlyDup, setOnlyDup] = useState(true)
-  const [picked, setPicked] = useState(null)
-
-  const load = useCallback((w) => api.duplicateAlbums(w).then((d) => { setData(d); setError('') })
-    .catch((e) => setError(e.message)), [])
-  useEffect(() => { setPicked(null); load(week) }, [week, load])
-
-  if (error && !data) return <p className="text-sm text-danger-ink">โหลดไม่ได้: {error}</p>
-  if (!data) return <p className="text-sm text-muted">กำลังโหลด…</p>
-  if (!data.week) return <p className="text-sm text-muted">ยังไม่มีสัปดาห์ให้ดู</p>
-
-  const albums = [...data.albums].reverse()            // newest first
-  const dups = albums.filter((a) => a.status === 'ซ้ำ')
-  const shown = onlyDup ? dups : albums
-  const pre = albums.reduce((s, a) => s + (a.pre || 0), 0)
-  const post = albums.reduce((s, a) => s + (a.post || 0), 0)
-  const waiting = albums.filter((a) => a.waiting).length
-  const current = picked && albums.find((a) => a.album === picked)
+  const mine = (x) => !album || x.album === album
+  const decide = d.decide.filter(mine)
+  const removed = d.removed.filter(mine)
+  const copies = d.copies.filter(mine)
+  const groups = Object.entries(removed.reduce((g, p) => ({ ...g, [p.kind]: [...(g[p.kind] || []), p] }), {}))
+  const out = d.removed.length + d.copies.length
+  const albums = [...d.albums].reverse()                 // newest first
+  const pending = d.decide.reduce((m, p) => ({ ...m, [p.album]: (m[p.album] || 0) + 1 }), {})
 
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <p className="text-sm text-muted">งานซ้ำรายอัลบั้ม · นับเฉพาะในสัปดาห์เดียวกัน</p>
-          <h1 className="text-2xl sm:text-[28px] font-semibold tracking-tight">{wk(data.label)}</h1>
+          <p className="text-sm text-muted">งานซ้ำ · นับเฉพาะในสัปดาห์เดียวกัน · ข้อมูล ณ {d.as_of.slice(11)} น.</p>
+          <h1 className="text-2xl sm:text-[28px] font-semibold tracking-tight">{wk(d.label)}</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div role="group" aria-label="เลือกสัปดาห์" className="flex gap-2 overflow-x-auto">
-            {[...data.weeks].slice(0, 4).reverse().map((w) => {
-              const on = w.date_from === data.week
+            {d.weeks.slice(0, 4).reverse().map((w) => {
+              const on = w.date_from === d.week
               return (
                 <button key={w.date_from} onClick={() => setWeek(w.date_from)} aria-pressed={on}
                   className={`shrink-0 min-h-10 px-4 rounded-full text-sm border ${on ? 'bg-ink text-white border-ink' : 'bg-white text-ink-soft border-line'}`}>
@@ -180,68 +212,103 @@ export default function DupAlbums() {
               )
             })}
           </div>
-          <a href={api.duplicateReportUrl(data.week)}
+          <a href={api.duplicateReportUrl(d.week)}
             className="min-h-10 px-4 rounded-lg border border-line bg-white hover:bg-ground text-sm flex items-center gap-2">
-            <Icon name="download" size={18} />ดาวน์โหลดรายงาน (Excel)
+            <Icon name="download" size={18} />รายงาน Excel
           </a>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
-        <Tile label="อัลบั้มสัปดาห์นี้" value={fmt(albums.length)} sub={albums[0] ? `วางล่าสุด ${when(albums[0].first)}` : ''} />
-        <Tile label="อัลบั้มที่มีงานซ้ำ" value={fmt(dups.length)} sub="ควรแจ้งแอดมินเจ้าของอัลบั้ม" tone={dups.length ? 'text-danger-ink' : 'text-ok-ink'} />
-        <Tile label="เที่ยวซ้ำทั้งหมด" value={fmt(pre + post)} sub={`ส่งไฟล์เดิมซ้ำ ${fmt(pre)} · เลขจองซ้ำ ${fmt(post)}`} tone={pre + post ? 'text-danger-ink' : 'text-ok-ink'} />
-        <Tile label="ยังอ่านไม่ครบ" value={fmt(waiting)} sub="อัลบั้ม · ตัวเลขซ้ำอาจเพิ่ม" tone={waiting ? 'text-warn-ink' : 'text-ink'} />
-      </div>
+      <Verdict d={d} onQueue={toQueue} />
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_420px] items-start">
-        <section aria-labelledby="alb-h" className={`bg-white border border-line rounded-xl overflow-hidden ${current ? 'hidden lg:block' : ''}`}>
-          <div className="px-4 sm:px-5 py-3.5 border-b border-line-soft flex flex-wrap items-center justify-between gap-3">
-            <h2 id="alb-h" className="text-[17px] font-semibold">อัลบั้มทั้งสัปดาห์ <span className="font-normal text-sm text-muted">· ล่าสุดอยู่บน</span></h2>
-            <div role="group" aria-label="กรอง" className="flex gap-1 bg-ground rounded-lg p-0.5">
-              {[[false, `ทั้งหมด ${fmt(albums.length)}`], [true, `เฉพาะที่ซ้ำ ${fmt(dups.length)}`]].map(([v, label]) => (
-                <button key={label} onClick={() => setOnlyDup(v)} aria-pressed={onlyDup === v}
-                  className={`min-h-9 px-3 rounded-md text-sm ${onlyDup === v ? 'bg-white text-ink font-semibold shadow-sm' : 'text-ink-soft'}`}>{label}</button>
-              ))}
-            </div>
+      <div className="grid grid-cols-3 gap-3 text-center">
+        {[['นับในไฟล์ลูกค้า', d.approved, 'text-ink'], ['รอคนตัดสิน', d.decide.length, d.decide.length ? 'text-warn-ink' : 'text-ink'],
+          ['ระบบตัดออกให้แล้ว', out, 'text-ink']].map(([label, v, tone]) => (
+          <div key={label} className="bg-white border border-line rounded-xl px-2 py-3">
+            <p className={`text-[22px] sm:text-[26px] leading-tight font-semibold tabular-nums ${tone}`}>{fmt(v)}</p>
+            <p className="text-sm text-muted">{label}</p>
           </div>
-          {shown.length === 0 ? (
-            <p className="px-5 py-6 text-sm text-muted">{onlyDup ? 'ไม่มีอัลบั้มที่ซ้ำในสัปดาห์นี้' : 'ยังไม่มีอัลบั้ม'}</p>
-          ) : (
-            <ul>
-              {shown.map((a) => {
-                const dup = a.status === 'ซ้ำ'
-                const on = a.album === picked
-                return (
-                  <li key={a.album}>
-                    <button onClick={() => setPicked(a.album)} aria-current={on ? 'true' : undefined}
-                      className={`w-full text-left px-4 sm:px-5 py-3 border-b border-line-soft flex items-start gap-3 border-l-[3px] ${on ? 'bg-accent-bg border-l-accent' : 'border-l-transparent hover:bg-ground'}`}>
-                      <span className="flex-1 min-w-0">
-                        <span className="block font-medium break-words">{a.album}</span>
-                        <span className="block text-sm text-muted">{when(a.first)} · อ่านแล้ว {fmt(a.read)} · ลงงาน {fmt(a.filed)}</span>
-                        {dup && a.with && <span className="block text-sm text-danger-ink break-words">ซ้ำกับ {a.with}</span>}
-                        {a.waiting ? <span className="inline-block mt-1 text-xs text-warn-ink bg-warn-bg rounded px-1.5 py-0.5">รออ่าน {fmt(a.waiting)} · ตัวเลขซ้ำอาจเพิ่ม</span> : null}
-                      </span>
-                      <span className={`shrink-0 text-sm font-semibold rounded-full px-3 py-1 ${dup ? 'bg-danger-bg text-danger-ink' : 'bg-ok-bg text-ok-ink'}`}>
-                        {dup ? `ซ้ำ ${fmt(a.dup)}` : 'ไม่ซ้ำ'}
-                      </span>
-                    </button>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-          <p className="px-5 py-3 text-xs text-muted">ข้อมูล ณ {data.as_of} · อัปเดตทุก 2 นาที</p>
-        </section>
-
-        {current ? (
-          <Detail week={data.week} album={current} onBack={() => setPicked(null)} onChanged={() => load(data.week)} />
-        ) : (
-          <aside className="hidden lg:block bg-white border border-line rounded-xl p-5 text-sm text-muted">
-            เลือกอัลบั้มทางซ้ายเพื่อดูว่าแต่ละเที่ยวซ้ำกับใบไหน
-          </aside>
-        )}
+        ))}
       </div>
+
+      {album && (
+        <p className="text-sm flex flex-wrap items-center gap-2">
+          <span className="bg-accent-bg rounded-full px-3 py-1">เฉพาะอัลบั้ม {album}</span>
+          <button onClick={() => setAlbum('')} className="min-h-9 text-accent hover:underline">ดูทุกอัลบั้ม</button>
+        </p>
+      )}
+      {note && <p className="text-sm text-ok-ink">{note}</p>}
+
+      {decide.length > 0 && (
+        <Section title={`รอคนตัดสิน ${fmt(decide.length)} เที่ยว`}
+          sub="เลขจองตรงกับเที่ยวที่นับไปแล้ว แต่ระบบไม่แน่ใจพอจะตัดเอง ถ้าเป็นเที่ยวเดียวกันให้ลบในคิวตรวจ ถ้าไม่ใช่ให้อนุมัติ">
+          <ul className="grid gap-3 md:grid-cols-2">
+            {decide.map((p) => (
+              <PairCard key={p.trip_id} p={p}>
+                <button onClick={toQueue} className="self-start min-h-10 px-3 rounded-lg border border-line hover:bg-ground text-sm">ตัดสินในคิวตรวจ</button>
+              </PairCard>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      <Section title={`ระบบตัดออกให้แล้ว ${fmt(removed.length + copies.length)} รายการ`}
+        sub="ไม่ได้นับในไฟล์ลูกค้า ดูเพื่อยืนยันหรือแจ้งแอดมินเจ้าของอัลบั้ม ถ้าระบบตัดผิด กด “ไม่ใช่งานซ้ำ”">
+        {removed.length + copies.length === 0 ? <p className="text-sm text-muted">ไม่มี</p> : (
+          <ul className="flex flex-col gap-3">
+            <Copies copies={copies} />
+            {groups.map(([kind, ps]) => (
+              <li key={kind} className="flex flex-col gap-2">
+                <p className="font-medium">{reason(kind).title} <span className="text-danger-ink">{fmt(ps.length)} เที่ยว</span>
+                  <span className="block text-sm font-normal text-ink-soft">{reason(kind).why}</span></p>
+                <ul className="grid gap-3 md:grid-cols-2">
+                  {ps.map((p) => (
+                    <PairCard key={p.trip_id} p={p}>
+                      <button onClick={() => keep(p)} disabled={busy}
+                        className="self-start min-h-10 px-3 rounded-lg border border-line hover:bg-ground text-sm disabled:opacity-50">
+                        ไม่ใช่งานซ้ำ · เก็บไว้
+                      </button>
+                    </PairCard>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+
+      <Section title={`อัลบั้มสัปดาห์นี้ ${fmt(albums.length)} อัลบั้ม`} sub="ใช้แจ้งแอดมินว่าอัลบั้มไหนส่งงานซ้ำ กดชื่ออัลบั้มเพื่อดูเฉพาะอัลบั้มนั้น">
+        <div className="overflow-x-auto -mx-4 sm:mx-0">
+          <table className="w-full text-sm tabular-nums">
+            <thead>
+              <tr className="text-left text-muted border-b border-line">
+                <th className="font-normal py-2 px-4 sm:px-2">อัลบั้ม</th>
+                <th className="font-normal py-2 px-2 text-right">อ่านแล้ว</th>
+                <th className="font-normal py-2 px-2 text-right">ซ้ำ</th>
+                <th className="font-normal py-2 px-2 text-right">% ซ้ำ</th>
+                <th className="font-normal py-2 px-2 text-right">รออ่าน</th>
+              </tr>
+            </thead>
+            <tbody>
+              {albums.map((a) => (
+                <tr key={a.album} className={`border-b border-line-soft ${a.album === album ? 'bg-accent-bg' : ''}`}>
+                  <td className="py-2 px-4 sm:px-2">
+                    <button onClick={() => setAlbum(a.album === album ? '' : a.album)} className="text-left hover:underline break-words">{a.album}</button>
+                    <span className="block text-xs text-muted">{when(a.first)}{a.with ? ` · ซ้ำกับ ${a.with}` : ''}</span>
+                  </td>
+                  <td className="py-2 px-2 text-right">{fmt(a.read)}</td>
+                  <td className={`py-2 px-2 text-right font-semibold ${a.dup ? 'text-danger-ink' : pending[a.album] ? 'text-warn-ink' : 'text-ok-ink'}`}>
+                    {a.dup ? fmt(a.dup) : pending[a.album] ? 'รอตัดสิน' : 'ไม่ซ้ำ'}
+                    {a.dup && pending[a.album] ? <span className="block text-xs font-normal text-warn-ink">+ รอตัดสิน {fmt(pending[a.album])}</span> : null}
+                  </td>
+                  <td className="py-2 px-2 text-right">{a.pct != null ? `${(a.pct * 100).toFixed(1)}%` : ''}</td>
+                  <td className="py-2 px-2 text-right">{a.waiting ? fmt(a.waiting) : ''}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Section>
     </div>
   )
 }

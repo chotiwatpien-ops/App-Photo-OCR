@@ -87,8 +87,7 @@ export const api = {
   completeness: () => fetch('/api/completeness').then(handle),
   // the 'งานซ้ำ' tab — every album of a week and whether it repeats (from W39)
   duplicateAlbums: (week = '') => fetch(`/api/duplicates/albums?week=${week}`).then(handle),
-  duplicateAlbum: (week, album) =>
-    fetch(`/api/duplicates/album?${new URLSearchParams({ week, album })}`).then(handle),
+  duplicateWeek: (week = '') => fetch(`/api/duplicates/week?week=${week}`).then(handle),
   duplicateReportUrl: (week) => `/api/duplicates/report.xlsx?week=${week}`,
   weekFileUrl: (week) => `/api/export/week?week=${week}`,
   spreadDates: (jobId, allRows = false) =>

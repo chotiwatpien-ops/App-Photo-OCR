@@ -539,7 +539,7 @@ def _dup_weeks():
 
 def _dup_week(w):
     """{cases, undecided, pre, albums} of one week, kept DUP_CACHE_SECONDS — a phone reopening
-    the tab, the overview and the detail panel all ask for the same thing."""
+    the tab and the overview both ask for the same thing."""
     import time as _time
     from datetime import date, timedelta
 
@@ -574,24 +574,41 @@ def duplicate_albums(week: str = ""):
             "as_of": d["as_of"], "weeks": listing}
 
 
-@app.get("/api/duplicates/album")
-def duplicate_album(week: str, album: str):
-    """Every repeat of one album, each beside the picture it repeats: read ones (booking code,
-    can be put back) and copies dropped before reading (same file, nothing was read)."""
-    if week not in _dup_weeks():
-        raise HTTPException(404, "ไม่พบสัปดาห์นี้")
-    d = _dup_week(week)
-    pairs = [{"kind": c.get("ประเภทการซ้ำ"), "trip_id": c["id"], "twin_id": c.get("twin_id"),
-              "rider": c.get("โฟลเดอร์ที่ระบบวาง"), "date": c.get("วันที่งาน"), "code": c.get("รหัสการจอง"),
-              "net": c.get("ยอด"), "file": c.get("ไฟล์ที่ซ้ำ"), "twin_file": c.get("ซ้ำกับไฟล์"),
-              "twin_album": c.get("ของไรเดอร์"), "url": c.get("ลิงก์รูป"), "twin_url": c.get("twin_url"),
-              "restorable": True}
-             for c in d["cases"] if c.get("ไรเดอร์ผู้ส่ง") == album]
-    pairs += [{"kind": p.get("ประเภทการซ้ำ") or "ไฟล์เดิมส่งซ้ำ", "pre": True, "file": p.get("ไฟล์ที่ซ้ำ"),
-               "twin_file": p.get("ซ้ำกับไฟล์"), "twin_album": p.get("ของอัลบั้ม"), "link": p.get("ลิงก์รูป"),
-               "found": p.get("เจอเมื่อ"), "restorable": False}
-              for p in d["pre"] if p.get("ไรเดอร์ผู้ส่ง") == album]
-    return {"week": week, "album": album, "pairs": pairs}
+def _dup_pair(c):
+    return {"trip_id": c["id"], "twin_id": c.get("twin_id"), "kind": c.get("ประเภทการซ้ำ"),
+            "album": c.get("ไรเดอร์ผู้ส่ง"), "rider": c.get("โฟลเดอร์ที่ระบบวาง"), "date": c.get("วันที่งาน"),
+            "code": c.get("รหัสการจอง"), "net": c.get("ยอด"), "twin_net": c.get("ยอดของต้นฉบับ"),
+            "url": c.get("ลิงก์รูป"), "twin_url": c.get("twin_url"), "twin_album": c.get("ของไรเดอร์"),
+            "approved": c.get("committed") == 1}
+
+
+@app.get("/api/duplicates/week")
+def duplicate_week(week: str = ""):
+    """Everything the งานซ้ำ tab shows for one week, in one answer from the same cache: the
+    proof that no approved trip is counted twice, the rows a person still has to decide, the
+    repeats the system already took out, and the exact copies dropped before reading."""
+    from datetime import date, timedelta
+
+    import duplicate_report as dr
+    from ingest import week_label
+    weeks_ = _dup_weeks()
+    if not weeks_:
+        return {"weeks": [], "week": None}
+    shut = db.closed_weeks()
+    w = week if week in weeks_ else weeks_[0]
+    d = _dup_week(w)
+    if "twice" not in d:          # the tab's own check rides on the cached week, not the overview's
+        d["approved"], d["twice"] = dr.counted_twice(w, (date.fromisoformat(w) + timedelta(days=6)).isoformat())
+    return {
+        "week": w, "label": week_label(w), "as_of": d["as_of"],
+        "weeks": [{"date_from": x, "label": week_label(x), "closed": x in shut} for x in weeks_],
+        "approved": d["approved"], "twice": d["twice"],
+        "decide": [_dup_pair(c) for c in d["undecided"]],
+        "removed": [_dup_pair(c) for c in d["cases"]],
+        "copies": [{"album": p.get("ไรเดอร์ผู้ส่ง"), "file": p.get("ไฟล์ที่ซ้ำ"), "same_as": p.get("ซ้ำกับไฟล์"),
+                    "kind": p.get("ประเภทการซ้ำ"), "link": p.get("ลิงก์รูป")} for p in d["pre"]],
+        "albums": [dict(zip(DUP_ALBUM_KEYS, r)) for r in d["albums"]],
+    }
 
 
 @app.get("/api/duplicates/report.xlsx")

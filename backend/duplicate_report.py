@@ -102,6 +102,7 @@ def build(rows, twins):
             "สัปดาห์ของต้นฉบับ": t.get("date_from"),
             "twin_id": t.get("id"),          # the web shows the two pictures side by side; not a sheet column
             "twin_url": t.get("source_url"),  # and falls back to Drive in the viewer's own browser
+            "committed": r.get("committed"),
             "รูปที่ส่งลูกค้า": t.get("customer_image"),
             "ประเภทการซ้ำ": kind_of(r, twin),
             "ลิงก์รูป": r.get("source_url"),
@@ -258,6 +259,25 @@ def album_overview(d_from, d_to, cases, pre=()):
     for i, r in enumerate(out, 1):
         r[0] = i
     return out
+
+
+def counted_twice(d_from, d_to):
+    """(approved rows of the week, [[ids] of each trip approved more than once]).
+
+    The customer's file is the approved rows, so an empty list is the proof that no trip in it is
+    paid twice. Same-trip means db.trip_key, the rule the duplicate guard itself uses."""
+    t, j = db.trips.c, db.jobs.c
+    with db.engine.begin() as c:
+        rows = [dict(r) for r in c.execute(
+            select(t.id, t.booking_code, t.base_fare, t.trip_time)
+            .select_from(db.trips.join(db.jobs, j.id == t.job_id))
+            .where(j.date_from >= d_from, j.date_from <= d_to, t.committed == 1)).mappings().all()]
+    by = collections.defaultdict(list)
+    for r in rows:
+        k = db.trip_key(r)
+        if k:
+            by[k].append(r["id"])
+    return len(rows), [sorted(ids) for ids in by.values() if len(ids) > 1]
 
 
 def summary(cases, pre=()):

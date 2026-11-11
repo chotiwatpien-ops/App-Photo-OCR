@@ -360,7 +360,10 @@ export default function ReviewQueue({ onOpenJob, onCount }) {
         setRows(r.rows)
         const back = r.rows.findIndex((x) => x.id === recall())
         setAt(back < 0 ? 0 : back)
-        setOnly(''); setWeek('')
+        // the งานซ้ำ tab opens the queue on its repeats
+        let want = ''
+        try { want = sessionStorage.getItem('queue.only') || ''; sessionStorage.removeItem('queue.only') } catch { /* private window */ }
+        setOnly(want); setWeek('')
       })
       .catch((e) => setMsg(e.message))
   }, [])

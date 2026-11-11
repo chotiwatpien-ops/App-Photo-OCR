@@ -211,7 +211,7 @@ export default function App() {
         ) : view === 'queue' ? (
           <ReviewQueue onOpenJob={openJob} onCount={setQueueCount} />
         ) : view === 'dups' ? (
-          <DupAlbums />
+          <DupAlbums onGo={go} />
         ) : view === 'close' ? (
           <CloseWeek />
         ) : (
