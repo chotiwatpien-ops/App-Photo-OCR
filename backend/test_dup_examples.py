@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Pictures of each week's repeats, ready to post in LINE (dup_examples.py, Fiat 2026-11-11):
-each read repeat beside the trip it repeats, every exact copy on pages of 20 named under each
-picture (never the unpaired half pictures: those may be the pairing's own miss), a summary card, a pair not made twice, and a picture that
-is no longer wanted moved aside."""
+"""The duplicate report the customer forwards to the admins (dup_examples.py, Fiat 2026-11-11):
+for every repeated picture, which picture it repeats, in which album, sent by which admin, with
+the two side by side, and a first sheet listing them all with a link to each picture."""
 import io
 import os
 import sys
@@ -13,6 +12,7 @@ os.environ["PHOTO_OCR_DATA"] = tempfile.mkdtemp(prefix="pocr-dupex-")
 os.environ.pop("DATABASE_URL", None)
 sys.path.insert(0, "backend")
 
+from openpyxl import load_workbook                              # noqa: E402
 from PIL import Image                                           # noqa: E402
 
 import duplicate_report as dr                                   # noqa: E402
@@ -56,58 +56,68 @@ class FakeDrive:
         return self.files[fid]
 
 
-ALBUM = "2W Karnjana 1748 งาน"
-case = {"id": 40214, "ไรเดอร์ผู้ส่ง": ALBUM, "ลิงก์รูป": "https://drive.google.com/file/d/MINE/view",
-        "twin_url": "https://drive.google.com/file/d/TWIN/view", "ประเภทการซ้ำ": dr.KIND_SAME_WEEK,
-        "ยอด": 34.0, "รหัสการจอง": "A-AWK4QFXGXWOEAV", "วันที่งาน": "2026-11-15"}
-copies = [{"ไรเดอร์ผู้ส่ง": ALBUM, "ไฟล์ที่ซ้ำ": f"1126{i:02d}_1.jpg", "ซ้ำกับไฟล์": f"{ALBUM}/1126{i:02d}_0.jpg",
-           "ลิงก์รูป": f"https://drive.google.com/file/d/COPY{i}/view"} for i in range(25)]
-albums = [[1, ALBUM, None, 1642, 1637, 25, 1, 26, 0.02, "ในอัลบั้มเดียวกัน", 3, None, "ซ้ำ"],
+A, B = "2W Karnjana 1748 งาน", "4W-Taxi Meen ชุด 2"
+check("ส่งโดย = แอดมินที่ชื่ออัลบั้มบอก", dx.sender(A) == "Karnjana" and dx.sender(B) == "Meen")
+
+case = {"id": 40214, "ไรเดอร์ผู้ส่ง": A, "ไฟล์ที่ซ้ำ": f"{A}_117062+117061_฿34.jpg",
+        "ลิงก์รูป": "https://drive.google.com/file/d/MINE/view", "twin_url": "https://drive.google.com/file/d/TWIN/view",
+        "ซ้ำกับไฟล์": f"{A}_117068+117067_฿34.jpg", "ของไรเดอร์": A, "รูปที่ส่งลูกค้า": "005215112601.jpg",
+        "ประเภทการซ้ำ": dr.KIND_SAME_WEEK, "ยอด": 34.0, "รหัสการจอง": "A-AWK4QFXGXWOEAV"}
+copies = [{"ไรเดอร์ผู้ส่ง": A, "ไฟล์ที่ซ้ำ": "112687_1.jpg", "ซ้ำกับไฟล์": f"{A}/112687_0.jpg",
+           "ลิงก์รูป": "https://drive.google.com/file/d/COPY/view"},
+          {"ไรเดอร์ผู้ส่ง": A, "ไฟล์ที่ซ้ำ": "9_1.jpg", "ซ้ำกับไฟล์": f"{B}/9_0.jpg",
+           "ลิงก์รูป": "https://drive.google.com/file/d/COPY9/view"}]
+half_ids = {(A, "112687_0.jpg"): "ORIG", (B, "9_0.jpg"): "ORIG9"}
+albums = [[1, A, None, 1642, 1637, 2, 1, 3, 0.002, "", None, None, "ซ้ำ"],
           [2, "2W Karnjana ทดสอบ", None, 20, 20, 0, 0, 0, 0.0, "", None, None, "ไม่ซ้ำ"]]
-files = {"MINE": jpeg("red"), "TWIN": jpeg("blue")}
-files.update({f"COPY{i}": jpeg("green", (200, 400)) for i in range(25)})
 
-ex = dx.examples([], [case], copies)
-pair = [e for e in ex if not e.redo]
-pages = [e for e in ex if e.redo]
-check("งานแคปซ้ำ: รูปคู่กัน ใบที่นับแล้วอยู่ซ้าย ใบนี้อยู่ขวา",
-      pair[0].pictures[0][0] == "TWIN" and pair[0].pictures[1][0] == "MINE", pair)
-check("❗ ไฟล์ซ้ำครบทุกไฟล์ หน้าละ 20: 25 ไฟล์ = 2 หน้า",
-      [e.name for e in pages if e.name.startswith("ไฟล์ซ้ำ")] == ["ไฟล์ซ้ำ หน้า 1 จาก 2.jpg", "ไฟล์ซ้ำ หน้า 2 จาก 2.jpg"]
-      and sum(len(e.pictures) for e in pages if e.name.startswith("ไฟล์ซ้ำ")) == 25)
-check("แต่ละรูปบอกว่าซ้ำกับไฟล์ไหน", pages[0].pictures[0][1] == "112600_1.jpg = 112600_0.jpg", pages[0].pictures[0])
-check("ไม่มีหน้ารูปที่หาคู่ไม่ได้ (อาจเป็นระบบจับคู่พลาดเอง)", all("หาคู่" not in e.name for e in ex))
+found = dx.entries([], [case], copies, half_ids)
+read = next(e for e in found if e.kind == "แคปจอ 2 รอบ")
+copy = next(e for e in found if e.file == "112687_1.jpg")
+cross = next(e for e in found if e.file == "9_1.jpg")
+check("❗ งานแคปซ้ำ: บอกรูปที่ซ้ำและต้นฉบับเป็นเลขรูปใน LINE",
+      read.file == "รูป 117062 + 117061" and read.orig_file == "รูป 117068 + 117067" and read.orig_id == "TWIN", read)
+check("ต้นฉบับบอกชื่อในไฟล์ลูกค้า", read.counted_as == "005215112601.jpg")
+check("❗ ไฟล์ซ้ำ: เจอรูปต้นฉบับมาวางเทียบ", copy.orig_file == "112687_0.jpg" and copy.orig_id == "ORIG", copy)
+check("❗ ซ้ำข้ามอัลบั้ม: บอกอัลบั้มต้นฉบับ (คนละแอดมิน)", cross.orig_album == B and dx.sender(cross.orig_album) == "Meen")
 
+files = {"MINE": jpeg("red"), "TWIN": jpeg("blue"), "COPY": jpeg("green"), "ORIG": jpeg("green"),
+         "COPY9": jpeg("grey")}                                   # ORIG9 is gone from Drive
 drive = FakeDrive(files)
 log = []
-made = dx.write(drive, "R", "2026-W46", [], [case], copies, albums, log=log.append)
-folder = f"R/2026-W46 ตัวอย่าง/{ALBUM}"
+links = dx.write(drive, "R", "2026-W46", found, albums, log=log.append)
+folder = f"R/2026-W46 ตัวอย่าง/{A}"
 names = sorted(f["name"] for f in drive.list_images(folder))
-check("❗ วางในโฟลเดอร์ของอัลบั้ม: สรุป · คู่แคปซ้ำ · หน้าไฟล์ซ้ำ 2 หน้า",
-      names == ["#40214 แคปจอ 2 รอบ ฿34.jpg", "00 สรุป.jpg",
-                "ไฟล์ซ้ำ หน้า 1 จาก 2.jpg", "ไฟล์ซ้ำ หน้า 2 จาก 2.jpg"] and made == 3, names)
-page = Image.open(io.BytesIO(drive.files[f"{folder}/ไฟล์ซ้ำ หน้า 1 จาก 2.jpg"]))
-check("หน้าเป็น JPEG 5 คอลัมน์ 4 แถว", page.format == "JPEG" and page.width > 5 * 230 and page.height > 4 * 460, page.size)
-check("อัลบั้มที่ไม่มีอะไรซ้ำ ไม่มีโฟลเดอร์", not drive.list_images("R/2026-W46 ตัวอย่าง/2W Karnjana ทดสอบ"))
+check("❗ รูปเปรียบเทียบรายการละ 1 รูป + การ์ดสรุป",
+      set(names) == {"00 สรุป.jpg", "ไฟล์ซ้ำ 112687_1.jpg", "ไฟล์ซ้ำ 9_1.jpg", "แคปจอ 2 รอบ #40214 ฿34.jpg"}, names)
+check("ทุกรายการได้ลิงก์รูป", set(links) == {e.name for e in found}, links)
+pic = Image.open(io.BytesIO(drive.files[links[copy.name]]))
+check("รูปเปรียบเทียบวางสองรูปคู่กัน", pic.width > 2 * 300, pic.size)
+check("ต้นฉบับหายจาก Drive: ยังทำรูปได้ ฝั่งต้นฉบับว่าง", cross.name in links)
 
 drive.downloads.clear()
-dx.write(drive, "R", "2026-W46", [], [case], copies, albums, log=log.append)
-check("❗ รอบถัดไปไม่โหลดรูปคู่มาทำซ้ำ (ทำแค่หน้ารวมใหม่)", "MINE" not in drive.downloads and "TWIN" not in drive.downloads)
+dx.write(drive, "R", "2026-W46", found, albums, log=log.append)
+check("❗ รอบถัดไปไม่โหลดรูปมาทำซ้ำ", drive.downloads == [], drive.downloads)
 
-dx.write(drive, "R", "2026-W46", [], [], copies[:20], albums, log=log.append)
-here = [f["name"] for f in drive.list_images(folder)]
-check("❗ ของที่ไม่ต้องการแล้ว (แถวไม่ซ้ำแล้ว · หน้าที่หายไป) ย้ายไป _เก่า ไม่ได้ลบ",
-      "#40214 แคปจอ 2 รอบ ฿34.jpg" not in here and "ไฟล์ซ้ำ หน้า 1 จาก 1.jpg" in here
-      and drive.where[f"{folder}/ไฟล์ซ้ำ หน้า 2 จาก 2.jpg"].endswith(dx.OLD_DIR), here)
+dx.write(drive, "R", "2026-W46", [e for e in found if e is not read], albums, log=log.append)
+check("❗ รายการที่ไม่ซ้ำแล้ว รูปย้ายไป _เก่า ไม่ได้ลบ",
+      drive.where[links[read.name]].endswith(dx.OLD_DIR))
 
-gone = dict(case, id=1, twin_url="https://drive.google.com/file/d/GONE/view")
-broken = FakeDrive({"MINE": jpeg("red")})
-log.clear()
-dx.write(broken, "R", "2026-W46", [], [gone], [], albums, log=log.append)
-check("รูปต้นทางหาย: ข้ามคู่นั้น บอกใน log ไม่ล้มรอบ", any("ไม่ได้" in m for m in log), log)
+rows = dr.admin_rows(found, links)
+wb = load_workbook(io.BytesIO(dr.build_xlsx([], [], [], [list(r) for r in albums], rows)))
+ws = wb[wb.sheetnames[0]]
+head = [c.value for c in ws[1]]
+check("❗ ชีทแรกคือ 'ส่งแอดมิน'", wb.sheetnames[0] == "ส่งแอดมิน" and head == dr.ADMIN_COLS, wb.sheetnames)
+first = {head[i]: ws.cell(2, i + 1) for i in range(len(head))}
+check("❗ แต่ละแถวบอก: ซ้ำกับรูปไหน อัลบั้มไหน ใครส่ง พร้อมลิงก์รูปเปรียบเทียบ",
+      first["ส่งโดย"].value == "Karnjana" and first["ซ้ำกับรูป"].value and first["อัลบั้มของต้นฉบับ"].value
+      and first["รูปเปรียบเทียบ"].hyperlink is not None and first["รูปเปรียบเทียบ"].value == "เปิดรูป",
+      {k: v.value for k, v in first.items()})
+check("รายงานจากหน้าเว็บ (ไม่มีชีทส่งแอดมิน) ยังเริ่มที่รายอัลบั้ม",
+      load_workbook(io.BytesIO(dr.build_xlsx([], [], [], [list(r) for r in albums]))).sheetnames[0] == "รายอัลบั้ม")
 
 dx.FONTS[:] = [("/nope.ttf", "/nope-b.ttf")]
-check("ไม่มีฟอนต์ไทย: ข้ามทั้งหมดโดยไม่ล้ม", dx.write(FakeDrive({}), "R", "W", [], [case], [], albums, log=log.append) == 0)
+check("ไม่มีฟอนต์ไทย: ไม่ทำรูป ไม่ล้ม", dx.write(FakeDrive({}), "R", "W", found, albums, log=log.append) == {})
 
 print("\nผ่านทั้งหมด ✅" if ok else "\n✗ มีข้อที่ไม่ผ่าน")
 sys.exit(0 if ok else 1)

@@ -297,6 +297,33 @@ def counted_twice(d_from, d_to):
     return len(rows), twice, suspect
 
 
+def half_ids(d_from):
+    """{(album, file): Drive id} of every picture the week's pool runs paired or kept whole, so an
+    exact copy can be shown beside the file it copies (skipped_copies names that file by path)."""
+    import json
+
+    import ingest
+    out = {}
+    with db.engine.begin() as c:
+        reports = c.execute(select(db.pool_runs.c.report).where(db.pool_runs.c.mode == "move",
+                                                               db.pool_runs.c.started_at >= d_from)).scalars().all()
+    for rep in reports:
+        try:
+            albums = json.loads(rep or "{}").get("albums") or []
+        except ValueError:
+            continue
+        for e in albums:
+            rng = ingest.parse_range(e.get("week") or "")
+            if not rng or rng[0].isoformat() != d_from:
+                continue
+            for x in e.get("pairs") or []:
+                out[(e["album"], x.get("top"))] = x.get("top_id")
+                out[(e["album"], x.get("bottom"))] = x.get("bottom_id")
+            for x in e.get("long") or []:
+                out[(e["album"], x.get("file"))] = x.get("id")
+    return out
+
+
 def summary(cases, pre=()):
     """สรุปรายไรเดอร์ผู้ส่ง — แถวที่ลูกค้าใช้คุยกับคนส่ง"""
     by = collections.defaultdict(collections.Counter)
@@ -399,13 +426,9 @@ def refresh_week(drive, exports_id, d_from, d_to, log=print):
             f" · ซ้ำก่อนอ่าน {len(pre)}) — ไม่ต้องเขียนใหม่")
         return {"cases": len(cases), "undecided": len(undecided), "pre": len(pre), "sure": sure,
                 "file_id": None, "unchanged": True}
-    folder, fid = upload_to_drive(drive, exports_id, d_from, build_xlsx(cases, undecided, pre, albums))
-    try:   # pictures to post in LINE beside the report (dup_examples.py); never stops the round
-        import dup_examples
-        from ingest import week_label
-        dup_examples.write(drive, folder, week_label(d_from), cases, undecided, pre, albums, log=log)
-    except Exception as e:  # noqa: BLE001
-        log(f"⚠ รูปตัวอย่างงานซ้ำทำไม่สำเร็จ: {str(e)[:150]}")
+    found, links = with_pictures(drive, exports_id, d_from, cases, undecided, pre, albums, log)
+    folder, fid = upload_to_drive(drive, exports_id, d_from,
+                                  build_xlsx(cases, undecided, pre, albums, admin_rows(found, links)))
     db.state_set(key, sig)
     log(f"📋 รายงานรูปซ้ำ {report_name(d_from)}: ใบซ้ำ {len(cases)} · ซ้ำก่อนอ่าน {len(pre)}"
         f" · รอคนตัดสิน {len(undecided)} · ระบุตัวคนส่งได้ {sure}"
@@ -414,14 +437,44 @@ def refresh_week(drive, exports_id, d_from, d_to, log=print):
             "file_id": fid}
 
 
-def build_xlsx(cases, undecided, pre=(), albums=None) -> bytes:
+def with_pictures(drive, exports_id, d_from, cases, undecided, pre, albums, log=print):
+    """([dup_examples.Entry], {picture name: Drive id}): one comparison picture per repeat, made
+    before the workbook so its first sheet can link each row to its picture. Never raises."""
+    try:
+        import dup_examples
+        from ingest import week_label
+        found = dup_examples.entries(cases, undecided, pre, half_ids(d_from))
+        folder = drive.ensure_folder(exports_id, DRIVE_DIR)
+        return found, dup_examples.write(drive, folder, week_label(d_from), found, albums, log=log)
+    except Exception as e:  # noqa: BLE001 — the report goes out without pictures rather than not at all
+        log(f"⚠ รูปเปรียบเทียบงานซ้ำทำไม่สำเร็จ: {str(e)[:150]}")
+        return [], {}
+
+
+ADMIN_COLS = ["ลำดับ", "ประเภท", "รูปที่ซ้ำ", "อัลบั้มของรูปที่ซ้ำ", "ส่งโดย", "ซ้ำกับรูป", "อัลบั้มของต้นฉบับ",
+              "ต้นฉบับส่งโดย", "ต้นฉบับในไฟล์ลูกค้า", "เลขจอง", "ยอด", "สถานะ", "รูปเปรียบเทียบ"]
+
+
+def admin_rows(found, links):
+    """The sheet to forward to the admins: one row per repeat, the comparison picture linked."""
+    from dup_examples import sender
+    rows = []
+    for i, e in enumerate(sorted(found, key=lambda e: (e.album, e.kind, e.file)), 1):
+        fid = links.get(e.name)
+        rows.append([i, e.kind, e.file, e.album, sender(e.album), e.orig_file, e.orig_album,
+                     sender(e.orig_album), e.counted_as or None, e.code or None, e.amount, e.status,
+                     f"https://drive.google.com/file/d/{fid}/view" if fid else None])
+    return rows
+
+
+def build_xlsx(cases, undecided, pre=(), albums=None, admin=None) -> bytes:
     import io
     buf = io.BytesIO()
-    write_xlsx(buf, cases, undecided, pre, albums)
+    write_xlsx(buf, cases, undecided, pre, albums, admin)
     return buf.getvalue()
 
 
-def write_xlsx(path, cases, undecided, pre=(), albums=None):
+def write_xlsx(path, cases, undecided, pre=(), albums=None, admin=None):
     from openpyxl import Workbook
     from openpyxl.styles import Alignment, Font, PatternFill
     wb = Workbook()
@@ -458,6 +511,19 @@ def write_xlsx(path, cases, undecided, pre=(), albums=None):
         ws.column_dimensions["B"].width = 34
         ws.column_dimensions["C"].width = 20
         ws.column_dimensions["J"].width = 40
+        wb.active = 0
+    if admin:
+        # the sheet the customer forwards to the admins comes first, each row linked to its picture
+        ws = wb.create_sheet("ส่งแอดมิน", 0)
+        sheet(ws, ADMIN_COLS, admin)
+        link_col = len(ADMIN_COLS)
+        for i in range(2, len(admin) + 2):
+            cell = ws.cell(i, link_col)
+            if cell.value:
+                cell.hyperlink, cell.value = cell.value, "เปิดรูป"
+                cell.font = Font(color="1E5AA8", underline="single")
+        for col, w in (("C", 26), ("D", 26), ("F", 26), ("G", 26), ("I", 20)):
+            ws.column_dimensions[col].width = w
         wb.active = 0
     sheet(wb.create_sheet("รายใบ"), COLS, [[c.get(k) for k in COLS] for c in cases])
     sheet(wb.create_sheet("ค้างตัดสิน"), COLS, [[c.get(k) for k in COLS] for c in undecided])
@@ -530,11 +596,9 @@ def main(argv=None):
         import config
         import roster
         drive = roster._drive()
+        found, links = with_pictures(drive, config.DRIVE_EXPORTS_FOLDER_ID, a.d_from, cases, undecided, pre, albums)
         folder, fid = upload_to_drive(drive, config.DRIVE_EXPORTS_FOLDER_ID, a.d_from,
-                                      build_xlsx(cases, undecided, pre, albums))
-        import dup_examples
-        from ingest import week_label
-        dup_examples.write(drive, folder, week_label(a.d_from), cases, undecided, pre, albums)
+                                      build_xlsx(cases, undecided, pre, albums, admin_rows(found, links)))
         print(f"\nวางลง Drive แล้ว: Exports/{DRIVE_DIR}/{report_name(a.d_from)}")
         print(f"  เปิดไฟล์: https://drive.google.com/file/d/{fid}/view")
         print(f"  โฟลเดอร์: https://drive.google.com/drive/folders/{folder}")

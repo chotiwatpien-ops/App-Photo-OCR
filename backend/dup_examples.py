@@ -1,20 +1,22 @@
 # -*- coding: utf-8 -*-
-"""Pictures of each week's repeats, ready to post in LINE (Fiat 2026-11-11).
+"""The week's duplicate pictures, one comparison per repeat, to forward to the admins.
 
-The customer's group asked for examples to take to the people who sent the work, then for every
-repeated picture to be shown, not a sample ("มันต้องมีรูปซ้ำรูปอะไรด้วย ทั้งอัพซ้ำ หรืออื่นๆ").
-Only repeats: a half picture the pool could not pair may be the pairing's own miss, not the
-sender's (Fiat 2026-11-11), so it is not shown. Beside the duplicate report the round leaves, for
-every album of the week that repeats work:
+The customer asked for a report that says, for every repeated picture, which picture it repeats,
+in which folder, sent by whom, with the two side by side, so they can pass it on to the admin who
+sent it (Fiat 2026-11-11). Beside the duplicate report the round writes:
 
     Exports/_รายงานรูปซ้ำ/<2026-W46> ตัวอย่าง/<album>/
-        00 สรุป.jpg                       the album's numbers
-        #40214 แคปจอ 2 รอบ ฿34.jpg         a read repeat beside the trip it repeats
-        ไฟล์ซ้ำ หน้า 1 จาก 8.jpg            every exact copy, 20 to a page, each named with its original
+        00 สรุป.jpg                          the album's numbers
+        ไฟล์ซ้ำ 112687_1.jpg                  an exact copy beside the file it copies
+        แคปจอ 2 รอบ #40214 ฿34.jpg            a read repeat beside the trip it repeats
 
-A pair picture already there is not made again (its name carries the row id). Pages are made again
-whenever the report changes, which is the only time this runs. A picture no longer wanted moves to
-_เก่า. Nothing here can stop the round."""
+and the report's first sheet lists the same entries with a link to each picture. "Sent by" is the
+admin named in the album (2W <admin> ...): which rider inside an album sent a picture is not
+known. Half pictures the pool could not pair are not repeats and are not shown: they may be the
+pairing's own miss (Fiat 2026-11-11).
+
+A picture already there is not made again. One no longer wanted moves to _เก่า. Nothing here
+can stop the round."""
 import io
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -24,24 +26,30 @@ import duplicate_report as dr
 
 OLD_DIR = "_เก่า"
 SUMMARY = "00 สรุป.jpg"
-PER_PAGE = 20
 FONTS = [("/usr/share/fonts/truetype/tlwg/Loma.ttf", "/usr/share/fonts/truetype/tlwg/Loma-Bold.ttf"),
          ("/usr/share/fonts/truetype/tlwg/Garuda.ttf", "/usr/share/fonts/truetype/tlwg/Garuda-Bold.ttf"),
          ("C:/Windows/Fonts/LeelawUI.ttf", "C:/Windows/Fonts/LeelaUIb.ttf")]
-TITLE = {dr.KIND_SAME_WEEK: "แคปจอ 2 รอบ", dr.KIND_SAME_FILE: "ไฟล์เดียวกัน",
+TITLE = {dr.KIND_SAME_WEEK: "แคปจอ 2 รอบ", dr.KIND_SAME_FILE: "ไฟล์เดียวกัน อ่านแล้ว",
          dr.KIND_BOTTOM: "รูปล่างเกิน", dr.KIND_SUSPECT: "ข้อมูลตรงกัน เลขจองต่าง"}
-RED, AMBER, GREY = (178, 58, 72), (196, 131, 30), (96, 104, 118)
+COPY_TITLE = "ไฟล์ซ้ำ อัปโหลดซ้ำ"
+RED, AMBER, GREEN, GREY = (178, 58, 72), (196, 131, 30), (46, 125, 91), (96, 104, 118)
 
 
 @dataclass(frozen=True)
-class Example:
-    album: str
-    name: str            # file name in the album's folder
-    title: str
-    sub: str
-    pictures: tuple      # ((drive file id, caption), ...): two make a pair, more make a page
-    color: tuple = RED
-    redo: bool = False   # made again on every run (a page), or only when missing (a pair)
+class Entry:
+    """One repeated picture and the picture it repeats."""
+    kind: str             # the reason, as Ops says it
+    album: str            # the album the repeat came in
+    file: str             # the repeat's file, as Ops would find it in that album
+    file_id: str
+    orig_album: str
+    orig_file: str
+    orig_id: str          # None when the original's picture cannot be found
+    status: str           # what became of the repeat
+    counted_as: str = ""  # the original's name in the customer's folder, when it has one
+    code: str = ""
+    amount: float = None
+    name: str = ""        # the comparison picture's file name
 
 
 def drive_id(url):
@@ -49,41 +57,48 @@ def drive_id(url):
     return (m.group(1) or m.group(2)) if m else None
 
 
+def sender(album):
+    """The admin an album names: '2W Karnjana 1748 งาน' → 'Karnjana'."""
+    words = re.sub(r"^\s*[24]W(-\w+)?\s*", "", album or "").split()
+    return words[0] if words else (album or "")
+
+
+def line_photos(file_name):
+    """'2W X_116359+116360_฿58.jpg' → 'รูป 116359 + 116360' (the numbers Ops sees in LINE)."""
+    m = re.search(r"_(\d+)\+(\d+)_", file_name or "")
+    return f"รูป {m.group(1)} + {m.group(2)}" if m else (file_name or "").split("/")[-1]
+
+
 def _safe(s):
     return re.sub(r'[\\/:*?"<>|]', " ", s or "").strip()
 
 
-def _pages(album, title, sub_of, tiles, prefix, color):
-    pages = [tiles[i:i + PER_PAGE] for i in range(0, len(tiles), PER_PAGE)]
-    return [Example(album=album, name=f"{prefix} หน้า {k} จาก {len(pages)}.jpg", title=title,
-                    sub=sub_of(k, len(pages)), pictures=tuple(p), color=color, redo=True)
-            for k, p in enumerate(pages, 1)]
-
-
-def examples(cases, undecided, pre):
-    """[Example] of one week: every read repeat beside its original, and pages of every exact copy,
-    per album."""
+def entries(cases, undecided, pre, half_ids):
+    """[Entry] of one week: every read repeat and every exact copy. half_ids maps (album, file)
+    to the Drive id of a half picture the pool paired (duplicate_report.half_ids)."""
     out = []
     for c, waiting in [(c, False) for c in cases] + [(c, True) for c in undecided]:
         mine, twin = drive_id(c.get("ลิงก์รูป")), drive_id(c.get("twin_url"))
-        if not mine or not twin:
+        if not mine:
             continue
-        title = TITLE.get(c.get("ประเภทการซ้ำ"), "งานซ้ำ")
-        money = f"฿{c['ยอด']:,.0f}" if c.get("ยอด") is not None else ""
-        out.append(Example(
-            album=c["ไรเดอร์ผู้ส่ง"], name=_safe(f"#{c['id']} {title} {money}") + ".jpg", title=title,
-            sub=" · ".join(x for x in (f"เลขจอง {c.get('รหัสการจอง')}" if c.get("รหัสการจอง") else "", money,
-                                       c.get("วันที่งาน") or "") if x),
-            pictures=((twin, "นับแล้ว"), (mine, "รอตัดสิน" if waiting else "ไม่นับ (ตัดออก)"))))
-    for album in sorted({p.get("ไรเดอร์ผู้ส่ง") for p in pre}):
-        tiles = sorted(((drive_id(p.get("ลิงก์รูป")),
-                         f"{p.get('ไฟล์ที่ซ้ำ')} = {(p.get('ซ้ำกับไฟล์') or '').split('/')[-1]}")
-                        for p in pre if p.get("ไรเดอร์ผู้ส่ง") == album and drive_id(p.get("ลิงก์รูป"))),
-                       key=lambda t: t[1])
-        n = len(tiles)
-        out += _pages(album, "ไฟล์เดียวกัน อัปโหลดซ้ำ",
-                      lambda k, m: f"ทั้งหมด {n:,} ไฟล์ · ไม่ได้นับเป็นงาน · หน้า {k}/{m}",
-                      tiles, "ไฟล์ซ้ำ", AMBER)
+        kind = TITLE.get(c.get("ประเภทการซ้ำ"), "งานซ้ำ")
+        amount = c.get("ยอด")
+        out.append(Entry(
+            kind=kind, album=c["ไรเดอร์ผู้ส่ง"], file=line_photos(c.get("ไฟล์ที่ซ้ำ")), file_id=mine,
+            orig_album=c.get("ของไรเดอร์") or "", orig_file=line_photos(c.get("ซ้ำกับไฟล์")), orig_id=twin,
+            status="รอคนตัดสิน" if waiting else "ไม่นับ (ตัดออก)", counted_as=c.get("รูปที่ส่งลูกค้า") or "",
+            code=c.get("รหัสการจอง") or "", amount=amount,
+            name=_safe(f"{kind} #{c['id']}" + (f" ฿{amount:,.0f}" if amount is not None else "")) + ".jpg"))
+    for p in pre:
+        mine = drive_id(p.get("ลิงก์รูป"))
+        if not mine:
+            continue
+        orig_album, _, orig_file = (p.get("ซ้ำกับไฟล์") or "").rpartition("/")
+        orig_album = orig_album or p.get("ของอัลบั้ม") or ""
+        out.append(Entry(
+            kind=COPY_TITLE, album=p.get("ไรเดอร์ผู้ส่ง") or "", file=p.get("ไฟล์ที่ซ้ำ") or "", file_id=mine,
+            orig_album=orig_album, orig_file=orig_file, orig_id=half_ids.get((orig_album, orig_file)),
+            status="ไม่ได้นับเป็นงาน", name=_safe(f"ไฟล์ซ้ำ {p.get('ไฟล์ที่ซ้ำ')}")))
     return out
 
 
@@ -97,59 +112,52 @@ def _fonts():
     return None
 
 
-def _header(d, width, ex, fonts, pad=40):
-    reg, bold = fonts
-    d.rectangle([0, 0, width, 10], fill=ex.color)
-    d.text((pad, 30), ex.title, font=bold(46), fill=(20, 20, 20))
-    d.text((pad, 92), ex.sub, font=reg(30), fill=(90, 90, 90))
-
-
 def _jpeg(im, quality=85):
     buf = io.BytesIO()
     im.save(buf, "JPEG", quality=quality)
     return buf.getvalue()
 
 
-def render(ex, images, fonts, h=1000) -> bytes:
-    """A pair: the two pictures side by side under the title, each with its caption."""
+def render(e, orig, mine, fonts, h=900) -> bytes:
+    """The original on the left, the repeat on the right, each with where it came from."""
     from PIL import Image, ImageDraw
-    pics = [Image.open(io.BytesIO(b)).convert("RGB") for b in images]
-    pics = [p.resize((int(p.width * h / p.height), h)) for p in pics]
-    gap, pad, top, bot = 40, 40, 150, 90
-    width = max(sum(p.width for p in pics) + gap * (len(pics) - 1) + 2 * pad, 1100)
-    im = Image.new("RGB", (width, top + h + bot), "white")
-    d = ImageDraw.Draw(im)
-    _header(d, width, ex, fonts)
-    x = pad
-    for p, (_, cap) in zip(pics, ex.pictures):
-        im.paste(p, (x, top))
-        d.rectangle([x - 2, top - 2, x + p.width + 1, top + h + 1], outline=(200, 200, 200), width=2)
-        d.text((x, top + h + 20), cap, font=fonts[1](30), fill=ex.color)
-        x += p.width + gap
-    return _jpeg(im)
-
-
-def render_page(ex, images, fonts, cols=5, tw=230, th=460) -> bytes:
-    """A page: up to PER_PAGE small pictures in a grid, each named under it."""
-    from PIL import Image, ImageDraw
-    gap, pad, top, cap = 20, 40, 150, 56
-    rows = (len(images) + cols - 1) // cols
-    width = 2 * pad + cols * tw + (cols - 1) * gap
-    im = Image.new("RGB", (width, top + rows * (th + cap + gap) + pad), "white")
-    d = ImageDraw.Draw(im)
-    _header(d, width, ex, fonts)
-    small = fonts[0](17)
-    for i, (b, (_, label)) in enumerate(zip(images, ex.pictures)):
-        x, y = pad + (i % cols) * (tw + gap), top + (i // cols) * (th + cap + gap)
+    reg, bold = fonts
+    gap, pad, top, cap = 40, 40, 150, 230
+    sides = []
+    for b, role, color, f, album, extra in (
+            (orig, "ต้นฉบับ (นับแล้ว)" if e.kind != COPY_TITLE else "ต้นฉบับ", GREEN, e.orig_file, e.orig_album,
+             f"ในไฟล์ลูกค้า {e.counted_as}" if e.counted_as else ""),
+            (mine, f"รูปซ้ำ · {e.status}", RED, e.file, e.album, "")):
         if b:
             p = Image.open(io.BytesIO(b)).convert("RGB")
-            p.thumbnail((tw, th))
-            im.paste(p, (x + (tw - p.width) // 2, y))
-        d.rectangle([x - 1, y - 1, x + tw, y + th], outline=(210, 210, 210), width=1)
-        name, _, original = label.partition(" = ")
-        d.text((x, y + th + 6), name, font=small, fill=(20, 20, 20))
-        d.text((x, y + th + 28), f"= {original}", font=small, fill=GREY)
-    return _jpeg(im, 80)
+            p = p.resize((int(p.width * h / p.height), h))
+        else:
+            p = Image.new("RGB", (int(h * 0.55), h), (240, 240, 240))
+        sides.append((p, b is None, role, color, f, album, extra))
+    width = max(sum(s[0].width for s in sides) + gap + 2 * pad, 1100)
+    im = Image.new("RGB", (width, top + h + cap), "white")
+    d = ImageDraw.Draw(im)
+    d.rectangle([0, 0, width, 10], fill=AMBER if e.kind == COPY_TITLE else RED)
+    d.text((pad, 30), e.kind, font=bold(46), fill=(20, 20, 20))
+    sub = " · ".join(x for x in (f"เลขจอง {e.code}" if e.code else "",
+                                 f"฿{e.amount:,.0f}" if e.amount is not None else "",
+                                 "ไฟล์เหมือนกันทุกไบต์" if e.kind == COPY_TITLE else "") if x)
+    d.text((pad, 92), sub, font=reg(30), fill=GREY)
+    x = pad
+    for p, missing, role, color, f, album, extra in sides:
+        im.paste(p, (x, top))
+        d.rectangle([x - 2, top - 2, x + p.width + 1, top + h + 1], outline=(200, 200, 200), width=2)
+        if missing:
+            d.text((x + 20, top + h // 2), "ไม่พบรูปต้นฉบับ", font=reg(28), fill=GREY)
+        y = top + h + 16
+        for text, font, fill in ((role, bold(30), color), (f"ไฟล์ {f}", reg(26), (20, 20, 20)),
+                                 (f"อัลบั้ม {album}", reg(26), (20, 20, 20)),
+                                 (f"ส่งโดย {sender(album)}", reg(26), (20, 20, 20)), (extra, reg(24), GREY)):
+            if text:
+                d.text((x, y), text, font=font, fill=fill)
+                y += 36
+        x += p.width + gap
+    return _jpeg(im)
 
 
 def summary_card(week, album, row, fonts) -> bytes:
@@ -157,10 +165,10 @@ def summary_card(week, album, row, fonts) -> bytes:
     from PIL import Image, ImageDraw
     reg, bold = fonts
     filed, pre_n, post_n, waiting = row[4], row[5], row[6], row[11] or 0
-    lines = [(bold(44), f"สรุปงานซ้ำ {week}"), (reg(34), f"อัลบั้ม {album}"), (reg(30), ""),
-             (reg(34), f"นับในไฟล์ลูกค้า  {filed:,} งาน"),
+    lines = [(bold(44), f"สรุปรูปซ้ำ {week}"), (reg(34), f"อัลบั้ม {album}  ·  ส่งโดย {sender(album)}"),
+             (reg(30), ""), (reg(34), f"นับในไฟล์ลูกค้า  {filed:,} งาน"),
              (reg(34), f"แคปจอซ้ำ / งานซ้ำหลังอ่าน  {post_n:,} งาน"),
-             (reg(34), f"ไฟล์เดียวกัน อัปโหลดซ้ำ  {pre_n:,} ไฟล์ (ไม่ได้นับเป็นงาน)")]
+             (reg(34), f"ไฟล์ซ้ำ อัปโหลดซ้ำ  {pre_n:,} ไฟล์ (ไม่ได้นับเป็นงาน)")]
     if waiting:
         lines.append((reg(34), f"ยังรออ่าน  {waiting:,} รูป ตัวเลขอาจเปลี่ยน"))
     im = Image.new("RGB", (1100, 80 + 62 * len(lines)), "white")
@@ -173,40 +181,39 @@ def summary_card(week, album, row, fonts) -> bytes:
     return _jpeg(im, 88)
 
 
-def write(drive, report_folder, week, cases, undecided, pre, albums, log=print):
-    """Make the week's pictures under report_folder. Returns how many pictures were made."""
+def write(drive, report_folder, week, found, albums, log=print):
+    """Make the week's comparison pictures under report_folder for `found` ([Entry]).
+    Returns {Entry.name: Drive file id} of every comparison picture now in place."""
     fonts = _fonts()
     if fonts is None:
-        log("⚠ รูปตัวอย่างงานซ้ำ: ไม่พบฟอนต์ภาษาไทย — ข้าม")
-        return 0
-    wanted = examples(cases, undecided, pre)
+        log("⚠ รูปเปรียบเทียบงานซ้ำ: ไม่พบฟอนต์ภาษาไทย — ข้าม")
+        return {}
     rows = {r[1]: r for r in albums if r[7]}             # albums that repeat work
-    if not wanted and not rows:
-        return 0
+    if not found and not rows:
+        return {}
     week_dir = drive.ensure_folder(report_folder, f"{week} ตัวอย่าง")
 
     def fetch(fid):
         try:
-            return drive.download(fid)
-        except Exception:  # noqa: BLE001 — a picture that cannot be fetched leaves its tile empty
+            return drive.download(fid) if fid else None
+        except Exception:  # noqa: BLE001 — a picture that cannot be fetched leaves its side empty
             return None
 
-    made = 0
-    for album in sorted({e.album for e in wanted} | set(rows)):
+    links, made = {}, 0
+    for album in sorted({e.album for e in found} | set(rows)):
         folder = drive.ensure_folder(week_dir, _safe(album) or "ไม่รู้อัลบั้ม")
         here = {f["name"]: f["id"] for f in drive.list_images(folder)}
-        mine = [e for e in wanted if e.album == album]
-        for e in mine:
-            if e.name in here and not e.redo:
+        mine = [e for e in found if e.album == album]
+        todo = [e for e in mine if e.name not in here]
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            pics = list(ex.map(lambda e: (fetch(e.orig_id), fetch(e.file_id)), todo))
+        for e, (orig, repeat) in zip(todo, pics):
+            if repeat is None:
+                log(f"  ⚠ ทำรูปเปรียบเทียบ {e.name} ไม่ได้: โหลดรูปซ้ำไม่ได้")
                 continue
-            with ThreadPoolExecutor(max_workers=8) as ex:
-                images = list(ex.map(fetch, [fid for fid, _ in e.pictures]))
-            if not e.redo and not all(images):
-                log(f"  ⚠ ทำรูปตัวอย่าง {e.name} ไม่ได้: โหลดรูปต้นทางไม่ได้")
-                continue
-            data = render_page(e, images, fonts) if e.redo else render(e, images, fonts)
-            drive.upload_file(folder, e.name, data, "image/jpeg")
+            here[e.name] = drive.upload_file(folder, e.name, render(e, orig, repeat, fonts), "image/jpeg")
             made += 1
+        links.update({e.name: here[e.name] for e in mine if e.name in here})
         if album in rows:
             drive.upload_file(folder, SUMMARY, summary_card(week, album, rows[album], fonts), "image/jpeg")
         keep = {e.name for e in mine} | {SUMMARY}
@@ -216,5 +223,5 @@ def write(drive, report_folder, week, cases, undecided, pre, albums, log=print):
             for fid in stale:
                 drive.move_file(fid, old)
     if made:
-        log(f"🖼 รูปตัวอย่างงานซ้ำ {week}: ทำ {made} รูป → _รายงานรูปซ้ำ/{week} ตัวอย่าง/")
-    return made
+        log(f"🖼 รูปเปรียบเทียบงานซ้ำ {week}: ทำใหม่ {made} รูป → _รายงานรูปซ้ำ/{week} ตัวอย่าง/")
+    return links
