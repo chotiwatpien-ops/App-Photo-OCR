@@ -21,14 +21,14 @@ import io
 import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 
 import duplicate_report as dr
 
 OLD_DIR = "_เก่า"
 SUMMARY = "00 สรุป.jpg"
-FONTS = [("/usr/share/fonts/truetype/tlwg/Loma.ttf", "/usr/share/fonts/truetype/tlwg/Loma-Bold.ttf"),
-         ("/usr/share/fonts/truetype/tlwg/Garuda.ttf", "/usr/share/fonts/truetype/tlwg/Garuda-Bold.ttf"),
-         ("C:/Windows/Fonts/LeelawUI.ttf", "C:/Windows/Fonts/LeelaUIb.ttf")]
+_FONT_DIR = Path(__file__).resolve().parent / "fonts"          # Sarabun (OFL), shipped so no run installs a font
+FONTS = [(str(_FONT_DIR / "Sarabun-Regular.ttf"), str(_FONT_DIR / "Sarabun-Bold.ttf"))]
 TITLE = {dr.KIND_SAME_WEEK: "แคปจอ 2 รอบ", dr.KIND_SAME_FILE: "ไฟล์เดียวกัน อ่านแล้ว",
          dr.KIND_BOTTOM: "รูปล่างเกิน", dr.KIND_SUSPECT: "ข้อมูลตรงกัน เลขจองต่าง"}
 COPY_TITLE = "ไฟล์ซ้ำ อัปโหลดซ้ำ"
@@ -112,8 +112,6 @@ def entries(cases, undecided, pre, half_ids):
 
 
 def _fonts():
-    from pathlib import Path
-
     from PIL import ImageFont
     for regular, bold in FONTS:
         if Path(regular).exists() and Path(bold).exists():
@@ -228,6 +226,9 @@ def write(drive, report_folder, week, found, albums, log=print):
     if fonts is None:
         log("⚠ รูปเปรียบเทียบงานซ้ำ: ไม่พบฟอนต์ภาษาไทย — ข้าม")
         return {}
+    from PIL import features
+    if not features.check("raqm"):
+        log("⚠ ไม่มี raqm (libfribidi): วรรณยุกต์ที่ซ้อนสระบนอาจวางไม่ตรง")
     rows = {r[1]: r for r in albums}                     # every album gets its summary card
     if not found and not rows:
         return {}

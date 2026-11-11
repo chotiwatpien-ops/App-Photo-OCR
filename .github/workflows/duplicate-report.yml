@@ -31,7 +31,6 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: sudo apt-get install -y -qq fonts-thai-tlwg libfribidi0   # the example pictures are in Thai
       - run: pip install -r backend/requirements.txt
       - name: ประกอบเคสรูปซ้ำ
         working-directory: backend
