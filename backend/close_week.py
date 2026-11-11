@@ -42,7 +42,7 @@ STEPS = [
 PLAN_SKIPS = {"pictures": "ทำตอนปิดจริงเท่านั้น", "lock": "ทำตอนปิดจริงเท่านั้น"}
 
 # audit sheets that mean the file is wrong or a picture is missing — the week is not locked
-BLOCKING = ["งานซ้ำ-รหัสการจอง", "กลุ่มไม่ตรงServiceType", "ไม่มีรูปส่งลูกค้า",
+BLOCKING = ["งานซ้ำ-รหัสการจอง", "งานซ้ำ-เลขจองอ่านเพี้ยน", "กลุ่มไม่ตรงServiceType", "ไม่มีรูปส่งลูกค้า",
             "ชื่อรูปซ้ำในกลุ่มเดียวกัน", "รูปหายจาก Drive"]
 SERVICES = ("Saver Bike", "Standard Bike", "Standard Car")
 INGEST_STALE_HOURS = 3

@@ -51,6 +51,12 @@ def audit(rows, pictures=None):
         if db.trip_key(r):
             by_code[db.trip_key(r)].append(r)
     out["งานซ้ำ-รหัสการจอง"] = [g for g in by_code.values() if len(g) > 1]
+    # 1b. one trip under two readings of its code, misread where Grab wraps it (W46)
+    import same_trip
+    exact = {r["id"] for g in out["งานซ้ำ-รหัสการจอง"] for r in g}
+    out["งานซ้ำ-เลขจองอ่านเพี้ยน"] = [g for k, g in same_trip.groups(rows)
+                                    if k == same_trip.CODE and not {r["id"] for r in g} <= exact]
+    misread = {r["id"] for g in out["งานซ้ำ-เลขจองอ่านเพี้ยน"] for r in g}
     # 2. equal in every column the customer sees, and no code to tell them apart
     key = lambda r: (r.get("trip_date"), r.get("trip_time"), r.get("base_fare"), r.get("distance_km"),
                      (r.get("pickup_text") or "").strip())
@@ -63,6 +69,8 @@ def audit(rows, pictures=None):
         if len(g) < 2:
             continue
         codes = [(r.get("booking_code") or "").strip().upper() for r in g]
+        if {r["id"] for r in g} <= misread:
+            continue                     # one trip, on the misread-code sheet
         if all(codes) and len(set(codes)) == len(codes):
             not_dup.append(g)            # two real trips that happen to look alike
         elif all(codes):
@@ -165,10 +173,10 @@ def main(argv=None):
     out = audit(rows, pics)
     print(f"ตรวจ {week_label(a.d_from)} ({a.d_from}..{a.d_to})")
     print("\n".join(summary(rows, out)))
-    for g in out["งานซ้ำ-รหัสการจอง"][:15]:
-        print("    รหัสซ้ำ", g[0].get("booking_code"), " | ".join(f"#{r['id']} {r.get('driver_name')} ฿{r.get('base_fare')}" for r in g))
-    for g in out["เหมือนทุกช่อง-ไม่มีรหัสยืนยัน"][:10]:
-        print("    เหมือนกัน", " | ".join(f"#{r['id']} {r.get('driver_name')} ฿{r.get('base_fare')} {r.get('booking_code') or '-'}" for r in g))
+    # the repo is public: the log names rows by id and picture only, never a rider or a code
+    for sheet in ("งานซ้ำ-รหัสการจอง", "งานซ้ำ-เลขจองอ่านเพี้ยน", "เหมือนทุกช่อง-ไม่มีรหัสยืนยัน"):
+        for g in out[sheet][:15]:
+            print(f"    {sheet}:", " | ".join(f"#{r['id']} {r.get('customer_image') or '-'} ฿{r.get('base_fare')}" for r in g))
     data = build_xlsx(rows, out, a.d_from)
     if a.xlsx:
         open(a.xlsx, "wb").write(data)

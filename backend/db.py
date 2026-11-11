@@ -805,6 +805,7 @@ def mark_orphan_bottom_duplicates(job_id) -> int:
 # and 1,169 of the 12,177 codes on file came back under 15 characters — so a short code is a hint,
 # not an identity, and has to agree on fare and clock time before anything is called a repeat.
 DUP_FULL_CODE = 15
+SUSPECT = "สงสัยว่าซ้ำ"     # same_trip.SUSPECT: a note carrying it is never parked automatically
 
 
 def trip_key(row):
@@ -904,6 +905,8 @@ def discard_settled_duplicates(job_id) -> int:
             .where(trips.c.id.in_([r["duplicate_of"] for r in rows if r["duplicate_of"]]))).mappings().all()}
         n = 0
         for r in rows:
+            if SUSPECT in (r["note"] or ""):
+                continue                                   # held on looser evidence — a person decides
             twin = twins.get(r["duplicate_of"]) if r["duplicate_of"] else _approved_twin(c, r, week)
             if not twin or not twin["committed"]:
                 continue                                   # twin not approved — decide together
@@ -1054,6 +1057,34 @@ def _is_repeat(row, seen) -> bool:
 HOLDING_RIDER = "(รออ่าน)"     # a job that only holds pictures until they are read and filed
 
 
+def _hold_suspects(c, job_id, rows):
+    """Ids of `rows` still free to approve. A row that is the same trip as one approved this week,
+    or as one approved just before it in this batch, by same_trip's looser evidence (a code that
+    differs by a letter or two, or the same route, distance and fare) is not approved: it is
+    pointed at that row and noted SUSPECT, and waits for a person (W46, 2026-11-11)."""
+    import same_trip
+    fares = {r["base_fare"] for r in rows if r["base_fare"] is not None}
+    if not fares:
+        return [r["id"] for r in rows]
+    week = _job_week(c, job_id)
+    approved = [dict(t) for t in c.execute(
+        select(trips.c.id, trips.c.file_name, trips.c.booking_code, trips.c.base_fare,
+               trips.c.distance_km, trips.c.pickup_text, trips.c.dropoff_text, trips.c.trip_time)
+        .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+        .where(trips.c.committed == 1, trips.c.base_fare.in_(fares),
+               jobs.c.date_from == week[0], jobs.c.date_to == week[1])).mappings().all()]
+    free = []
+    for r in rows:
+        twin, k = same_trip.find_twin(r, approved + free)
+        if twin is None:
+            free.append(r)
+            continue
+        msg = f"{same_trip.SUSPECT}: {same_trip.REASON[k]} กับ {twin['file_name']} — ดูรูปคู่กัน ถ้าเที่ยวเดียวกันให้ลบ"
+        c.execute(update(trips).where(trips.c.id == r["id"])
+                  .values(duplicate_of=twin["id"], note=f"{msg} | {r['note']}" if r["note"] else msg))
+    return [r["id"] for r in free]
+
+
 def auto_approve_job(job_id, fresh_ids=()) -> dict:
     """Commit rows that passed every check (✓, not a duplicate, booking code unseen);
     leave the rest for a person. Returns {approved, flagged}.
@@ -1076,7 +1107,8 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
                                 trips.c.booking_code, trips.c.trip_date,
                                 trips.c.trip_time, trips.c.kind,
                                 trips.c.net_earnings, trips.c.base_fare, trips.c.file_name,
-                                trips.c.note)
+                                trips.c.note, trips.c.distance_km, trips.c.pickup_text,
+                                trips.c.dropoff_text)
                          .where(trips.c.job_id == job_id, trips.c.status == "done",
                                 trips.c.committed == 0)).mappings().all()
         paired = {r[0] for r in c.execute(select(trips.c.merged_into)
@@ -1141,7 +1173,7 @@ def auto_approve_job(job_id, fresh_ids=()) -> dict:
             c.execute(update(trips).where(trips.c.id == tid)
                       .values(duplicate_of=twin["id"],
                               note=f"{msg} | {r['note']}" if r["note"] else msg))
-        ok_ids = kept
+        ok_ids = _hold_suspects(c, job_id, [by_id[t] for t in kept])
 
         if ok_ids:
             c.execute(update(trips).where(trips.c.id.in_(ok_ids))

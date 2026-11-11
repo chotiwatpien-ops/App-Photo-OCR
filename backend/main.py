@@ -598,11 +598,12 @@ def duplicate_week(week: str = ""):
     w = week if week in weeks_ else weeks_[0]
     d = _dup_week(w)
     if "twice" not in d:          # the tab's own check rides on the cached week, not the overview's
-        d["approved"], d["twice"] = dr.counted_twice(w, (date.fromisoformat(w) + timedelta(days=6)).isoformat())
+        d["approved"], d["twice"], d["suspect"] = dr.counted_twice(
+            w, (date.fromisoformat(w) + timedelta(days=6)).isoformat())
     return {
         "week": w, "label": week_label(w), "as_of": d["as_of"],
         "weeks": [{"date_from": x, "label": week_label(x), "closed": x in shut} for x in weeks_],
-        "approved": d["approved"], "twice": d["twice"],
+        "approved": d["approved"], "twice": d["twice"], "suspect": d["suspect"],
         "decide": [_dup_pair(c) for c in d["undecided"]],
         "removed": [_dup_pair(c) for c in d["cases"]],
         "copies": [{"album": p.get("ไรเดอร์ผู้ส่ง"), "file": p.get("ไฟล์ที่ซ้ำ"), "same_as": p.get("ซ้ำกับไฟล์"),

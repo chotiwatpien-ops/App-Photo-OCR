@@ -39,6 +39,10 @@ function fareWarning(t) {
 
 /** Why this row is sitting here, said with its own numbers. */
 function why(t) {
+  if (t.duplicate_of && (t.note || '').includes('สงสัยว่าซ้ำ:')) {
+    return { tone: 'danger', chip: 'สงสัยว่าซ้ำ', head: 'ข้อมูลตรงกับเที่ยวที่อนุมัติแล้ว แต่เลขจองไม่ตรงทุกตัว',
+             body: 'AI อาจอ่านเลขจองเพี้ยนตรงที่ขึ้นบรรทัดใหม่ เทียบรูปคู่กัน ถ้าเป็นเที่ยวเดียวกันให้กดลบ ถ้าไม่ใช่ให้อนุมัติ' }
+  }
   if (t.duplicate_of) {
     return { tone: 'danger', chip: 'สงสัยว่าซ้ำ', head: 'รูปนี้ซ้ำกับอีกแถวของไรเดอร์คนเดียวกัน',
              body: 'เลขจองตรงกัน — ถ้าเป็นเที่ยวเดียวกันจริง ให้กดลบ' }

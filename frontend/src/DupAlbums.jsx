@@ -28,6 +28,7 @@ const REASONS = {
   'ไฟล์เดิมส่งซ้ำ': { title: 'รูปเดียวกันทุกจุด อ่านแล้ว', why: 'ไฟล์เหมือนใบที่นับไปแล้วทุกไบต์' },
   'รหัสการจองซ้ำในสัปดาห์เดียวกัน': { title: 'เลขจองซ้ำในสัปดาห์นี้', why: 'สลิปคนละรูป แต่เป็นเที่ยวเดียวกัน (เลขจองตรงกัน)' },
   'ครึ่งล่างของงานที่นับไปแล้ว': { title: 'ครึ่งล่างของเที่ยวที่นับแล้ว', why: 'ส่วนล่างของสลิปที่จับคู่ไปแล้ว' },
+  'ข้อมูลตรงกัน แต่เลขจองไม่ตรงทุกตัว': { title: 'ข้อมูลตรงกัน เลขจองต่างเล็กน้อย', why: 'AI อ่านเลขจองเพี้ยนตรงที่ขึ้นบรรทัดใหม่ หรือเส้นทาง ระยะ ยอดตรงกันทุกอย่าง' },
 }
 const reason = (k) => REASONS[k] || { title: k, why: '' }
 
@@ -67,6 +68,7 @@ function PairCard({ p, children }) {
         <Thumb label="ใบที่นับไปแล้ว" tripId={p.twin_id} drive={p.twin_url} />
       </div>
       <dl className="text-sm grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5">
+        <dt className="text-muted">เหตุผล</dt><dd>{reason(p.kind).title}</dd>
         <dt className="text-muted">เลขจอง</dt><dd className="font-mono break-all">{p.code || '—'}</dd>
         <dt className="text-muted">ยอด</dt>
         <dd>{baht(p.net)} · ใบที่นับแล้ว {baht(p.twin_net)} {same && <span className="text-ok-ink">· ตรงกัน</span>}</dd>
@@ -79,7 +81,7 @@ function PairCard({ p, children }) {
 }
 
 function Verdict({ d, onQueue }) {
-  const twice = d.twice.length, decide = d.decide.length
+  const twice = d.twice.length, decide = d.decide.length, suspect = (d.suspect || []).length
   const waiting = d.albums.reduce((s, a) => s + (a.waiting || 0), 0)
   const [tone, head, body] = twice
     ? ['danger', `ไฟล์ลูกค้ามีเที่ยวที่นับสองครั้ง ${fmt(twice)} เที่ยว`, 'แจ้งผู้ดูแลระบบ ห้ามส่งไฟล์สัปดาห์นี้จนกว่าจะแก้']
@@ -93,7 +95,8 @@ function Verdict({ d, onQueue }) {
         <p className="text-xl font-semibold">{head}</p>
         <p className="text-sm">{body}</p>
         <p className="text-sm mt-1.5 opacity-90">
-          ตรวจแล้ว: เที่ยวที่อนุมัติ {fmt(d.approved)} เที่ยว {twice ? `มีเลขจองซ้ำ ${fmt(twice)} ชุด` : 'เลขจองไม่ซ้ำกันเลย'}
+          ตรวจแล้ว: เที่ยวที่อนุมัติ {fmt(d.approved)} เที่ยว {twice ? `นับซ้ำ ${fmt(twice)} ชุด` : 'ไม่มีเที่ยวไหนนับสองครั้ง'}
+          {suspect ? ` · เส้นทาง ระยะ ยอดตรงกัน ${fmt(suspect)} ชุด ควรเปิดรูปดู (อาจเป็นคนนั่งเส้นทางประจำ)` : ''}
           {waiting ? ` · ยังรออ่านอีก ${fmt(waiting)} รูป ตัวเลขอาจเปลี่ยน` : ''}
         </p>
       </div>
@@ -241,7 +244,7 @@ export default function DupAlbums({ onGo }) {
 
       {decide.length > 0 && (
         <Section title={`รอคนตัดสิน ${fmt(decide.length)} เที่ยว`}
-          sub="เลขจองตรงกับเที่ยวที่นับไปแล้ว แต่ระบบไม่แน่ใจพอจะตัดเอง ถ้าเป็นเที่ยวเดียวกันให้ลบในคิวตรวจ ถ้าไม่ใช่ให้อนุมัติ">
+          sub="ตรงกับเที่ยวที่นับไปแล้ว (เลขจอง หรือเส้นทาง ระยะ ยอด) แต่ระบบไม่ตัดเอง ถ้าเป็นเที่ยวเดียวกันให้ลบในคิวตรวจ ถ้าไม่ใช่ให้อนุมัติ">
           <ul className="grid gap-3 md:grid-cols-2">
             {decide.map((p) => (
               <PairCard key={p.trip_id} p={p}>

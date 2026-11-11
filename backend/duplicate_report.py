@@ -31,7 +31,8 @@ KIND_BOTTOM = "ครึ่งล่างของงานที่นับ�
 KIND_SAME_WEEK = "รหัสการจองซ้ำในสัปดาห์เดียวกัน"
 KIND_OTHER_WEEK = "รหัสการจองซ้ำข้ามสัปดาห์"
 KIND_SAME_FILE = "ไฟล์เดิมส่งซ้ำ"
-KINDS = (KIND_SAME_FILE, KIND_SAME_WEEK, KIND_OTHER_WEEK, KIND_BOTTOM)
+KIND_SUSPECT = "ข้อมูลตรงกัน แต่เลขจองไม่ตรงทุกตัว"
+KINDS = (KIND_SAME_FILE, KIND_SAME_WEEK, KIND_OTHER_WEEK, KIND_BOTTOM, KIND_SUSPECT)
 
 
 def album_of(file_name, folder_name=None, driver_name=None, source_album=None):
@@ -55,6 +56,8 @@ def album_of(file_name, folder_name=None, driver_name=None, source_album=None):
 def kind_of(row, twin):
     if (row.get("note") or "").startswith("ครึ่งล่างของงานที่อนุมัติแล้ว"):
         return KIND_BOTTOM
+    if db.SUSPECT in (row.get("note") or ""):
+        return KIND_SUSPECT
     if twin and row.get("image_hash") and row["image_hash"] == twin.get("image_hash"):
         return KIND_SAME_FILE
     if twin and twin.get("date_from") and row.get("date_from") != twin["date_from"]:
@@ -262,14 +265,17 @@ def album_overview(d_from, d_to, cases, pre=()):
 
 
 def counted_twice(d_from, d_to):
-    """(approved rows of the week, [[ids] of each trip approved more than once]).
+    """(approved rows of the week, [[ids] counted twice], [[ids] that may be one trip]).
 
-    The customer's file is the approved rows, so an empty list is the proof that no trip in it is
-    paid twice. Same-trip means db.trip_key, the rule the duplicate guard itself uses."""
+    The customer's file is the approved rows, so an empty second list is the proof that no trip
+    in it is paid twice. Counted twice = the same db.trip_key, or same_trip's CODE evidence (a
+    code misread by a letter or two at the line break, W46). The third list is same_trip's ROUTE
+    evidence: same route, distance and fare, which a person has to look at."""
+    import same_trip
     t, j = db.trips.c, db.jobs.c
     with db.engine.begin() as c:
         rows = [dict(r) for r in c.execute(
-            select(t.id, t.booking_code, t.base_fare, t.trip_time)
+            select(t.id, t.booking_code, t.base_fare, t.trip_time, t.distance_km, t.pickup_text, t.dropoff_text)
             .select_from(db.trips.join(db.jobs, j.id == t.job_id))
             .where(j.date_from >= d_from, j.date_from <= d_to, t.committed == 1)).mappings().all()]
     by = collections.defaultdict(list)
@@ -277,7 +283,15 @@ def counted_twice(d_from, d_to):
         k = db.trip_key(r)
         if k:
             by[k].append(r["id"])
-    return len(rows), [sorted(ids) for ids in by.values() if len(ids) > 1]
+    twice = [sorted(ids) for ids in by.values() if len(ids) > 1]
+    exact = {i for g in twice for i in g}
+    suspect = []
+    for k, g in same_trip.groups(rows):
+        ids = [r["id"] for r in g]
+        if set(ids) <= exact:
+            continue
+        (twice if k == same_trip.CODE else suspect).append(ids)
+    return len(rows), twice, suspect
 
 
 def summary(cases, pre=()):
