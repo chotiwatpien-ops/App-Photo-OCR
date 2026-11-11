@@ -400,6 +400,12 @@ def refresh_week(drive, exports_id, d_from, d_to, log=print):
         return {"cases": len(cases), "undecided": len(undecided), "pre": len(pre), "sure": sure,
                 "file_id": None, "unchanged": True}
     folder, fid = upload_to_drive(drive, exports_id, d_from, build_xlsx(cases, undecided, pre, albums))
+    try:   # pictures to post in LINE beside the report (dup_examples.py); never stops the round
+        import dup_examples
+        from ingest import week_label
+        dup_examples.write(drive, folder, week_label(d_from), cases, undecided, pre, albums, log=log)
+    except Exception as e:  # noqa: BLE001
+        log(f"⚠ รูปตัวอย่างงานซ้ำทำไม่สำเร็จ: {str(e)[:150]}")
     db.state_set(key, sig)
     log(f"📋 รายงานรูปซ้ำ {report_name(d_from)}: ใบซ้ำ {len(cases)} · ซ้ำก่อนอ่าน {len(pre)}"
         f" · รอคนตัดสิน {len(undecided)} · ระบุตัวคนส่งได้ {sure}"
@@ -523,8 +529,12 @@ def main(argv=None):
     if a.to_drive:
         import config
         import roster
-        folder, fid = upload_to_drive(roster._drive(), config.DRIVE_EXPORTS_FOLDER_ID, a.d_from,
+        drive = roster._drive()
+        folder, fid = upload_to_drive(drive, config.DRIVE_EXPORTS_FOLDER_ID, a.d_from,
                                       build_xlsx(cases, undecided, pre, albums))
+        import dup_examples
+        from ingest import week_label
+        dup_examples.write(drive, folder, week_label(a.d_from), cases, undecided, pre, albums)
         print(f"\nวางลง Drive แล้ว: Exports/{DRIVE_DIR}/{report_name(a.d_from)}")
         print(f"  เปิดไฟล์: https://drive.google.com/file/d/{fid}/view")
         print(f"  โฟลเดอร์: https://drive.google.com/drive/folders/{folder}")
