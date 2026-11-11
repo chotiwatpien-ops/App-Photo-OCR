@@ -940,16 +940,63 @@ def _dispatch(workflow, inputs=None):
         raise HTTPException(502, f"สั่ง GitHub ไม่สำเร็จ: {str(e)[:200]}")
 
 
+LIVE_TTL = 15
+_live = {"at": 0.0, "data": None}
+
+
+def live_from(runs):
+    """The ingest runs GitHub has not finished, as the page shows them. In progress beats queued,
+    which is a run GitHub has accepted but not yet started on a machine."""
+    open_runs = [r for r in runs if r.get("status") != "completed"]
+    if not open_runs:
+        return {"known": True, "active": False}
+    first = min(open_runs, key=lambda r: r.get("run_started_at") or r.get("created_at") or "")
+    running = any(r.get("status") == "in_progress" for r in open_runs)
+    import archive_runs
+    return {"known": True, "active": True, "state": "running" if running else "queued",
+            "started_at": archive_runs.bkk(first.get("run_started_at") or first.get("created_at")),
+            "by_hand": first.get("event") == "workflow_dispatch", "count": len(open_runs)}
+
+
+def ingest_live(fresh=False):
+    """Is a reading round running right now? Asked from GitHub, because the database hears of a
+    round only when its Python starts, minutes after the press. Unknown when GitHub cannot answer."""
+    if not (config.GITHUB_TOKEN and config.GITHUB_REPO):
+        return {"known": False}
+    if not fresh and _live["data"] and time.time() - _live["at"] < LIVE_TTL:
+        return _live["data"]
+    import archive_runs
+    try:
+        runs = archive_runs._get(f"{archive_runs.API}/repos/{config.GITHUB_REPO}/actions/workflows/"
+                                 f"{config.GITHUB_WORKFLOW}/runs?per_page=10", config.GITHUB_TOKEN)
+        data = live_from(runs.get("workflow_runs", []))
+    except Exception:  # noqa: BLE001
+        return {"known": False}
+    _live.update(at=time.time(), data=data)
+    return data
+
+
+@app.get("/api/ingest/live")
+def get_ingest_live():
+    return ingest_live()
+
+
 @app.post("/api/ingest/trigger")
 def trigger_ingest(force_walk: bool = False, cancel_batches: bool = False):
     """Kick the GitHub Actions ingest workflow (workflow_dispatch). The two options are the
     workflow's own tick boxes: walk every folder (albums moved into Drive keep their old
     modified time, so the quick 'anything new?' probe misses them), and give up on a stalled
-    batch and read its pictures live."""
+    batch and read its pictures live. Refused while a round is running or queued: a second press
+    would only queue behind it, and a third would cancel the second."""
+    live = ingest_live(fresh=True)
+    if live.get("active"):
+        raise HTTPException(409, f"มีรอบอ่านรูป{'กำลังรัน' if live['state'] == 'running' else 'รอเริ่ม'}อยู่แล้ว "
+                                 "รอให้จบก่อนแล้วค่อยกดใหม่")
     _note("ingest.trigger", force_walk=force_walk, cancel_batches=cancel_batches)
     inputs = {k: "true" for k, on in (("force_walk", force_walk), ("cancel_batches", cancel_batches)) if on}
-    return {"ok": _dispatch(config.GITHUB_WORKFLOW, inputs),
-            "url": f"https://github.com/{config.GITHUB_REPO}/actions"}
+    ok = _dispatch(config.GITHUB_WORKFLOW, inputs)
+    _live["data"] = None
+    return {"ok": ok, "url": f"https://github.com/{config.GITHUB_REPO}/actions"}
 
 
 @app.get("/api/ingest/cron")

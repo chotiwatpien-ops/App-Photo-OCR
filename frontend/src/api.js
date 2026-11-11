@@ -74,6 +74,7 @@ export const api = {
   batches: () => fetch('/api/batches').then(handle),
   collectBatches: () => fetch('/api/batches/collect', { method: 'POST' }).then(handle),
   renameJobRider: (jobId, name) => fetch(`/api/jobs/${jobId}/rider`, json('PATCH', { name })).then(handle),
+  ingestLive: () => fetch('/api/ingest/live').then(handle),
   triggerIngest: ({ forceWalk = false, cancelBatches = false } = {}) =>
     fetch(`/api/ingest/trigger?force_walk=${forceWalk}&cancel_batches=${cancelBatches}`, { method: 'POST' }).then(handle),
   // the two customer workbooks, rebuilt from the database right now and pushed to Drive —

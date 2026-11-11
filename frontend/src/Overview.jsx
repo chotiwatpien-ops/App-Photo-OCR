@@ -79,19 +79,54 @@ function useBatches() {
   return b
 }
 
-function Reading({ r, onRead, busy, note }) {
+/** Is a reading round running on GitHub right now (/api/ingest/live)? The database hears of a
+ *  round only when its Python starts, minutes after the press, so this asks GitHub. Right after
+ *  a press, and while GitHub has not started the run, it asks every 5 seconds; otherwise every 30. */
+function useLive(onEnd) {
+  const [live, setLive] = useState(null)
+  const [watching, setWatching] = useState(false)
+  const was = useRef(false)
+  const load = useCallback(() => api.ingestLive().then(setLive).catch(() => setLive({ known: false })), [])
+  const quick = watching || live?.state === 'queued'
+  useEffect(() => {
+    load()
+    const t = setInterval(() => { if (!document.hidden) load() }, quick ? 5000 : 30000)
+    const back = () => { if (!document.hidden) load() }
+    document.addEventListener('visibilitychange', back)
+    return () => { clearInterval(t); document.removeEventListener('visibilitychange', back) }
+  }, [quick, load])
+  useEffect(() => {
+    if (!watching) return undefined
+    const t = setTimeout(() => setWatching(false), 120000)
+    return () => clearTimeout(t)
+  }, [watching])
+  useEffect(() => {
+    if (live?.active) setWatching(false)
+    if (was.current && live?.known && !live.active) onEnd()
+    was.current = !!live?.active
+  }, [live])                                       // eslint-disable-line react-hooks/exhaustive-deps
+  return [live, watching, () => { setWatching(true); load() }, load]
+}
+
+function Reading({ r, onRead, onRoundEnd, busy, note }) {
   const [walk, setWalk] = useState(false)
   const [cancel, setCancel] = useState(false)
   const b = useBatches()
+  const [live, watching, watch, recheck] = useLive(onRoundEnd)
   const out = b?.waiting_images || 0
   const ready = b?.ready_images || 0
   const oldest = (b?.batches || []).filter((x) => !x.finished_at).map((x) => x.created_at).sort()[0]
+  const active = live?.known ? live.active : r.running
+  const queued = active && live?.state === 'queued'
+  const since = live?.started_at || (r.running ? r.last_started : null)
+  const starting = watching && !active
+  const press = () => onRead({ forceWalk: walk, cancelBatches: cancel }).then((ok) => (ok ? watch() : recheck()))
   return (
     <Card aria-labelledby="read-h" className="p-4 sm:px-6 sm:py-5 flex flex-col gap-3">
       <h2 id="read-h" className="text-[17px] font-semibold">การอ่านรูป</h2>
       <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-2.5 text-sm">
         <dt className="text-muted">อ่านรอบล่าสุด</dt>
-        <dd>{r.running ? 'กำลังอ่านอยู่' : r.last_finished ? `${clock(r.last_finished)} · ${ago(r.last_finished)}` : 'ยังไม่เคยอ่าน'}</dd>
+        <dd>{active ? `${queued ? 'รอเริ่มรอบ' : 'กำลังอ่านอยู่'}${since ? ` · ${queued ? 'สั่งไว้' : 'เริ่ม'} ${clock(since)} (${ago(since)})` : ''}` : r.last_finished ? `${clock(r.last_finished)} · ${ago(r.last_finished)}` : 'ยังไม่เคยอ่าน'}</dd>
         <dt className="text-muted">รอบถัดไป</dt><dd>ประมาณ {r.next}</dd>
         <dt className="text-muted">รอผลอ่าน</dt><dd>{fmt(r.total)} รูป</dd>
         <dt className="text-muted">ส่งให้ AI อ่าน</dt>
@@ -102,9 +137,15 @@ function Reading({ r, onRead, busy, note }) {
       <p className="text-sm text-muted bg-ground rounded-lg px-3 py-2.5">
         รูปที่วางใน Drive ระบบอ่านเองทุก 2–3 ชั่วโมง และกลับมาเก็บผลภายในราว 1 ชั่วโมงหลังส่งให้ AI ไม่ต้องกดอะไร
       </p>
-      {ready > 0 && !r.running && (
+      {ready > 0 && !active && (
         <p role="status" className="text-sm text-ok-ink bg-ok-bg rounded-lg px-3 py-2.5">
           AI อ่านเสร็จแล้ว {fmt(ready)} รูป กดปุ่มด้านล่างเพื่อเก็บผลเข้าระบบเลย ไม่ต้องรอรอบถัดไป
+        </p>
+      )}
+      {(active || starting) && (
+        <p role="status" className="text-sm text-wait-ink bg-wait-bg rounded-lg px-3 py-2.5">
+          {starting ? 'สั่งแล้ว กำลังรอ GitHub เริ่มรอบ' : queued ? 'สั่งรอบแล้ว รอเครื่อง GitHub เริ่มทำงาน'
+            : 'ระบบกำลังอ่านรูปรอบนี้'} ระหว่างนี้กดสั่งซ้ำไม่ได้ จบรอบแล้วปุ่มจะกลับมาเอง
         </p>
       )}
       {note && <p className="text-sm text-ink-soft">{note}</p>}
@@ -120,11 +161,16 @@ function Reading({ r, onRead, busy, note }) {
           <span>ยกเลิกผลอ่านที่ค้างแล้วอ่านสด <span className="text-muted">— ใช้เมื่อรอผลจาก Gemini เกิน 3 ชั่วโมง (จ่ายเต็มราคาเฉพาะรูปที่ค้าง)</span></span>
         </label>
       </details>
-      <button onClick={() => onRead({ forceWalk: walk, cancelBatches: cancel })} disabled={busy || r.running}
-        className={`mt-auto min-h-10 rounded-lg text-sm disabled:opacity-50 ${ready > 0 ? 'bg-accent hover:bg-accent-hover text-white font-semibold' : 'border border-line hover:bg-ground'}`}>
+      <button onClick={press} disabled={busy || active || starting}
+        className={`mt-auto min-h-10 rounded-lg text-sm flex items-center justify-center gap-2 disabled:cursor-not-allowed ${
+          active || starting ? 'bg-line-soft text-ink-soft'
+            : `disabled:opacity-50 ${ready > 0 ? 'bg-accent hover:bg-accent-hover text-white font-semibold' : 'border border-line hover:bg-ground'}`}`}>
+        {(active || starting || busy) && <Icon name="refresh" size={16} className="motion-safe:animate-spin" />}
         {/* one round both collects what Gemini finished and files it into riders' folders;
             collecting inside the web app cannot reach Drive, so it is not offered here */}
-        {ready > 0 ? `เก็บผลที่อ่านเสร็จเดี๋ยวนี้ (${fmt(ready)} รูป)` : 'อ่านรูปที่วางใหม่เดี๋ยวนี้'}
+        {starting || busy ? 'กำลังเริ่มรอบอ่าน…'
+          : active ? (queued ? 'รอเริ่มรอบอ่าน' : 'กำลังอ่านรูปอยู่') + (since ? ` · ${queued ? 'สั่งไว้' : 'เริ่ม'} ${clock(since)}` : '')
+            : ready > 0 ? `เก็บผลที่อ่านเสร็จเดี๋ยวนี้ (${fmt(ready)} รูป)` : 'อ่านรูปที่วางใหม่เดี๋ยวนี้'}
       </button>
     </Card>
   )
@@ -240,8 +286,8 @@ export default function Overview({ onGo }) {
   }
   const readNow = (opts) => {
     setBusy(true); setNote('')
-    api.triggerIngest(opts).then(() => setNote('สั่งแล้ว — รูปใหม่จะขึ้นในไม่กี่นาที (ผลอ่านบางส่วนมาในรอบถัดไป)'))
-      .catch((e) => setNote(`สั่งไม่สำเร็จ: ${e.message}`)).finally(() => setBusy(false))
+    return api.triggerIngest(opts).then(() => true)
+      .catch((e) => { setNote(`สั่งไม่สำเร็จ: ${e.message}`); return false }).finally(() => setBusy(false))
   }
   const current = data.weeks.find((w) => w.date_from === data.week)
   const pending = slow                                     // asked for a week that is taking a while
@@ -282,7 +328,7 @@ export default function Overview({ onGo }) {
       <div className={`flex flex-col gap-5 transition-opacity duration-200 ${pending ? 'opacity-50 pointer-events-none' : ''}`}>
       <div className="grid gap-5 lg:grid-cols-[2fr_1fr]">
         <Todos todos={data.todos} onAct={act} />
-        <Reading r={reading} onRead={readNow} busy={busy} note={note} />
+        <Reading r={reading} onRead={readNow} onRoundEnd={() => load(week)} busy={busy} note={note} />
       </div>
 
       <section aria-labelledby="grp-h">
