@@ -59,8 +59,8 @@ check("แถวรอตรวจนับเป็น 'รอตรวจ'", g
 check("รูปที่ยังไม่อ่านนับตามกลุ่มของโฟลเดอร์", g["Standard Bike"]["reading"] == 1)
 check("'Standard | Women driver' เป็นรถยนต์", g["Standard Car"]["review"] == 1)
 check("❗ แถวที่อ่านแล้วรอลงโฟลเดอร์นับเป็น 'รออ่าน' ไม่ใช่รอตรวจ", g["Standard Car"]["reading"] == 1)
-check("❗ แถวซ้ำไม่ถูกนับ", g["Standard Car"]["have"] == 2)
-check("ขาดเท่าไหร่ต่อ Service Type", g["Standard Bike"]["short"] == 1 and g["Standard Car"]["short"] == 3 and g["Saver Bike"]["short"] == 0)
+check("❗ แถวซ้ำและแถวรอตรวจไม่นับเข้าเป้า (เฟียส 2026-11-12)", g["Standard Car"]["have"] == 1)
+check("ขาดเท่าไหร่ต่อ Service Type", g["Standard Bike"]["short"] == 3 and g["Standard Car"]["short"] == 4 and g["Saver Bike"]["short"] == 0)
 check("รูปในกองที่ยังไม่รู้กลุ่มนับรวมในรออ่านทั้งหมด", ov["reading"]["total"] == 3)
 check("รูปอ่านไม่สำเร็จนับแยก", ov["errors"] == 1)
 
@@ -68,7 +68,7 @@ r = ov["review"]
 check("เหตุผลในคิว: ตัวเลข 1 · ไม่มีวันที่ 1 · ผ่านรอกด 1", (r["money"], r["date"], r["ready"], r["total"]) == (1, 1, 1, 3))
 kinds = [t["kind"] for t in ov["todos"]]
 check("❗ สิ่งที่ต้องทำเรียง: ตรวจคิว → ขอรูปเพิ่ม → รอผลอ่าน → รูปอ่านไม่ได้", kinds == ["review", "short", "reading", "errors"])
-check("ข้อความขอรูปบอกจำนวนต่อ Service Type", "Standard Bike 1" in ov["todos"][1]["title"] and "Standard Car 3" in ov["todos"][1]["title"])
+check("ข้อความขอรูปบอกจำนวนต่อ Service Type", "Standard Bike 3" in ov["todos"][1]["title"] and "Standard Car 4" in ov["todos"][1]["title"])
 check("ไรเดอร์ที่ยังรับได้: เฉพาะกลุ่มที่ขาด", {x["name"] for x in ov["riders"]} == {"กิตติ Win", "สมหมาย Taxi"})
 check("รับได้อีก = 21 − ที่มี (แถวซ้ำไม่นับ)",
       {x["name"]: x["room"] for x in ov["riders"]} == {"กิตติ Win": 18, "สมหมาย Taxi": 19})

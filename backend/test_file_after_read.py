@@ -15,7 +15,7 @@ os.environ["PHOTO_OCR_DATA"] = WORK
 os.environ.pop("DATABASE_URL", None)
 sys.path.insert(0, "backend")
 
-from sqlalchemy import insert, select                            # noqa: E402
+from sqlalchemy import insert, select, update                    # noqa: E402
 
 import db                                                        # noqa: E402
 import file_after_read as far                                    # noqa: E402
@@ -104,6 +104,12 @@ check("รูปถูกย้ายออกจากที่พักไป�
 check("ไรเดอร์ที่ได้งานเป็นชื่อจากลิสต์ Ops",
       all(jobs[now[f]["job_id"]]["driver_name"].split()[0] in ("สมชาย", "สมหญิง", "สมหมาย", "ดวงใจ")
           for f in ("a.jpg", "b.jpg", "c.jpg", "d.jpg")))
+
+# --- ที่ว่างนับเฉพาะงานที่อนุมัติแล้ว (เฟียส 2026-11-12) -------------------------------------------
+check("❗ งานที่ลงที่แล้วแต่ยังรอตรวจ ไม่ทำให้กลุ่มเต็ม", far.room_left(W, WE, target=1)["2 W Standard"] == 1)
+with db.engine.begin() as c:
+    c.execute(update(db.trips).where(db.trips.c.job_id != hold_job).values(committed=1))
+check("อนุมัติแล้วจึงนับ", far.room_left(W, WE, target=1)["2 W Standard"] == 0)
 
 # --- กลุ่มที่ครบเป้าแล้ว ไม่รับงานเพิ่ม -----------------------------------------------------------
 t_more = staged("g.jpg", "Standard Bike")

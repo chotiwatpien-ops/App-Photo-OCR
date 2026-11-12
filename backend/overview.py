@@ -60,7 +60,7 @@ def progress(rows, target):
     groups = []
     for s in SERVICES:
         g = out[s]
-        g["have"] = g["filed"] + g["review"] + g["reading"]
+        g["have"] = g["filed"] + g["reading"]        # the review queue is not counted ahead (db.week_group_counts)
         g["short"] = max(0, target - g["have"])
         g["over"] = max(0, g["have"] - target)
         groups.append(g)

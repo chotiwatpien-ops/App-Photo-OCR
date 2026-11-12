@@ -2344,10 +2344,13 @@ def jobs_overview():
 
 
 def week_group_counts(date_from, date_to):
-    """{vehicle group: finished rows} for one week — what the week already owes the customer.
+    """{vehicle group: approved rows} for one week — what the week already owes the customer.
 
     Repeats and voided rows are left out: they are on nobody's bill, so they must not make a
-    group look full to the pool.
+    group look full to the pool. Rows still in the review queue are left out too (Fiat
+    2026-11-12): most of W46's turned out unusable, and counting them ahead held 6 good Standard
+    Bike rows in _พร้อมอ่าน as "group full". If they are approved later and the group goes over,
+    the close carries the excess on; the close refuses to start while the queue is not empty.
 
     A row counts in the group its Service Type names, as the customer and the scorecard count
     it, not in its job's folder: W38 had 4 Standard Bike rows in 2 W Saver folders, so the pool
@@ -2362,7 +2365,7 @@ def week_group_counts(date_from, date_to):
             select(trips.c.service_type, jobs.c.category, func.count())
             .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
             .where(jobs.c.date_from == date_from, jobs.c.date_to == date_to,
-                   trips.c.status == "done",
+                   trips.c.status == "done", trips.c.committed == 1,
                    or_(jobs.c.driver_name.is_(None), jobs.c.driver_name != "(รออ่าน)"))
             .group_by(trips.c.service_type, jobs.c.category)).all()
     out = {}

@@ -193,14 +193,15 @@ function Group({ g, target }) {
       <p className="text-[30px] leading-none font-semibold tracking-tight">{fmt(g.have)}<span className="text-base font-normal text-muted"> / {fmt(target)}</span></p>
       <div aria-hidden="true" className="h-2.5 rounded-full bg-line-soft flex overflow-hidden">
         <span className="bg-ok" style={{ width: pct(g.filed) }} />
-        <span className="bg-warn" style={{ width: pct(Math.max(0, Math.min(g.review, target - g.filed))) }} />
-        <span className="bg-wait" style={{ width: pct(Math.max(0, Math.min(g.reading, target - g.filed - g.review))) }} />
+        <span className="bg-wait" style={{ width: pct(Math.max(0, Math.min(g.reading, target - g.filed))) }} />
       </div>
       <dl className="grid grid-cols-3 gap-2 text-sm">
         {[['ลงไฟล์แล้ว', g.filed, 'bg-ok'], ['รอตรวจ', g.review, 'bg-warn'], ['รออ่าน', g.reading, 'bg-wait']].map(([l, n, c]) => (
           <div key={l}>
             <dt className="text-muted flex items-center gap-1.5"><span className={`w-2 h-2 rounded-full ${c}`} />{l}</dt>
-            <dd className="font-semibold text-[15px]">{fmt(n)}</dd>
+            <dd className="font-semibold text-[15px]">
+              {fmt(n)}{l === 'รอตรวจ' && n > 0 && <span className="text-xs font-normal text-muted"> ยังไม่นับ</span>}
+            </dd>
           </div>
         ))}
       </dl>
