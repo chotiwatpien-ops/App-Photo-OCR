@@ -1021,6 +1021,14 @@ def match_tier(top, bottom, neighbours=False, same_shot=False):
     if own and bottom_income:
         if any(abs(o - b) < 0.01 for o in own for b in bottom_income):
             agreed = True
+        # A tipped trip's bottom can carry no income figure of its own to agree with: its green
+        # is the tip total (฿20 under a ฿72 = 52 + 20 top) and its fee card is skipped for a cut
+        # under MIN_CUT, yet the top's income is printed right there in the fare card. W46 left
+        # three such pairs in two albums. The pages do not disagree then, so the gate stays
+        # open and the tip rules below decide; the two only count as agreeing when the clocks
+        # also read the same minute.
+        elif any(abs(o - n) < 0.01 for o in own for n in nums):
+            agreed = same_shot
         else:
             return None
     best = None
