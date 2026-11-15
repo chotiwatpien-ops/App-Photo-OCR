@@ -40,7 +40,8 @@ check("รอบที่ GitHub ยังไม่เริ่ม: บอกว
 config.GITHUB_TOKEN, config.GITHUB_REPO = "", ""
 check("ไม่ได้ตั้งค่า GitHub: บอกว่าไม่รู้ (หน้าเว็บใช้สถานะจากฐานข้อมูลแทน)", main.ingest_live(fresh=True) == {"known": False})
 
-config.GITHUB_TOKEN, config.GITHUB_REPO = "t", "me/repo"
+# A GitHub runner sets GITHUB_WORKFLOW to its own workflow's name ("Tests"), and config reads it.
+config.GITHUB_TOKEN, config.GITHUB_REPO, config.GITHUB_WORKFLOW = "t", "me/repo", "ingest.yml"
 runs, asked, sent = [run("in_progress")], [], []
 archive_runs._get = lambda url, token: asked.append(url) or {"workflow_runs": runs}
 main._dispatch = lambda wf, inputs=None: sent.append(wf) or True
