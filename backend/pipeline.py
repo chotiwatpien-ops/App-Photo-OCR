@@ -398,8 +398,9 @@ CATEGORY_SERVICE = {
 # a service no group holds and no target counts, which left the car group looking 20 short.
 # Car products the customer does not buy separately, all counted as Standard Car: Saver Car (Ops
 # 2026-09-16, "4W saver ให้ตีเข้า Standard"), and EV and Women driver (Fiat 2026-09-21 — W38 held
-# 6 EV and 2 Women driver rows that no group would take, stuck in _พร้อมอ่าน for a week).
-_CAR_WORDS = re.compile(r"\bev\b|electric|women", re.I)
+# 6 EV and 2 Women driver rows that no group would take, stuck in _พร้อมอ่าน for a week), and
+# 'Standard | SUV - 4 Seaters' (Fiat 2026-11-15 — W46 held 2 such rows in _พร้อมอ่าน).
+_CAR_WORDS = re.compile(r"\bev\b|electric|women|\bsuv\b", re.I)
 
 
 def car_is_standard(service):

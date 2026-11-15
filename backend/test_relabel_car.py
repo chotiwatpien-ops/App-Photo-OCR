@@ -79,6 +79,12 @@ check("❗ มอเตอร์ไซค์ที่มีคำ EV / Women ไ
 check("❗ คำที่มี ev อยู่ข้างในไม่นับ (Seven, Every)",
       pipeline.car_is_standard("Seven") == "Seven" and pipeline.car_is_standard("Every") == "Every")
 
+# --- SUV - 4 Seaters นับเป็น Standard Car (เฟียส 2026-11-15) -------------------------------------
+# W46 มี 2 แถวชิป 'Standard | SUV - 4 Seaters' ค้างในกองพัก _พร้อมอ่าน เพราะไม่มีกลุ่มไหนรับ
+check("ชิป 'Standard | SUV - 4 Seaters' → Standard Car", ns("Standard | SUV - 4 Seaters", None)[0] == "Standard Car")
+check("ชิป 'Standard SUV - 4 Seaters' → Standard Car", ns("Standard SUV - 4 Seaters", None)[0] == "Standard Car")
+check("❗ คำที่มี suv อยู่ข้างในไม่นับ", pipeline.car_is_standard("Pursuvit") == "Pursuvit")
+
 D2_FROM, D2_TO = "2026-09-14", "2026-09-20"
 j_hold = db.create_job("(รออ่าน)", "Trips", D2_FROM, D2_TO)
 with db.engine.begin() as c:
@@ -101,6 +107,8 @@ check("โน้ตบอกว่าเดิมเป็น EV", now["11.jpg"]
 import file_after_read as far                                     # noqa: E402
 check("ตัวลงที่หลังอ่านรู้จัก EV แม้ยังไม่ได้เปลี่ยนป้าย: ไปกลุ่ม 4 W Standard",
       far.GROUP_OF.get(pipeline.car_is_standard("EV")) == "4 W Standard")
+check("ตัวลงที่หลังอ่านส่ง SUV - 4 Seaters ไปกลุ่ม 4 W Standard",
+      far.GROUP_OF.get(pipeline.car_is_standard("Standard | SUV - 4 Seaters")) == "4 W Standard")
 
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
