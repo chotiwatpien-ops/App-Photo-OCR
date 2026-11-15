@@ -17,7 +17,9 @@ customer — does it go into a rider's folder, once.
             reported, because the pool is what decides to send new work to next week
 """
 import sys
-from collections import Counter
+import time
+from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 from sqlalchemy import select
 
@@ -91,6 +93,8 @@ def file_rows(drive, week_id, d_from, d_to, rows=None, target=None, log=print):
                                  styles=db.rider_styles(week_id))
     pics = db.drive_ids_for_trips([r["id"] for r in rows])
     jobs_seen, by_group = set(), Counter()
+    job_of, rows_of, notes, moves = {}, defaultdict(list), {}, []
+    started = time.monotonic()
     for r in rows:
         settled = settle_wheel(r)
         if settled:
@@ -113,28 +117,46 @@ def file_rows(drive, week_id, d_from, d_to, rows=None, target=None, log=print):
             out[err[:60]] += 1
             continue
         rider = alloc.rider_at(fid)
-        jid = db.find_job_by_folder(fid, d_from) or db.find_job(rider, d_from, d_to, category=group)
-        if jid is None:
-            jid = db.create_job(rider, "Trips", d_from, d_to, category=group,
-                                folder_name=f"{group}/{distribute.bare(rider)}", drive_folder_id=fid)
-            log(f"  + job #{jid} {rider} · {group}")
+        if fid not in job_of:
+            jid = db.find_job_by_folder(fid, d_from) or db.find_job(rider, d_from, d_to, category=group)
+            if jid is None:
+                jid = db.create_job(rider, "Trips", d_from, d_to, category=group,
+                                    folder_name=f"{group}/{distribute.bare(rider)}", drive_folder_id=fid)
+                log(f"  + job #{jid} {rider} · {group}")
+            job_of[fid] = jid
+        jid = job_of[fid]
         pic = pics.get(r["id"])
         if pic:
-            try:
-                drive.move_file(pic, fid)
-            except Exception as e:  # noqa: BLE001 — the row still belongs to the rider
-                out[f"ย้ายรูปไม่สำเร็จ: {str(e)[:40]}"] += 1
+            moves.append((pic, fid))
         else:
             out["ไม่พบรูปต้นฉบับบน Drive"] += 1
-        db.move_trips_to_job([r["id"]], jid)
+        rows_of[jid].append(r["id"])
         note = f"ลงที่หลังอ่าน: {svc} → {group} · {rider}"
-        db.update_trip(r["id"], {"note": f"{note} | {r['note']}" if r.get("note") else note})
+        notes[r["id"]] = f"{note} | {r['note']}" if r.get("note") else note
         room[group] -= 1
         by_group[group] += 1
         jobs_seen.add(jid)
+    # The rows were decided one at a time above, because each choice of rider depends on the one
+    # before it. What follows does not, and done one row at a time it was the slowest part of a
+    # round: two Drive calls and two database writes per row, about 3.8 s each across the Pacific
+    # (W46 #493: 1,131 rows in 72 minutes). Pictures move first: a round that dies after them
+    # leaves its rows in _พร้อมอ่าน for the next round to file again, not rows pointing at a
+    # picture still sitting there.
+    def move(m):
+        try:
+            drive.move_file(*m)
+            return None
+        except Exception as e:  # noqa: BLE001 — the row still belongs to the rider
+            return f"ย้ายรูปไม่สำเร็จ: {str(e)[:40]}"
+    with ThreadPoolExecutor(max_workers=max(1, config.DRIVE_PARALLEL)) as ex:
+        out.update(why for why in ex.map(move, moves) if why)
+    for jid, ids in rows_of.items():
+        db.move_trips_to_job(ids, jid)
+    db.set_notes(notes)
     filed = sum(by_group.values())
     if filed:
-        log("📥 ลงที่หลังอ่าน " + " · ".join(f"{g} {n}" for g, n in sorted(by_group.items())))
+        log("📥 ลงที่หลังอ่าน " + " · ".join(f"{g} {n}" for g, n in sorted(by_group.items()))
+            + f" · {time.monotonic() - started:.0f} วิ")
     for why, n in out.most_common():
         log(f"  ⏸ {n} แถวยังไม่ได้ลงที่: {why}")
     return {"filed": filed, "left": sum(out.values()), "by_group": dict(by_group),

@@ -459,6 +459,7 @@ def collect_batches(drive, exports_id=None, cancel_open=False, fresh_out=None):
     issues, touched_jobs, waiting = [], set(), 0
     fresh_by_job = collections.defaultdict(list)   # read THIS round — a lone top waits one more
     for b in open_jobs:
+        t0 = time.monotonic()
         try:
             state, data, errs = batch_client.collect(b["name"])
         except Exception as e:  # noqa: BLE001
@@ -485,6 +486,8 @@ def collect_batches(drive, exports_id=None, cancel_open=False, fresh_out=None):
             db.touch_batch(b["name"], state)
             waiting += b["n_trips"] or 0
             continue
+        fetched = time.monotonic() - t0
+        t1, cost = time.monotonic(), dict(db.DB_COST)
         pairs = dict(db.batch_trip_jobs(b["name"]))
         for tid, jid in pairs.items():
             if tid in data:
@@ -509,6 +512,9 @@ def collect_batches(drive, exports_id=None, cancel_open=False, fresh_out=None):
         db.close_batch(b["name"], state, note)
         log(f"  📥 เก็บผล batch {b['name'][-12:]} ({state.replace('JOB_STATE_', '')}): "
             f"อ่านสำเร็จ {len(data)} · พลาด {len(errs)}")
+        saved = time.monotonic() - t1
+        log(f"     ⏱ ดึงผลจาก Gemini {fetched:.0f} วิ · บันทึก {len(pairs)} แถว {saved:.0f} วิ"
+            f" ({saved / max(1, len(pairs)):.1f} วิ/แถว) · {db.db_cost_since(cost)}")
     if waiting:
         log(f"  ⏳ ยังรอผล batch อีก {waiting} รูป — รอบถัดไปมาเก็บ")
     if touched_jobs:
@@ -516,13 +522,17 @@ def collect_batches(drive, exports_id=None, cancel_open=False, fresh_out=None):
             # each job stands alone: one that throws used to abandon every job after it in this
             # loop, leaving their rows read but undated and unapproved — 420 rows on 2026-08-30
             try:
+                t2, cost = time.monotonic(), dict(db.DB_COST)
                 pairs_n = pipeline.pair_fragments(jid)
                 if d1 and d2:
                     pipeline.spread_dates(jid, d1, d2, only_missing=True)
                 else:
                     log(f"  ⚠ job #{jid}: ไม่รู้ช่วงสัปดาห์ ข้ามการกระจายวันที่")
                 st = db.auto_approve_job(jid, fresh_ids=fresh_by_job.get(jid, []))
+                t3, cost3, before_keep = time.monotonic(), dict(db.DB_COST), db.db_cost_since(cost)
                 kept = keep_images_for_waiting(jid, drive=drive)
+                log(f"     ⏱ job #{jid}: จับคู่/ลงวันที่/อนุมัติ {t3 - t2:.0f} วิ · {before_keep}"
+                    f" | เก็บรูปให้แถวที่รอคน {time.monotonic() - t3:.0f} วิ · {db.db_cost_since(cost3)}")
                 # ทิ้งเป็นซ้ำต้องอยู่ในบรรทัดนี้ด้วย: รอบ W37 อ่านมา 992 แถว อนุมัติ 806 รอคน 6
                 # ที่เหลือ 177 แถวหายไปเงียบ ๆ เพราะบรรทัดนี้ไม่เคยพูดถึงมันเลย (เส้นทางปกติ
                 # ที่บรรทัด 996 พิมพ์อยู่แล้ว ขาดแต่เส้นทาง batch ซึ่งเป็นเส้นทางหลักตอนนี้)

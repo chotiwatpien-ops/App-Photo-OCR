@@ -4,10 +4,11 @@
 Images are kept as blobs only while a job is under review and cleared on commit,
 so the database stays small enough for a free Postgres tier.
 """
+import time
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import (BigInteger, Column, Float, Integer, LargeBinary, MetaData, String, Table, Text,
-                        case, create_engine, delete, func, insert, or_, select, text, update)
+                        case, create_engine, delete, event, func, insert, or_, select, text, update)
 
 from config import DATABASE_URL
 
@@ -17,6 +18,38 @@ engine = create_engine(
     connect_args={"check_same_thread": False, "timeout": 10} if _is_sqlite else {},
 )
 meta = MetaData()
+
+# What the database cost a stretch of work: statements, the seconds they took, and how many times
+# a connection was handed out (each hand-out pings the server first, pool_pre_ping). The round
+# logs it per step to tell a slow step's database time from its Drive and Gemini time. The
+# database is in Singapore and the runners in the US (W46, 2026-11-15).
+DB_COST = {"statements": 0, "seconds": 0.0, "checkouts": 0}
+
+
+def _start_clock(conn, cursor, statement, params, context, executemany):
+    conn.info["pocr_t0"] = time.perf_counter()
+
+
+def _stop_clock(conn, cursor, statement, params, context, executemany):
+    DB_COST["statements"] += 1
+    DB_COST["seconds"] += time.perf_counter() - conn.info.pop("pocr_t0", time.perf_counter())
+
+
+def _checkout(dbapi_conn, record, proxy):
+    DB_COST["checkouts"] += 1
+
+
+event.listen(engine, "before_cursor_execute", _start_clock)
+event.listen(engine, "after_cursor_execute", _stop_clock)
+event.listen(engine.pool, "checkout", _checkout)
+
+
+def db_cost_since(before: dict) -> str:
+    """'ฐานข้อมูล 120 คำสั่ง 31 วิ · เชื่อมต่อ 40 ครั้ง' for the work done since `before`."""
+    n = DB_COST["statements"] - before["statements"]
+    s = DB_COST["seconds"] - before["seconds"]
+    k = DB_COST["checkouts"] - before["checkouts"]
+    return f"ฐานข้อมูล {n:,} คำสั่ง {s:.0f} วิ · เชื่อมต่อ {k:,} ครั้ง"
 
 jobs = Table(
     "jobs", meta,
@@ -1755,6 +1788,16 @@ def trip_image_source(trip_id, part=1):
              .order_by(trips.c.id).limit(1) if part == 2
              else select(trips.c.source_url).where(trips.c.id == trip_id))
         return c.execute(q).scalar()
+
+
+def set_notes(notes: dict) -> None:
+    """{trip_id: note} in one transaction: one write per row was a round trip per row."""
+    if not notes:
+        return
+    from sqlalchemy import bindparam
+    with engine.begin() as c:
+        c.execute(update(trips).where(trips.c.id == bindparam("tid")).values(note=bindparam("txt")),
+                  [{"tid": int(k), "txt": v} for k, v in notes.items()])
 
 
 def update_trip(trip_id, fields: dict):

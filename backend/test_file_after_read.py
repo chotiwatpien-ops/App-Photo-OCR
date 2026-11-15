@@ -142,6 +142,29 @@ weeks = {w["week"]: w for w in db.weeks_overview()}
 groups = [g["category"] for w in weeks.values() for g in w["groups"]]
 check("แดชบอร์ดไม่ขึ้นกลุ่มของห้องพัก", "อัปโหลดมือ" not in groups and None not in groups)
 
+# --- ลงที่ทีละมาก ๆ ไม่คุยกับฐานข้อมูลทีละแถว (W46 #493: 1,131 แถวใช้ 72 นาที) ------------------
+many = [staged(f"m{i:02d}.jpg", "Saver Bike") for i in range(30)]
+before = dict(db.DB_COST)
+res4 = far.file_rows(drive, WEEK, W, WE, log=lambda *a: None)
+used = db.DB_COST["statements"] - before["statements"]
+check("❗ ลง 30 แถวครบ ไปอยู่กับไรเดอร์ พร้อมโน้ต", res4["filed"] >= 30 and all(
+    db.get_trip(t)["job_id"] != hold_job and db.get_trip(t)["note"].startswith("ลงที่หลังอ่าน") for t in many))
+check(f"❗ คำสั่งฐานข้อมูลไม่โตตามจำนวนแถว (30 แถวใช้ {used} คำสั่ง)", used < 30)
+
+
+class FlakyDrive(LocalDrive):
+    def move_file(self, file_id, new_parent_id):
+        if file_id.endswith("x1.jpg"):
+            raise OSError("Drive ล่ม")
+        return super().move_file(file_id, new_parent_id)
+
+
+t_x1, t_x2 = staged("x1.jpg", "Saver Bike"), staged("x2.jpg", "Saver Bike")
+res5 = far.file_rows(FlakyDrive(ROOT), WEEK, W, WE, log=lambda *a: None)
+check("ย้ายรูปไม่สำเร็จ 1 ใบ: ยังลงที่ทั้งสองแถว และบอกว่าย้ายรูปไม่สำเร็จ",
+      db.get_trip(t_x1)["job_id"] != hold_job and db.get_trip(t_x2)["job_id"] != hold_job
+      and any(k.startswith("ย้ายรูปไม่สำเร็จ") for k in res5["reasons"]))
+
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)
