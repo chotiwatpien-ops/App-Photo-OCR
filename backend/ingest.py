@@ -1295,6 +1295,15 @@ def _run(drive, inbox_id, exports_id, run_id, dry_run=False, limit=None, only=No
                     f"ย้ายออก {res['moved']} · ที่นั่งคืน {res['seats']} เที่ยว"
                     + (" · ⚠ เกินเพดาน จึงไม่ย้าย รอคนดู" if res["over_cap"] else ""))
 
+    if not dry_run and not only:
+        # Pictures of rows deleted on the web: the web server cannot reach Drive, so it writes the
+        # move down and this round makes it (trash_picture).
+        import trash_picture
+        try:
+            trash_picture.move_queued(drive, log=log)
+        except Exception as e:  # noqa: BLE001 — tidying must never take a round down
+            log(f"  ⚠ ย้ายรูปของแถวที่ถูกกดลบไม่สำเร็จ: {str(e)[:120]}")
+
     if config.DUP_REPORT_IN_ROUND and not dry_run and not only and exports_id:
         # After the tidying above, so the report shows this round's final state: repeats are
         # parked during approval, and a report that waits for someone to press its button is a

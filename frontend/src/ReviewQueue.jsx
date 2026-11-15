@@ -162,19 +162,23 @@ function Field({ label, value, onSave, onApprove, type = 'number', hint, need, o
   )
 }
 
-/** One picture that says when it is loading or missing, instead of going blank. */
-function Pic({ src, alt, scale }) {
+/** One picture that says when it is loading or missing, instead of going blank. With several
+ *  sources it shows the first one that loads. */
+function Pic({ src, alt, scale, missing = 'โหลดรูปไม่ได้ ลองกดโหลดคิวใหม่' }) {
+  const srcs = [].concat(src)
+  const [at, setAt] = useState(0)
   const [state, setState] = useState('loading')
+  const failed = () => (at + 1 < srcs.length ? setAt(at + 1) : setState('bad'))
   return (
     <span className="relative block min-w-0" style={{ width: `${scale * 100}%`, flex: '0 0 auto' }}>
-      <img src={src} alt={alt} onLoad={() => setState('ok')} onError={() => setState('bad')}
+      <img key={srcs[at]} src={srcs[at]} alt={alt} onLoad={() => setState('ok')} onError={failed}
         className={`block w-full h-auto rounded-md bg-white ${state === 'bad' ? 'hidden' : ''}`} />
       {state === 'loading' && (
         <span className="absolute inset-0 min-h-40 flex items-center justify-center text-sm text-muted bg-ground/70 rounded-md">กำลังโหลดรูป…</span>
       )}
       {state === 'bad' && (
         <span className="min-h-40 flex items-center justify-center text-sm text-danger-ink bg-danger-bg rounded-md px-3 text-center">
-          โหลดรูปไม่ได้ ลองกดโหลดคิวใหม่
+          {missing}
         </span>
       )}
     </span>
@@ -220,7 +224,10 @@ function Slip({ t, scale, onScale, onFull }) {
             </p>
             <div key={`t${twin}`} className="max-h-[72vh] overflow-auto rounded-lg border border-danger-bg bg-white">
               <div className="flex">
-                <Pic src={`/api/trips/${twin}/image`} alt="รูปที่ซ้ำกัน" scale={scale} />
+                {/* the duplicate report's side-by-side picture first: the web server cannot
+                    fetch the other row's picture from Drive once that row is approved */}
+                <Pic src={[`/api/trips/${t.id}/compare`, `/api/trips/${twin}/image`]} alt="รูปที่ซ้ำกัน"
+                  scale={scale} missing="ยังไม่มีรูปคู่ รูปเปรียบเทียบจะมาหลังรอบอ่านจบ หรือเปิดดูในรายงานรูปซ้ำ" />
               </div>
             </div>
           </div>

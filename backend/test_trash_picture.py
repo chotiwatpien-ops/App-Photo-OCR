@@ -80,10 +80,55 @@ r = tp.move_to_trash(7, drive=d)
 check("ไม่เจอโฟลเดอร์สัปดาห์ของงานนี้ — ไม่ย้ายมั่วไปสัปดาห์อื่น",
       r["moved"] is False and not d.moved)
 
+db.init_db()
 patch()
 d = FakeDrive(blow_up=True)
 r = tp.move_to_trash(7, drive=d, log=lambda *_a: None)
 check("Drive ล่มตอนย้าย — คืน False เฉย ๆ ไม่โยน error ใส่คนที่เพิ่งกดลบ", r["moved"] is False)
+check("❗ ย้ายตอนนี้ไม่ได้ — จดไว้ให้รอบอ่านย้ายแทน", r.get("queued") is True
+      and [m["drive_id"] for m in db.pending_trash_moves()] == ["drive-abc"])
+r = tp.move_to_trash(7, drive=d, log=lambda *_a: None)
+check("กดซ้ำ — จดไว้ครั้งเดียว", len(db.pending_trash_moves()) == 1)
+
+import roster                                                    # noqa: E402
+
+
+def no_drive():
+    raise FileNotFoundError("[Errno 2] No such file or directory: 'drive_token.json'")
+
+
+roster._drive = no_drive
+with db.engine.begin() as c:
+    c.execute(db.delete(db.trash_moves))
+r = tp.move_to_trash(7, log=lambda *_a: None)
+check("❗ หน้าเว็บ (ไม่มี token ของ Drive) — จดไว้ให้รอบอ่าน ไม่ใช่ทิ้งรูปค้างในโฟลเดอร์ไรเดอร์",
+      r.get("queued") is True and len(db.pending_trash_moves()) == 1)
+
+db.list_actions = lambda **_k: []
+d = FakeDrive()
+n = tp.move_queued(d, log=lambda *_a: None)
+check("❗ รอบอ่านย้ายรูปที่จดไว้ไปที่ <สัปดาห์>/_ทิ้ง-กดลบ/<ไรเดอร์>/",
+      n == 1 and d.moved == [("drive-abc", "wk:Week 14-20 Sep/_ทิ้ง-กดลบ/สาธิต Win")])
+check("ย้ายแล้วไม่ย้ายซ้ำรอบหน้า", tp.move_queued(FakeDrive(), log=lambda *_a: None) == 0
+      and db.pending_trash_moves() == [])
+
+db.queue_trash_move("drive-down", "2026-09-14", "2026-09-20", "สาธิต Win")
+tp.move_queued(FakeDrive(blow_up=True), log=lambda *_a: None)
+check("Drive ล่มตอนรอบอ่านย้าย — ยังค้างไว้ลองใหม่รอบหน้า",
+      [m["drive_id"] for m in db.pending_trash_moves()] == ["drive-down"])
+
+db.list_actions = lambda **_k: [
+    {"status": 200, "detail": {"row": {"job_id": 3, "source_url": "https://drive.google.com/file/d/old-1/view"},
+                               "picture_moved_to": {"moved": False, "why": "drive_token.json"}}},
+    {"status": 200, "detail": {"row": {"job_id": 3, "source_url": "https://drive.google.com/file/d/ok-2/view"},
+                               "picture_moved_to": {"moved": True}}},
+    {"status": 409, "detail": {"row": {"job_id": 3, "source_url": "https://drive.google.com/file/d/no-3/view"}}},
+]
+added = tp.queue_from_log(open_week=lambda *_a: True)
+check("❗ การกดลบเก่าที่ย้ายรูปไม่สำเร็จ ถูกจดย้อนหลัง เฉพาะอันที่ลบได้จริงและยังไม่ได้ย้าย",
+      added == 1 and "old-1" in {m["drive_id"] for m in db.pending_trash_moves()})
+check("สัปดาห์ที่ปิดแล้ว ไม่จดย้อนหลัง",
+      tp.queue_from_log(open_week=lambda *_a: False) == 0)
 
 patch(job={"id": 3, "driver_name": "สาธิต Win"})
 d = FakeDrive()

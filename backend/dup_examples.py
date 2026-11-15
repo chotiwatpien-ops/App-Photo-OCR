@@ -50,6 +50,7 @@ class Entry:
     code: str = ""
     amount: float = None
     name: str = ""        # the comparison picture's file name
+    trip_id: int = None   # the row a person still has to decide, when there is one
 
 
 def drive_id(url):
@@ -96,7 +97,8 @@ def entries(cases, undecided, pre, half_ids):
             orig_album=c.get("ของไรเดอร์") or "", orig_file=line_photos(c.get("ซ้ำกับไฟล์")), orig_id=twin,
             status="รอคนตัดสิน" if waiting else "ไม่นับ (ตัดออก)", counted_as=c.get("รูปที่ส่งลูกค้า") or "",
             code=c.get("รหัสการจอง") or "", amount=amount,
-            name=_safe(f"{kind} #{c['id']}" + (f" ฿{amount:,.0f}" if amount is not None else "")) + ".jpg"))
+            name=_safe(f"{kind} #{c['id']}" + (f" ฿{amount:,.0f}" if amount is not None else "")) + ".jpg",
+            trip_id=c["id"] if waiting else None))
     for p in pre:
         mine = drive_id(p.get("ลิงก์รูป"))
         if not mine:
@@ -123,6 +125,16 @@ def _jpeg(im, quality=85):
     buf = io.BytesIO()
     im.save(buf, "JPEG", quality=quality)
     return buf.getvalue()
+
+
+def _fit(d, text, font, width):
+    """The text cut with '…' to fit its own column. A long album name under the left picture
+    ran on under the right one ('4W Ploy 636งาน 11Nov' over 'อัลบั้ม …', W46 #43332)."""
+    if d.textlength(text, font=font) <= width:
+        return text
+    while text and d.textlength(text + "…", font=font) > width:
+        text = text[:-1]
+    return text + "…"
 
 
 def render(e, orig, mine, fonts, h=900) -> bytes:
@@ -161,7 +173,7 @@ def render(e, orig, mine, fonts, h=900) -> bytes:
                                  (f"อัลบั้ม {album}", reg(26), (20, 20, 20)),
                                  (f"ส่งโดย {sender(album)}", reg(26), (20, 20, 20)), (extra, reg(24), GREY)):
             if text:
-                d.text((x, y), text, font=font, fill=fill)
+                d.text((x, y), _fit(d, text, font, p.width + gap - 12), font=font, fill=fill)
                 y += 36
         x += p.width + gap
     return _jpeg(im)

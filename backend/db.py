@@ -156,6 +156,31 @@ action_log = Table(
     Column("ms", Integer),
 )
 
+# The side-by-side picture the duplicate report makes for a suspected repeat, kept only while
+# that row waits in the review queue. The web server cannot reach Drive, so without it the
+# queue showed "โหลดรูปไม่ได้" where the other picture should be, and the call was made blind
+# (W46 #43332, 2026-11-15).
+review_pictures = Table(
+    "review_pictures", meta,
+    Column("trip_id", Integer, primary_key=True, autoincrement=False),
+    Column("jpeg", LargeBinary, nullable=False),
+    Column("made_at", String(19)),
+)
+
+# A picture whose row was deleted in the app, still to be moved to <week>/_ทิ้ง-กดลบ/<rider>/.
+# The web server cannot reach Drive, so the move waits here for the next round, which can.
+trash_moves = Table(
+    "trash_moves", meta,
+    Column("drive_id", String(128), primary_key=True),
+    Column("trip_id", Integer),
+    Column("date_from", String(10), nullable=False),
+    Column("date_to", String(10), nullable=False),
+    Column("rider", Text),
+    Column("asked_at", String(19)),
+    Column("done_at", String(19)),
+    Column("result", Text),
+)
+
 # GitHub keeps a workflow's log for 90 days; a support contract runs a year. archive_runs.py
 # copies each finished run's facts and the tail of its log here once a day (workflow
 # archive-runs.yml), and drops rows older than RUN_LOG_DAYS.
@@ -1649,6 +1674,63 @@ def get_trip_image(trip_id, part=1):
         if not r or r[0] is None:
             return None
         return bytes(r[0]), r[1] or "image/jpeg"
+
+
+def _waiting_ids(c, ids):
+    """The ids among `ids` still waiting for a person: read, not approved."""
+    return {r[0] for r in c.execute(select(trips.c.id).where(
+        trips.c.id.in_(list(ids)), trips.c.status == "done", trips.c.committed == 0))}
+
+
+def keep_review_pictures(pictures: dict) -> int:
+    """{trip_id: jpeg} → stored for the rows still waiting. Every stored picture whose row is no
+    longer waiting goes. Returns how many are stored now."""
+    with engine.begin() as c:
+        held = [r[0] for r in c.execute(select(review_pictures.c.trip_id))]
+        waiting = _waiting_ids(c, set(held) | set(pictures))
+        gone = [i for i in held if i not in waiting]
+        if gone:
+            c.execute(delete(review_pictures).where(review_pictures.c.trip_id.in_(gone)))
+        for tid, jpeg in pictures.items():
+            if tid in waiting and tid not in held:
+                c.execute(insert(review_pictures).values(trip_id=tid, jpeg=jpeg, made_at=_now()))
+        return c.execute(select(func.count()).select_from(review_pictures)).scalar()
+
+
+def review_picture_ids() -> set:
+    with engine.begin() as c:
+        return {r[0] for r in c.execute(select(review_pictures.c.trip_id))}
+
+
+def get_review_picture(trip_id):
+    """The comparison picture of a row that is still waiting, or None."""
+    with engine.begin() as c:
+        if not _waiting_ids(c, [trip_id]):
+            return None
+        r = c.execute(select(review_pictures.c.jpeg).where(review_pictures.c.trip_id == trip_id)).first()
+        return bytes(r[0]) if r else None
+
+
+def queue_trash_move(drive_id, date_from, date_to, rider, trip_id=None) -> bool:
+    """Ask the next round to move a deleted row's picture. Asking twice is asking once."""
+    with engine.begin() as c:
+        if c.execute(select(trash_moves.c.drive_id).where(trash_moves.c.drive_id == drive_id)).first():
+            return False
+        c.execute(insert(trash_moves).values(drive_id=drive_id, trip_id=trip_id, date_from=date_from,
+                                             date_to=date_to, rider=rider, asked_at=_now()))
+        return True
+
+
+def pending_trash_moves():
+    with engine.begin() as c:
+        return [dict(r) for r in c.execute(select(trash_moves).where(trash_moves.c.done_at.is_(None))
+                                           .order_by(trash_moves.c.asked_at)).mappings()]
+
+
+def finish_trash_move(drive_id, result):
+    with engine.begin() as c:
+        c.execute(update(trash_moves).where(trash_moves.c.drive_id == drive_id)
+                  .values(done_at=_now(), result=result))
 
 
 def trip_image_source(trip_id, part=1):

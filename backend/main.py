@@ -293,6 +293,16 @@ def trip_image(trip_id: int, part: int = 1):
                     headers={"Cache-Control": "private, max-age=3600"})
 
 
+@app.get("/api/trips/{trip_id}/compare")
+def trip_compare(trip_id: int):
+    """The duplicate report's side-by-side picture of a suspected repeat that is still waiting:
+    the other picture, for when the queue cannot fetch it (duplicate_report.keep_for_review)."""
+    jpeg = db.get_review_picture(trip_id)
+    if not jpeg:
+        raise HTTPException(404, "ยังไม่มีรูปเปรียบเทียบของแถวนี้ — จะมาหลังรอบอ่านจบ")
+    return Response(content=jpeg, media_type="image/jpeg", headers={"Cache-Control": "private, max-age=600"})
+
+
 def _picture_from_drive(trip_id: int, part: int):
     """(bytes, mime) from the row's own Drive file, or None. Never raises: a picture we cannot
     fetch is a 404, not a broken page."""

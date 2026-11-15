@@ -476,10 +476,28 @@ def with_pictures(drive, exports_id, d_from, cases, undecided, pre, albums, log=
         from ingest import week_label
         found = dup_examples.entries(cases, undecided, pre, half_ids(d_from))
         folder = drive.ensure_folder(exports_id, DRIVE_DIR)
-        return found, dup_examples.write(drive, folder, week_label(d_from), found, albums, log=log)
+        links = dup_examples.write(drive, folder, week_label(d_from), found, albums, log=log)
     except Exception as e:  # noqa: BLE001 — the report goes out without pictures rather than not at all
         log(f"⚠ รูปเปรียบเทียบงานซ้ำทำไม่สำเร็จ: {str(e)[:150]}")
         return [], {}
+    keep_for_review(drive, found, links, log)
+    return found, links
+
+
+def keep_for_review(drive, found, links, log=print):
+    """Each comparison picture of a row still waiting for a person goes into the database too,
+    for the review queue to show beside the row: the web server cannot reach Drive, so the
+    queue showed "โหลดรูปไม่ได้" in its place (W46 #43332). Pictures of rows already decided are
+    dropped. Never raises."""
+    try:
+        have = db.review_picture_ids()
+        new = {}
+        for e in found:
+            if e.trip_id and e.trip_id not in have and links.get(e.name):
+                new[e.trip_id] = drive.download(links[e.name])
+        db.keep_review_pictures(new)
+    except Exception as e:  # noqa: BLE001 — the queue falls back to fetching the other picture
+        log(f"⚠ เก็บรูปเปรียบเทียบไว้ให้คิวตรวจไม่สำเร็จ: {str(e)[:120]}")
 
 
 ADMIN_COLS = ["ลำดับ", "ประเภท", "รูปที่ซ้ำ", "อัลบั้มของรูปที่ซ้ำ", "ส่งโดย", "ซ้ำกับรูป", "อัลบั้มของต้นฉบับ",
