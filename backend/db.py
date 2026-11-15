@@ -1721,6 +1721,15 @@ def queue_trash_move(drive_id, date_from, date_to, rider, trip_id=None) -> bool:
         return True
 
 
+def rows_using_picture(drive_id, except_trip=None) -> list:
+    """Ids of rows whose picture is this Drive file, other than except_trip."""
+    with engine.begin() as c:
+        q = select(trips.c.id).where(trips.c.source_url.contains(drive_id, autoescape=True))
+        if except_trip is not None:
+            q = q.where(trips.c.id != except_trip)
+        return [r[0] for r in c.execute(q)]
+
+
 def pending_trash_moves():
     with engine.begin() as c:
         return [dict(r) for r in c.execute(select(trash_moves).where(trash_moves.c.done_at.is_(None))

@@ -57,6 +57,7 @@ def patch(trip=TRIP, job=JOB, fid="drive-abc"):
     db.drive_ids_for_trips = lambda ids: ({7: fid} if fid else {})
 
 
+db.init_db()
 check("ชื่อโฟลเดอร์ทิ้งคือ _ทิ้ง-กดลบ", tp.TRASH_DIR == "_ทิ้ง-กดลบ")
 
 patch()
@@ -80,7 +81,6 @@ r = tp.move_to_trash(7, drive=d)
 check("ไม่เจอโฟลเดอร์สัปดาห์ของงานนี้ — ไม่ย้ายมั่วไปสัปดาห์อื่น",
       r["moved"] is False and not d.moved)
 
-db.init_db()
 patch()
 d = FakeDrive(blow_up=True)
 r = tp.move_to_trash(7, drive=d, log=lambda *_a: None)
@@ -129,6 +129,24 @@ check("❗ การกดลบเก่าที่ย้ายรูปไม
       added == 1 and "old-1" in {m["drive_id"] for m in db.pending_trash_moves()})
 check("สัปดาห์ที่ปิดแล้ว ไม่จดย้อนหลัง",
       tp.queue_from_log(open_week=lambda *_a: False) == 0)
+
+from sqlalchemy import insert                                    # noqa: E402
+
+with db.engine.begin() as c:
+    c.execute(insert(db.trips).values(id=8, job_id=3, file_name="same.jpg", status="done", committed=1,
+                                      source_url="https://drive.google.com/file/d/drive-abc/view"))
+patch()
+d = FakeDrive()
+r = tp.move_to_trash(7, drive=d)
+check("❗ กดลบแถวที่รูปยังเป็นของอีกแถว (8) — ไม่ย้าย ไม่จดให้รอบอ่าน",
+      r["moved"] is False and not r.get("queued") and not d.moved and "8" in r["why"])
+with db.engine.begin() as c:
+    c.execute(db.delete(db.trash_moves))
+db.queue_trash_move("drive-abc", "2026-09-14", "2026-09-20", "สาธิต Win")
+d = FakeDrive()
+tp.move_queued(d, log=lambda *_a: None)
+check("❗ รอบอ่านไม่ย้ายรูปที่แถวที่ยังนับอยู่ใช้ และปิดรายการไว้ ไม่ลองซ้ำทุกรอบ",
+      not d.moved and db.pending_trash_moves() == [])
 
 patch(job={"id": 3, "driver_name": "สาธิต Win"})
 d = FakeDrive()

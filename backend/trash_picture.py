@@ -37,8 +37,16 @@ def _target(trip_id):
             "rider": str(job.get("driver_name") or "ไม่ทราบชื่อ"), "trip_id": trip_id}
 
 
+class InUse(Exception):
+    """Another row still has this picture: moving it would take a counted trip's slip out of the
+    rider's folder."""
+
+
 def _move(drive, item):
     """Move it; the folder it went to, or None when the week has no folder. Raises on Drive errors."""
+    others = db.rows_using_picture(item["drive_id"], except_trip=item.get("trip_id"))
+    if others:
+        raise InUse(f"ยังมีแถว {', '.join(map(str, others[:5]))} ใช้รูปนี้อยู่")
     import rebalance_quota as rq
     wk = rq.week_folder(drive, config.DRIVE_INBOX_FOLDER_ID, item["date_from"], item["date_to"])
     if wk is None:
@@ -65,6 +73,8 @@ def move_to_trash(trip_id, drive=None, log=print) -> dict:
             import roster
             drive = roster._drive()
         where = _move(drive, item)
+    except InUse as e:
+        return {"moved": False, "why": f"ไม่ย้ายรูป: {e}"}
     except Exception as e:                                       # noqa: BLE001
         log(f"⚠ ลบแถว {trip_id} แล้ว แต่ย้ายรูปไป {TRASH_DIR} ตอนนี้ไม่ได้: {str(e)[:90]}")
         try:
@@ -109,6 +119,10 @@ def move_queued(drive, log=print) -> int:
     for item in db.pending_trash_moves():
         try:
             where = _move(drive, item)
+        except InUse as e:
+            db.finish_trash_move(item["drive_id"], f"ไม่ย้าย: {e}")
+            log(f"  ⚠ ไม่ย้ายรูป {item['drive_id']} ไป {TRASH_DIR}: {e}")
+            continue
         except Exception as e:                                   # noqa: BLE001
             if "404" in str(e) or "not found" in str(e).lower():
                 db.finish_trash_move(item["drive_id"], "ไม่พบรูปบน Drive แล้ว")
