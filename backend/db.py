@@ -1795,9 +1795,13 @@ def set_notes(notes: dict) -> None:
     if not notes:
         return
     from sqlalchemy import bindparam
-    with engine.begin() as c:
-        c.execute(update(trips).where(trips.c.id == bindparam("tid")).values(note=bindparam("txt")),
-                  [{"tid": int(k), "txt": v} for k, v in notes.items()])
+    try:
+        with engine.begin() as c:
+            c.execute(update(trips).where(trips.c.id == bindparam("tid")).values(note=bindparam("txt")),
+                      [{"tid": int(k), "txt": v} for k, v in notes.items()])
+    except Exception:  # noqa: BLE001 — the rows already have their rider; never fail the filing here
+        for k, v in notes.items():
+            update_trip(int(k), {"note": v})
 
 
 def update_trip(trip_id, fields: dict):

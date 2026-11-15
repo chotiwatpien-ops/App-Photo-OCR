@@ -159,6 +159,45 @@ class FlakyDrive(LocalDrive):
         return super().move_file(file_id, new_parent_id)
 
 
+real_begin = db.engine.begin
+t_y1, t_y2 = staged("y1.jpg", "Saver Bike"), staged("y2.jpg", "Saver Bike")
+
+
+class OneShotFailure:
+    """The first transaction carrying a many-row write fails, as an untried driver might."""
+    def __init__(self):
+        self.failed = False
+
+    def __call__(self):
+        ctx = real_begin()
+        outer = self
+
+        class Wrap:
+            def __enter__(self):
+                conn = ctx.__enter__()
+                run = conn.execute
+
+                def execute(stmt, params=None, *a, **k):
+                    if isinstance(params, list) and len(params) > 1 and not outer.failed:
+                        outer.failed = True
+                        raise RuntimeError("executemany ไม่รองรับ")
+                    return run(stmt, params, *a, **k) if params is not None else run(stmt, *a, **k)
+                conn.execute = execute
+                return conn
+
+            def __exit__(self, *exc):
+                return ctx.__exit__(*exc)
+        return Wrap()
+
+
+db.engine.begin = broken = OneShotFailure()
+try:
+    res6 = far.file_rows(drive, WEEK, W, WE, log=lambda *a: None)
+finally:
+    db.engine.begin = real_begin
+check("❗ เขียนโน้ตแบบรวมก้อนพัง: ถอยไปเขียนทีละแถว ลงที่ครบและมีโน้ตทุกแถว",
+      broken.failed and res6["filed"] >= 2 and all(db.get_trip(t)["note"].startswith("ลงที่หลังอ่าน") for t in (t_y1, t_y2)))
+
 t_x1, t_x2 = staged("x1.jpg", "Saver Bike"), staged("x2.jpg", "Saver Bike")
 res5 = far.file_rows(FlakyDrive(ROOT), WEEK, W, WE, log=lambda *a: None)
 check("ย้ายรูปไม่สำเร็จ 1 ใบ: ยังลงที่ทั้งสองแถว และบอกว่าย้ายรูปไม่สำเร็จ",
