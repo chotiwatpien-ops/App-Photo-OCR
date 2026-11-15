@@ -69,9 +69,24 @@ check("เหตุผลในคิว: ตัวเลข 1 · ไม่ม�
 kinds = [t["kind"] for t in ov["todos"]]
 check("❗ สิ่งที่ต้องทำเรียง: ตรวจคิว → ขอรูปเพิ่ม → รอผลอ่าน → รูปอ่านไม่ได้", kinds == ["review", "short", "reading", "errors"])
 check("ข้อความขอรูปบอกจำนวนต่อ Service Type", "Standard Bike 3" in ov["todos"][1]["title"] and "Standard Car 4" in ov["todos"][1]["title"])
-check("ไรเดอร์ที่ยังรับได้: เฉพาะกลุ่มที่ขาด", {x["name"] for x in ov["riders"]} == {"กิตติ Win", "สมหมาย Taxi"})
+rr = {x["name"]: x for x in ov["riders"]}
+check("ไรเดอร์ที่ยังรับได้: เฉพาะคนที่รถตรงกับกลุ่มที่ขาด", set(rr) == {"กิตติ Win", "ธีรพล Win", "สมหมาย Taxi"})
+check("❗ โควตา 21 ต่อคนรวม Saver กับ Standard: คนในโฟลเดอร์ Saver รับงาน Standard Bike ที่ขาดได้ด้วย",
+      rr["ธีรพล Win"]["service"] == "Standard Bike" and rr["ธีรพล Win"]["room"] == 15)
 check("รับได้อีก = 21 − ที่มี (แถวซ้ำไม่นับ)",
-      {x["name"]: x["room"] for x in ov["riders"]} == {"กิตติ Win": 18, "สมหมาย Taxi": 19})
+      {k: x["room"] for k, x in rr.items()} == {"กิตติ Win": 18, "ธีรพล Win": 15, "สมหมาย Taxi": 19})
+
+r46 = [{"driver_name": "จิณณวัตร Win", "status": "done", "category": "2 W Saver"}] + \
+      [{"driver_name": "จิณณวัตร Win", "status": "done", "category": "2 W Standard"}] * 20 + \
+      [{"driver_name": "สาธร Home", "status": "done", "category": "2 W Saver"}] * 5 + \
+      [{"driver_name": "เพ็ชร์ Taxi", "status": "done", "category": "4 W Standard"}] * 10
+got = {x["name"]: (x["have"], x["room"]) for x in overview.riders_with_room(r46, {"Saver Bike"})}
+check("❗ W46: Saver 1 + Standard 20 = เต็ม 21 แล้ว ไม่ขึ้นว่า 'รับได้อีก 20'", "จิณณวัตร Win" not in got)
+check("คนที่ยังไม่ครบขึ้นด้วยยอดรวมจริง และคนรถยนต์ไม่ขึ้นเมื่อขาดแค่งานมอเตอร์ไซค์",
+      got == {"สาธร Home": (5, 16)})
+both = overview.riders_with_room(r46[-15:-10], {"Saver Bike", "Standard Bike"})
+check("กลุ่มมอเตอร์ไซค์ขาดทั้งสองกลุ่ม: คนเดียวขึ้นแถวเดียว", len(both) == 1
+      and both[0]["service"] == "Saver Bike · Standard Bike")
 
 n = overview.next_round
 check("ตารางถามทุกชั่วโมงที่ xx:23", n(datetime(2026, 10, 2, 14, 0)) == datetime(2026, 10, 2, 14, 23))

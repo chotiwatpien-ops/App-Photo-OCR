@@ -101,24 +101,35 @@ def next_round(now, last_finished=None, oldest_batch=None):
 
 
 def riders_with_room(rows, short_services):
-    """People in a group that is still short who can take more this week, most room first."""
+    """People who can still take a trip of a group that is short, most room first.
+
+    A rider's 21 is one quota across Saver and Standard, as distribute.Allocator fills it, so a
+    rider counts every trip of the week whatever its group, and can take a short group's trip
+    when it is of their wheel. Counted per group, W46 listed 'Saver Bike 1/21, 20 more' for
+    riders already holding 21 (2026-11-15: 7 of the first 8 names were full)."""
     exp = config.EXPECTED_TRIPS_PER_WEEK
-    have = {}
+    have, wheel = {}, {}
     for r in rows:
         if r["driver_name"] == db.HOLDING_RIDER or r["status"] not in ("done", "pending", "error"):
             continue
         cat = (r["category"] or "").strip()
-        svc = CATEGORY_SERVICE.get(cat)
-        svc = car_is_standard(svc) if svc else None
-        if svc not in short_services:
+        if not cat:
             continue
-        key = (r["driver_name"], svc)
-        have[key] = have.get(key, 0) + 1
+        have[r["driver_name"]] = have.get(r["driver_name"], 0) + 1
+        wheel[r["driver_name"]] = cat.split(" W ")[0]
     out = []
-    for (name, svc), n in have.items():
-        cap = config.WEEK_QUOTA.get(GROUP_OF[svc], exp)
-        if n < cap:
-            out.append({"name": name, "service": svc, "have": n, "cap": cap, "room": cap - n})
+    for name, n in have.items():
+        fits = []
+        for svc in SERVICES:
+            group = GROUP_OF[svc]
+            if svc in short_services and group.split(" W ")[0] == wheel[name]:
+                cap = config.WEEK_QUOTA.get(group) or config.WEEK_QUOTA.get(f"{wheel[name]}W") or exp
+                if n < cap:
+                    fits.append((svc, cap))
+        if fits:
+            cap = max(c for _s, c in fits)
+            out.append({"name": name, "service": " · ".join(s for s, _c in fits), "have": n, "cap": cap,
+                        "room": cap - n})
     out.sort(key=lambda x: (-x["room"], x["name"]))
     return out
 
