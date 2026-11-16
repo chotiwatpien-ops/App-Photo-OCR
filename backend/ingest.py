@@ -1261,6 +1261,7 @@ def _run(drive, inbox_id, exports_id, run_id, dry_run=False, limit=None, only=No
                 st = db.auto_approve_job(jid, fresh_ids=fresh_round)
                 approved += st["approved"]
                 flagged += st["flagged"]
+                keep_images_for_waiting(jid, drive=drive)    # none was kept while it sat in the waiting room
             except Exception as e:  # noqa: BLE001
                 log(f"  ✗ job #{jid}: ปิดงานหลังลงที่ไม่สำเร็จ — {str(e)[:120]}")
                 errors += 1

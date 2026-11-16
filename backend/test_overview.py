@@ -88,6 +88,13 @@ both = overview.riders_with_room(r46[-15:-10], {"Saver Bike", "Standard Bike"})
 check("กลุ่มมอเตอร์ไซค์ขาดทั้งสองกลุ่ม: คนเดียวขึ้นแถวเดียว", len(both) == 1
       and both[0]["service"] == "Saver Bike · Standard Bike")
 
+roster = [("2W", "สาธร Home"), ("2W", "ใหม่ Win"), ("4W", "ใหม่ Taxi"), ("2W", "จิณณวัตร WIN")]
+w47 = overview.riders_with_room(r46, {"Saver Bike"}, roster)
+check("❗ W47 วันแรก: คนในรายชื่อที่ยังไม่มีงานนับด้วย (เดิมขึ้นแค่ 1 คน ทั้งที่รอบนั้นเปิดคนใหม่ 5 คน)",
+      [(x["name"], x["have"], x["room"]) for x in w47] == [("สาธร Home", 5, 16), ("ใหม่ Win", 0, 21)])
+check("คนในรายชื่อที่มีงานแล้วไม่ขึ้นซ้ำเป็นคนใหม่ ถึงพิมพ์ตัวใหญ่เล็กต่างกัน และคนรถยนต์ไม่ขึ้นตอนขาดแค่มอเตอร์ไซค์",
+      not any(x["name"] in ("จิณณวัตร WIN", "ใหม่ Taxi") for x in w47))
+
 n = overview.next_round
 check("ตารางถามทุกชั่วโมงที่ xx:23", n(datetime(2026, 10, 2, 14, 0)) == datetime(2026, 10, 2, 14, 23))
 check("รอบที่เพิ่งจบไม่ถึง 2.5 ชม. ทำให้ช่องก่อนหน้านั้นถูกข้าม",

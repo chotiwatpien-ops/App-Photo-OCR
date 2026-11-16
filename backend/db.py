@@ -13,16 +13,20 @@ from sqlalchemy import (BigInteger, Column, Float, Integer, LargeBinary, MetaDat
 from config import DATABASE_URL
 
 _is_sqlite = DATABASE_URL.startswith("sqlite")
+# No ping before each use: the runners sit in the US and the database in Singapore, so the ping
+# was one more round trip on every hand-out, and reading one row takes about 4 (W47 #522: 110
+# hand-outs for 27 rows). A connection is replaced once it is 4 minutes old instead, inside the
+# 5 idle minutes after which Neon suspends and drops it.
 engine = create_engine(
-    DATABASE_URL, future=True, pool_pre_ping=True,
-    connect_args={"check_same_thread": False, "timeout": 10} if _is_sqlite else {},
+    DATABASE_URL, future=True,
+    **({"connect_args": {"check_same_thread": False, "timeout": 10}} if _is_sqlite else {"pool_recycle": 240}),
 )
 meta = MetaData()
 
 # What the database cost a stretch of work: statements, the seconds they took, and how many times
-# a connection was handed out (each hand-out pings the server first, pool_pre_ping). The round
-# logs it per step to tell a slow step's database time from its Drive and Gemini time. The
-# database is in Singapore and the runners in the US (W46, 2026-11-15).
+# a connection was handed out. The round logs it per step to tell a slow step's database time
+# from its Drive and Gemini time. The database is in Singapore and the runners in the US (W46,
+# 2026-11-15).
 DB_COST = {"statements": 0, "seconds": 0.0, "checkouts": 0}
 
 
@@ -1602,11 +1606,19 @@ def set_trip_image(trip_id, image_bytes, mime="image/jpeg") -> None:
                   .values(image_blob=image_bytes, image_mime=mime))
 
 
+def _not_holding():
+    """Rows the waiting room holds are read but nobody's yet: the next step of the same round files
+    and approves them, so a picture kept for them is thrown away minutes later (W47 #522: 94
+    downloaded and stored, 75 s, all approved the same round). Kept once filed, if still waiting."""
+    return trips.c.job_id.notin_(select(jobs.c.id).where(jobs.c.driver_name == HOLDING_RIDER))
+
+
 def waiting_trip_ids(job_id, among=None):
     """Rows of this job that still need a person — the ones whose image is worth keeping."""
     with engine.begin() as c:
         q = select(trips.c.id).where(trips.c.job_id == job_id, trips.c.status == "done",
-                                     trips.c.committed == 0, trips.c.image_blob.is_(None))
+                                     trips.c.committed == 0, trips.c.image_blob.is_(None),
+                                     _not_holding())
         if among:
             q = q.where(trips.c.id.in_(list(among)))
         return [r[0] for r in c.execute(q).all()]
@@ -1681,7 +1693,7 @@ def waiting_trips_without_image():
         return [(r[0], r[1]) for r in c.execute(
             select(trips.c.id, trips.c.job_id)
             .where(trips.c.status == "done", trips.c.committed == 0,
-                   trips.c.image_blob.is_(None),
+                   trips.c.image_blob.is_(None), _not_holding(),
                    trips.c.id.in_(select(ingested_files.c.trip_id)))).all()]
 
 

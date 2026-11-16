@@ -100,16 +100,23 @@ def next_round(now, last_finished=None, oldest_batch=None):
     return slot
 
 
-def riders_with_room(rows, short_services):
-    """People who can still take a trip of a group that is short, most room first.
+def riders_with_room(rows, short_services, roster=()):
+    """People who can still take a trip of a group that is short: those already working this
+    week, most room first, then the names on Ops' list who have nothing yet, the order
+    distribute.Allocator fills them in.
 
     A rider's 21 is one quota across Saver and Standard, as distribute.Allocator fills it, so a
     rider counts every trip of the week whatever its group, and can take a short group's trip
     when it is of their wheel. Counted per group, W46 listed 'Saver Bike 1/21, 20 more' for
-    riders already holding 21 (2026-11-15: 7 of the first 8 names were full)."""
+    riders already holding 21 (2026-11-15: 7 of the first 8 names were full).
+
+    roster: [(wheel, name)] from Ops' list, wheel '2W' or '4W'. Counting only people with a row
+    this week said '1 rider can still take work' on W47's first day, while the round that day
+    opened 5 new riders from the list."""
     exp = config.EXPECTED_TRIPS_PER_WEEK
-    have, wheel = {}, {}
+    have, wheel, seen = {}, {}, set()
     for r in rows:
+        seen.add((r["driver_name"] or "").lower())
         if r["driver_name"] == db.HOLDING_RIDER or r["status"] not in ("done", "pending", "error"):
             continue
         cat = (r["category"] or "").strip()
@@ -117,6 +124,10 @@ def riders_with_room(rows, short_services):
             continue
         have[r["driver_name"]] = have.get(r["driver_name"], 0) + 1
         wheel[r["driver_name"]] = cat.split(" W ")[0]
+    for w, name in roster:
+        if name.lower() not in seen:
+            seen.add(name.lower())
+            have[name], wheel[name] = 0, w.rstrip("W")
     out = []
     for name, n in have.items():
         fits = []
@@ -130,7 +141,7 @@ def riders_with_room(rows, short_services):
             cap = max(c for _s, c in fits)
             out.append({"name": name, "service": " · ".join(s for s, _c in fits), "have": n, "cap": cap,
                         "room": cap - n})
-    out.sort(key=lambda x: (-x["room"], x["name"]))
+    out.sort(key=lambda x: (x["have"] == 0, -x["room"], x["name"]))
     return out
 
 
@@ -147,7 +158,8 @@ def build(d_from, d_to, albums=(), now=None):
     oldest = batches[0] if batches else None
     running = bool(last and not last.get("finished_at"))
     short = {g["service"]: g["short"] for g in groups if g["short"]}
-    riders = riders_with_room(rows, set(short))
+    roster = [(w, f"{n} {k}".strip()) for w in ("2W", "4W") for n, k in db.name_pool_for(w)] if short else []
+    riders = riders_with_room(rows, set(short), roster)
     today = now.date().isoformat()
 
     todos = []
