@@ -249,6 +249,12 @@ WEEK_FILES_FROM = _setting("WEEK_FILES_FROM", "week_files_from", "2026-11-09") o
 # the alternative layout of one separate folder holding Pool/<Week …>/<group>/<album>/.
 DRIVE_POOL_FOLDER_ID = _setting("DRIVE_POOL_FOLDER_ID", "drive_pool_folder_id")
 POOL_PARALLEL = int(_setting("POOL_PARALLEL", "pool_parallel", 4))                # local OCR threads
+# A week still short gets this much more than it lacks. The pool decides before the reader sees
+# a booking code, so a repeat found after reading left W46 Saver Bike one short while the rest of
+# its album had already gone to W47 (2026-11-16). The extra waits in _พร้อมอ่าน, fills the gap the
+# next round, and the close moves whatever is left to next week. Percent of the gap, at least MIN.
+POOL_RESERVE_PCT = float(_setting("POOL_RESERVE_PCT", "pool_reserve_pct", 2))
+POOL_RESERVE_MIN = int(_setting("POOL_RESERVE_MIN", "pool_reserve_min", 2))
 # every ingest round first pairs and files what is in Week/Pool (pool.round_step); "0" leaves the
 # pool alone so only the manual "Pool" workflow touches it
 POOL_IN_ROUND = str(_setting("POOL_IN_ROUND", "pool_in_round", "1")).lower() in ("1", "true", "yes")

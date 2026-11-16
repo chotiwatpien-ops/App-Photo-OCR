@@ -82,6 +82,29 @@ def candidates(d_from, d_to, group):
     return [(r, jobs[r["job_id"]]) for r in out]
 
 
+def chosen(d_from, d_to, group, ids):
+    """[(row, next-week job)] for rows named by id: next week's, finished, of this group's service.
+
+    For work next week holds that no carry put there. The pool sends an album's overflow to next
+    week before the slips are read, so a repeat found after reading can leave this week one short
+    with its album's remaining trips already next week's own (W46 Saver Bike 1,469, 2026-11-16)."""
+    n_from, n_to = next_week(d_from, d_to)
+    jobs = {j["id"]: j for j in db.jobs_by_week().get((n_from, n_to), [])
+            if (j.get("category") or "").strip() == group}
+    if not jobs or not ids:
+        return []
+    t = db.trips.c
+    with db.engine.begin() as c:
+        rows = [dict(r) for r in c.execute(
+            select(t.id, t.job_id, t.file_name, t.trip_date, t.trip_time, t.service_type,
+                   t.customer_image, t.note)
+            .where(t.id.in_(list(ids)), t.job_id.in_(list(jobs)), t.status == "done")).mappings().all()]
+    want = SERVICE_OF.get(group)
+    rows = [r for r in rows if want is None or car_is_standard((r.get("service_type") or "").strip()) == want]
+    rows.sort(key=lambda r: r["id"])
+    return [(r, jobs[r["job_id"]]) for r in rows]
+
+
 def home_job(row, next_job, d_from, d_to, group):
     """The job the row left, when it is still this week's and this group's — else None."""
     m = FROM_JOB_RE.search(row.get("note") or "")
@@ -100,8 +123,14 @@ def restored_note(row, d_from, d_to, group, from_job):
     return " | ".join([back] + parts)
 
 
-def apply(drive, this_week_id, next_exports_id, d_from, d_to, group, picked, log=print):
+def apply(drive, this_week_id, next_exports_id, d_from, d_to, group, picked, log=print, into=None):
+    """into: this week's job to put every row in, instead of the one it left or its rider's."""
     done = Counter()
+    target = db.get_job(into) if into else None
+    if into and not (target and (target["date_from"], target["date_to"]) == (d_from, d_to)
+                     and (target.get("category") or "").strip() == group):
+        raise SystemExit(f"✗ job #{into} ไม่ใช่ job ของ {group} สัปดาห์ {d_from}..{d_to}")
+
     listing = {}
 
     def find_in(folder_id, name):
@@ -112,7 +141,7 @@ def apply(drive, this_week_id, next_exports_id, d_from, d_to, group, picked, log
     group_dir = None
     replaced = None
     for r, nj in picked:
-        home = home_job(r, nj, d_from, d_to, group)
+        home = target or home_job(r, nj, d_from, d_to, group)
         if home is None:
             jid = db.find_job(nj["driver_name"], d_from, d_to, category=group, admin=nj.get("admin"))
             home = db.get_job(jid) if jid else None
@@ -146,6 +175,8 @@ def apply(drive, this_week_id, next_exports_id, d_from, d_to, group, picked, log
         fields = {"customer_image": None, "note": restored_note(r, d_from, d_to, group, nj["id"])}
         if m and d_from <= m.group(1) <= d_to:
             fields["trip_date"] = m.group(1)
+        elif not (d_from <= (r.get("trip_date") or "") <= d_to):
+            fields["trip_date"] = d_to          # next week's day: the nearest day of this week
         db.update_trip(r["id"], fields)
         done["ดึงแถวกลับ"] += 1
     return done
@@ -158,9 +189,15 @@ def main(argv=None):
     ap.add_argument("--to", dest="d_to", required=True)
     ap.add_argument("--group", action="append", default=[], help="กลุ่มที่จะดึงกลับ (ใส่ซ้ำได้) — ว่าง = ทุกกลุ่ม")
     ap.add_argument("--target", type=int, default=1470)
+    ap.add_argument("--trip", type=int, action="append", default=[],
+                    help="ดึงแถวนี้ของสัปดาห์หน้า (ใส่ซ้ำได้) แทนแถวที่เคยยกไป — ต้องใส่ --group กลุ่มเดียว")
+    ap.add_argument("--into", type=int, help="job ของสัปดาห์นี้ที่จะใส่แถวที่ดึงกลับ")
     ap.add_argument("--apply", action="store_true")
     a = ap.parse_args(argv)
     db.init_db()
+    if a.trip and len(a.group) != 1:
+        print("✗ --trip ต้องใส่ --group กลุ่มเดียว")
+        return 1
 
     have = count_by_service(a.d_from, a.d_to)
     n_from, n_to = next_week(a.d_from, a.d_to)
@@ -169,13 +206,17 @@ def main(argv=None):
     for group in (a.group or list(SERVICE_OF)):
         service = SERVICE_OF[group]
         need = a.target - have.get(service, 0)
-        pool = candidates(a.d_from, a.d_to, group)
+        pool = chosen(a.d_from, a.d_to, group, a.trip) if a.trip else candidates(a.d_from, a.d_to, group)
         if need <= 0:
             print(f"    {service:<14} มี {have.get(service, 0):>5}   ไม่ขาด")
             continue
         plan[group] = pool[:need]
-        print(f"    {service:<14} มี {have.get(service, 0):>5}   ขาด {need} · แถวที่ยกไปแล้วดึงกลับได้ {len(pool)}"
+        print(f"    {service:<14} มี {have.get(service, 0):>5}   ขาด {need} · "
+              + ("แถวที่เลือก" if a.trip else "แถวที่ยกไปแล้วดึงกลับได้") + f" {len(pool)}"
               f" → ดึง {len(plan[group])}" + ("" if len(pool) >= need else f" (ยังขาดอีก {need - len(pool)})"))
+        for r, nj in plan[group]:
+            print(f"      #{r['id']} {r['file_name']} · {r.get('trip_date')} · จาก job #{nj['id']}"
+                  + (f" → job #{a.into}" if a.into else ""))
     if not any(plan.values()):
         print("ไม่มีอะไรต้องดึงกลับ")
         return 0
@@ -197,7 +238,8 @@ def main(argv=None):
     total = Counter()
     for group, picked in plan.items():
         if picked:
-            total.update(apply(drive, this_week["id"], next_exports, a.d_from, a.d_to, group, picked))
+            total.update(apply(drive, this_week["id"], next_exports, a.d_from, a.d_to, group, picked,
+                               into=a.into))
     print("\nทำแล้ว: " + " · ".join(f"{k} {v}" for k, v in total.most_common()))
     print(f"ขั้นต่อไป: ingest exports_only ของ {week_label(a.d_from)} แล้ว {week_label(n_from)}"
           f" (ชื่อสัปดาห์หน้า: {next_week_folder(a.week, a.d_from, a.d_to)})")

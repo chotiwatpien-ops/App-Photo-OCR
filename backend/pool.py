@@ -38,6 +38,7 @@ import argparse
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import sys
@@ -456,24 +457,44 @@ MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oc
 
 
 def week_room(week_name, log=log):
-    """{group: trips this week can still take} — the customer's target minus what is filed.
+    """{group: trips this week can still take} — the customer's target minus what is filed and
+    what is read and waiting in _พร้อมอ่าน, plus a small reserve while the group is still short.
 
     None when the week's name cannot be read as dates (a sandbox week), which means 'do not
-    hold anything back'. Rows already parked as repeats or voided do not count against it."""
+    hold anything back'. Rows already parked as repeats or voided do not count against it.
+
+    The reserve (config.POOL_RESERVE_PCT of the gap, at least POOL_RESERVE_MIN): this count is
+    taken before any slip of the album is read, so a repeat found afterwards, or a slip whose chip
+    says another tier, leaves the week short with the album's rest already next week's (W46 Saver
+    Bike 1,469, 2026-11-16). Read rows waiting count against the room, so the extra is sent once
+    and fills such a gap from _พร้อมอ่าน instead of drawing more from the pool."""
     import ingest
     rng = ingest.parse_range(week_name)
     if not rng:
         return None
     d_from, d_to = (d.isoformat() for d in rng)
     import db
+    import file_after_read
+    from pipeline import car_is_standard
     try:
         have = db.week_group_counts(d_from, d_to)
+        waiting = {}
+        for r in file_after_read.staged_rows(d_from, d_to):
+            g = file_after_read.GROUP_OF.get(car_is_standard((r.get("service_type") or "").strip()))
+            if g:
+                waiting[g] = waiting.get(g, 0) + 1
     except Exception as e:  # noqa: BLE001 — a count that fails must not stop the filing
         log(f"  ⚠ นับงานของสัปดาห์ {d_from} ไม่ได้ ({str(e)[:60]}) — ลงงานตามปกติ")
         return None
     target = config.WEEKLY_TARGET_PER_GROUP
-    return {g: target - n for g, n in have.items()} | {
-        g: target - have.get(g, 0) for g in ("2 W Saver", "2 W Standard", "4 W Standard")}
+    room = {}
+    for g in set(have) | set(waiting) | {"2 W Saver", "2 W Standard", "4 W Standard"}:
+        gap = target - have.get(g, 0)
+        left = gap - waiting.get(g, 0)
+        if gap > 0:
+            left += max(config.POOL_RESERVE_MIN, math.ceil(gap * config.POOL_RESERVE_PCT / 100))
+        room[g] = left
+    return room
 
 
 def next_week_name(week_name):

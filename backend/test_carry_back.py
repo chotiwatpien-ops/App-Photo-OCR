@@ -124,6 +124,35 @@ with db.engine.begin() as c:
     back = c.execute(select(db.trips.c.job_id).where(db.trips.c.file_name == "s2.jpg")).scalar()
 check("job เดิมไม่มีแล้ว: กลับเข้า job ของคนเดิมในกลุ่มเดิมของสัปดาห์นี้", back == j_saver)
 
+# --- a row next week holds that no carry put there, named by id, into a chosen rider -----------
+# (W46 2026-11-16: a repeat was thrown out after the pool had sent the album's rest to W47)
+other_rider = os.path.join(ROOT, THIS, "2 W Saver", "06-สมหญิง Home")
+os.makedirs(other_rider)
+j_other = db.create_job("สมหญิง Home", "Trips", D_FROM, D_TO, category="2 W Saver", drive_folder_id=other_rider)
+with db.engine.begin() as c:
+    own_id = c.execute(select(db.trips.c.id).where(db.trips.c.file_name == "own.jpg")).scalar()
+    s1_id = c.execute(select(db.trips.c.id).where(db.trips.c.file_name == "s1.jpg")).scalar()
+check("เลือกตาม id ได้แม้ไม่เคยถูกยก · แถวของสัปดาห์นี้เองไม่ถูกหยิบ",
+      [r["file_name"] for r, _j in cb.chosen(D_FROM, D_TO, "2 W Saver", [own_id, s1_id])] == ["own.jpg"])
+check("เลือกได้เฉพาะ Service Type ของกลุ่ม", cb.chosen(D_FROM, D_TO, "2 W Standard", [own_id]) == [])
+try:
+    cb.apply(drive, os.path.join(ROOT, THIS), exp38, N_FROM, N_TO, "2 W Saver",
+             cb.chosen(D_FROM, D_TO, "2 W Saver", [own_id]), log=lambda *a: None, into=j_other)
+    refused = False
+except SystemExit:
+    refused = True
+check("job ปลายทางต้องเป็นของสัปดาห์และกลุ่มเดียวกัน ไม่งั้นไม่ทำอะไร", refused)
+done = cb.apply(drive, os.path.join(ROOT, THIS), exp38, D_FROM, D_TO, "2 W Saver",
+                cb.chosen(D_FROM, D_TO, "2 W Saver", [own_id]), log=lambda *a: None, into=j_other)
+with db.engine.begin() as c:
+    own = dict(c.execute(select(db.trips.c.job_id, db.trips.c.trip_date, db.trips.c.note)
+                         .where(db.trips.c.id == own_id)).mappings().first())
+check("แถวเข้า job ที่เลือก และรูปรวมร่างย้ายเข้าโฟลเดอร์ของคนนั้น",
+      own["job_id"] == j_other and "own.jpg" in os.listdir(other_rider) and done["ย้ายรูปรวมร่างกลับ"] == 1)
+check("❗ วันที่ของสัปดาห์หน้าถูกลงเป็นวันสุดท้ายของสัปดาห์นี้", own["trip_date"] == D_TO)
+check("โน้ตบอกว่าดึงกลับจาก job ไหน", own["note"].startswith("ดึงกลับจากสัปดาห์ 2026-09-14..2026-09-20")
+      and f"job #{j_next}" in own["note"])
+
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

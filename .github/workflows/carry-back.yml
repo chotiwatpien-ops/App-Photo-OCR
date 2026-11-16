@@ -34,6 +34,14 @@ on:
         type: string
         required: true
         default: "1470"
+      trips:
+        description: "เลือกแถวของสัปดาห์หน้าเอง: id คั่นด้วยจุลภาค (ต้องใส่ groups กลุ่มเดียว) — ว่าง = แถวที่เคยยกไป"
+        type: string
+        default: ""
+      into:
+        description: "job ของสัปดาห์นี้ที่จะใส่แถวที่เลือก (ว่าง = job เดิมหรือ job ของไรเดอร์คนเดิม)"
+        type: string
+        default: ""
       apply:
         description: "ดึงกลับจริง (ไม่ติ๊ก = รายงานอย่างเดียว)"
         type: boolean
@@ -63,6 +71,8 @@ jobs:
           DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
           WEEK: ${{ github.event.inputs.week }}
           PULL_GROUPS: ${{ github.event.inputs.groups }}
+          PULL_TRIPS: ${{ github.event.inputs.trips }}
+          PULL_INTO: ${{ github.event.inputs.into }}
           TZ: Asia/Bangkok
         run: |
           ARGS=(--week "$WEEK" --from "${{ github.event.inputs.date_from }}" --to "${{ github.event.inputs.date_to }}" --target "${{ github.event.inputs.target }}")
@@ -71,5 +81,11 @@ jobs:
             g="${g#"${g%%[![:space:]]*}"}"; g="${g%"${g##*[![:space:]]}"}"
             if [ -n "$g" ]; then ARGS+=(--group "$g"); fi
           done
+          IFS=',' read -ra TS <<< "$PULL_TRIPS"
+          for t in "${TS[@]}"; do
+            t="${t//[[:space:]]/}"
+            if [ -n "$t" ]; then ARGS+=(--trip "$t"); fi
+          done
+          if [ -n "${PULL_INTO//[[:space:]]/}" ]; then ARGS+=(--into "${PULL_INTO//[[:space:]]/}"); fi
           if [ "${{ github.event.inputs.apply }}" = "true" ]; then ARGS+=(--apply); fi
           python carry_back.py "${ARGS[@]}"

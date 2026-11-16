@@ -49,7 +49,8 @@ check("ไม่มีสัปดาห์ไหนปิด: เห็นก�
 seen = pool.scan_inbox(drive, ROOT, closed={W37})
 check("ปิด W37 แล้ว: กองของ W37 ไม่ถูกหยิบมาจัด", [a["week"] for a in seen] == ["Week 31 Aug-6 Sep"])
 
-# --- ที่ว่างของสัปดาห์ตามเป้าลูกค้า ---------------------------------------------------------------
+# --- ที่ว่างของสัปดาห์ตามเป้าลูกค้า (ยังไม่เผื่อ) ---------------------------------------------------
+config.POOL_RESERVE_PCT, config.POOL_RESERVE_MIN = 0, 0
 job = db.create_job("สมชาย Win", "Trips", W37, W37_END, category="2 W Standard")
 target = config.WEEKLY_TARGET_PER_GROUP
 with db.engine.begin() as c:
@@ -98,6 +99,36 @@ counts = db.week_group_counts(W38, W38_END)
 check("❗ แถว Standard Bike ในโฟลเดอร์ Saver นับเข้า 2 W Standard ตามที่ลูกค้านับ",
       counts.get("2 W Standard") == 3 and counts.get("2 W Saver") == 6)
 check("แถวที่ไม่รู้ประเภทนับตามโฟลเดอร์ของมัน · แถวในกองพักไม่ถูกนับ", sum(counts.values()) == 9)
+
+room = pool.week_room("Week 14-20 Sep")
+check("แถวที่อ่านแล้วรอลงที่หักที่ว่างของกลุ่มตาม Service Type", room["2 W Saver"] == target - 6 - 4)
+
+# --- เผื่อเมื่อสัปดาห์ยังขาด (W46 Saver Bike 1,469, 2026-11-16) -----------------------------------------
+config.POOL_RESERVE_PCT, config.POOL_RESERVE_MIN = 2, 2
+room = pool.week_room("Week 7-13 Sep")
+check("❗ กลุ่มที่ยังขาดได้เผื่อ 2% ของที่ขาด (1,470 → +30)", room["2 W Saver"] == target + 30)
+check("กลุ่มที่ครบแล้วไม่เผื่อ: งานถัดไปไปสัปดาห์หน้า", room["2 W Standard"] == 0)
+W39, W39_END = "2026-09-21", "2026-09-27"
+s39 = db.create_job("ดาว Win", "Trips", W39, W39_END, category="2 W Saver")
+h39 = db.create_job("(รออ่าน)", "Trips", W39, W39_END)
+with db.engine.begin() as c:
+    for i in range(target - 102):
+        c.execute(insert(db.trips).values(job_id=s39, file_name=f"w{i}.jpg", status="done",
+                                          service_type="Saver Bike", committed=1))
+check("❗ ขาด 102: ส่ง 102 + เผื่อ 3", pool.week_room("Week 21-27 Sep")["2 W Saver"] == 105)
+with db.engine.begin() as c:
+    for i in range(101):
+        c.execute(insert(db.trips).values(job_id=s39, file_name=f"n{i}.jpg", status="done",
+                                          service_type="Saver Bike", committed=1))
+    for i in range(3):
+        c.execute(insert(db.trips).values(job_id=h39, file_name=f"e{i}.jpg", status="done",
+                                          service_type="Saver Bike", committed=0))
+check("❗ ซ้ำ 1 ทำให้ขาด 1 แต่มีงานเผื่อรออยู่ 3: ไม่ส่งเพิ่มจากกอง (ลงจากที่พักแทน)",
+      pool.week_room("Week 21-27 Sep")["2 W Saver"] <= 0)
+with db.engine.begin() as c:
+    c.execute(insert(db.trips).values(job_id=s39, file_name="last.jpg", status="done",
+                                      service_type="Saver Bike", committed=1))
+check("ครบเป้าแล้วงานเผื่อที่เหลือไม่ดึงงานเพิ่ม", pool.week_room("Week 21-27 Sep")["2 W Saver"] == -3)
 
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
