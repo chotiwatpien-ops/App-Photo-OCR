@@ -235,8 +235,6 @@ def main(argv=None):
     a = ap.parse_args(argv)
     db.init_db()
     import config
-    import roster
-    drive = roster._drive()
 
     excess, counts, _jobs = excess_rows(a.d_from, a.d_to, a.target)
     print(f"{a.d_from}..{a.d_to} · เป้า {a.target} ต่อ Service Type")
@@ -258,6 +256,10 @@ def main(argv=None):
     if not a.apply:
         print("\n(รายงานอย่างเดียว — ใส่ --apply เพื่อยกจริง)")
         return 0
+    # Drive only from here: a report reads the database alone, and the close plan runs it in the
+    # web app, which has no Drive credentials (2026-11-16: "No such file: 'drive_token.json'").
+    import roster
+    drive = roster._drive()
 
     nxt = a.next_week or next_week_folder(a.week, a.d_from, a.d_to)
     if not nxt:

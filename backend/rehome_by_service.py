@@ -164,8 +164,6 @@ def main(argv=None):
     a = ap.parse_args(argv)
     db.init_db()
     import config
-    import roster
-    drive = roster._drive()
 
     moves, jobs = rows_needing_move(a.d_from, a.d_to)
     print(f"{a.d_from}..{a.d_to}: แถวที่ประเภทไม่ตรงกลุ่มของ job: {len(moves)}")
@@ -181,6 +179,10 @@ def main(argv=None):
     if not a.apply:
         print("\n(รายงานอย่างเดียว — ใส่ --apply เพื่อย้ายจริง)")
         return 0
+    # Drive only from here: a report reads the database alone, and the close plan runs it in the
+    # web app, which has no Drive credentials (2026-11-16: "No such file: 'drive_token.json'").
+    import roster
+    drive = roster._drive()
 
     inbox = config.DRIVE_INBOX_FOLDER_ID
     week = next((f for f in drive.list_folders(inbox) if f["name"].strip() == a.week.strip()), None)

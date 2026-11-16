@@ -23,7 +23,6 @@ import config                                                   # noqa: E402
 import db                                                       # noqa: E402
 import file_after_read as far                                   # noqa: E402
 import roster                                                   # noqa: E402
-from drive_client import LocalDrive                             # noqa: E402
 
 db.init_db()
 ok = True
@@ -38,7 +37,13 @@ def check(name, cond):
 W39 = ("2026-09-21", "2026-09-27")
 root = Path(WORK) / "drive"
 (root / "inbox" / "Week 21-27 Sep").mkdir(parents=True)
-roster._drive = lambda: LocalDrive(root)          # report-only tools still open a Drive client
+def _no_drive():
+    # the web app runs the plan and has no Drive credentials (2026-11-16, W46: the plan failed
+    # at its first step with "No such file or directory: 'drive_token.json'")
+    raise FileNotFoundError(2, "No such file or directory", "drive_token.json")
+
+
+roster._drive = _no_drive
 
 j = db.create_job("สมหมาย Taxi", "Trips", *W39, category="4 W Standard")
 j_hold = db.create_job(far.HOLDING_RIDER, "Trips", *W39, folder_name="Week 21-27 Sep/_พร้อมอ่าน")
