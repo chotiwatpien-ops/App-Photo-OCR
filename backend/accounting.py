@@ -61,8 +61,8 @@ COLS = [db.trips.c[k] for k in ("id", "job_id", "file_name", "status", "committe
 
 
 def _half_tag(file_name):
-    import pool
-    return pool.half_tag(file_name) if file_name else None
+    from pool_names import half_tag            # not pool: it imports the OCR stack the web app lacks
+    return half_tag(file_name) if file_name else None
 
 
 def _week_rows(d_from, d_to):

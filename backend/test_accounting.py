@@ -11,6 +11,9 @@ sys.stdout.reconfigure(encoding="utf-8")
 os.environ["PHOTO_OCR_DATA"] = tempfile.mkdtemp(prefix="pocr-acct-")
 os.environ.pop("DATABASE_URL", None)
 sys.path.insert(0, "backend")
+# Render installs requirements.txt only: no numpy, so nothing the web app runs may reach the OCR
+# stack (2026-11-17: W46's report failed there on its exact copies; the tests had numpy)
+sys.modules["numpy"] = None
 
 from openpyxl import load_workbook                              # noqa: E402
 from sqlalchemy import insert                                   # noqa: E402
