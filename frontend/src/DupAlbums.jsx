@@ -215,10 +215,16 @@ export default function DupAlbums({ onGo }) {
               )
             })}
           </div>
-          <a href={api.duplicateReportUrl(d.week)}
-            className="min-h-10 px-4 rounded-lg border border-line bg-white hover:bg-ground text-sm flex items-center gap-2">
-            <Icon name="download" size={18} />รายงาน Excel
-          </a>
+          <div className="flex gap-2 flex-wrap">
+            <a href={api.duplicateReportUrl(d.week)}
+              className="min-h-10 px-4 rounded-lg border border-line bg-white hover:bg-ground text-sm flex items-center gap-2">
+              <Icon name="download" size={18} />รายงาน Excel
+            </a>
+            <a href={api.accountingReportUrl(d.week)} title="รูปที่แต่ละ Admin ส่งมา งานที่ใช้ได้ และงานที่ใช้ไม่ได้พร้อมเหตุผล"
+              className="min-h-10 px-4 rounded-lg border border-line bg-white hover:bg-ground text-sm flex items-center gap-2">
+              <Icon name="download" size={18} />รายงานบัญชี (จ่าย Admin)
+            </a>
+          </div>
         </div>
       </div>
 

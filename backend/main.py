@@ -263,7 +263,7 @@ def remove_trip(trip_id: int):
         raise HTTPException(409, "รายการนี้อนุมัติแล้ว ลบไม่ได้")
     _note("trip.delete", f"trip:{trip_id}", row={k: t.get(k) for k in (
         "job_id", "file_name", "booking_code", "trip_date", "trip_time", "service_type",
-        "base_fare", "net_earnings", "status", "source_url")})
+        "base_fare", "net_earnings", "status", "source_url", "source_album", "kind")})
     # The picture goes to <week>/_ทิ้ง-กดลบ/<rider>/ before the row does, while the job and the
     # Drive id can still be read off it. A row thrown away by hand is a picture worth looking at
     # again — and left in the rider's folder it is worse than useless, because the sweep counts
@@ -636,6 +636,21 @@ def duplicate_report_xlsx(week: str):
     name = f"งานซ้ำ {week_label(week).replace('-W', ' WK')}.xlsx"
     return Response(content=data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
+
+
+@app.get("/api/accounting.xlsx")
+def accounting_xlsx(week: str):
+    """What each Admin sent in the week and what came of it, for accounting to pay from."""
+    from datetime import date, timedelta
+
+    import accounting
+    if week not in _dup_weeks():
+        raise HTTPException(404, "ไม่พบสัปดาห์นี้")
+    _note("accounting.download", f"week:{week}")
+    data = accounting.build(week, (date.fromisoformat(week) + timedelta(days=6)).isoformat())
+    return Response(content=accounting.build_xlsx(data),
+                    media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(accounting.file_name(data))}"})
 
 
 # ---------- ภาพรวม: the customer's first screen (overview.py) ----------
