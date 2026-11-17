@@ -536,7 +536,7 @@ def collect_batches_now():
 DUP_TAB_FROM = "2026-09-21"
 DUP_ALBUM_KEYS = ["no", "album", "first", "read", "filed", "pre", "post", "dup", "pct", "with",
                   "left", "waiting", "status", "pictures", "originals", "most", "trips", "deleted",
-                  "real", "pending", "ops", "ops_gap"]
+                  "real", "pending", "ops", "ops_gap", "elsewhere", "real_all"]
 _dup_cache = {}          # week -> (time, payload): a phone reopening the tab does not re-query
 
 

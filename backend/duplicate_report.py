@@ -21,7 +21,7 @@ import collections
 import re
 import sys
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 import db
 
@@ -200,9 +200,40 @@ ALBUM_COLS = ["ลำดับ", "อัลบั้ม", "เข้าระบ
               "ซ้ำหลังอ่าน", "ซ้ำรวม", "% ซ้ำ", "ซ้ำกับอัลบั้ม", "ครึ่งรูปค้างในกอง", "รออ่าน", "สถานะ",
               # the album's own count, top to bottom (Fiat 2026-11-11) — see album_overview
               "รูปทั้งหมด", "ต้นฉบับ", "จับคู่ครบได้", "จับคู่ได้แล้ว", "ลบในคิวตรวจ", "งานจริง", "ค้างในระบบ",
-              "ยอดที่ Ops จด", "ต่างจากยอด Ops"]
+              "ยอดที่ Ops จด", "ต่างจากยอด Ops",
+              # an album the pool split between weeks (2026-11-16: Loli 11 in W46, 94 in W47)
+              "อีกส่วนอยู่สัปดาห์", "งานจริงทุกสัปดาห์"]
 STATUS = ALBUM_COLS.index("สถานะ")
-OPS_COUNT = re.compile(r"(\d[\d,]*)\s*งาน")
+# '105 งาน' and 'รวมงาน 295 16Nov' both name the count; a number glued to letters is a date
+OPS_COUNT = re.compile(r"(\d[\d,]*)\s*งาน|งาน\s*(\d[\d,]*)(?![\d,])(?!\s*[A-Za-z])")
+
+
+def ops_count(album):
+    """The trip count Ops wrote in the album's name, or None."""
+    m = OPS_COUNT.search(album or "")
+    return int((m.group(1) or m.group(2)).replace(",", "")) if m else None
+
+
+def _album_other_weeks(albums, d_from, d_to):
+    """{album: {week start: trips that are real work}} for the albums' rows outside this week.
+
+    The pool sends a short week only the trips it lacks and the rest of the album to the next
+    week, so one upload is read in two weeks; each week alone sees only its part."""
+    names = sorted(a for a in albums if a)
+    if not names:
+        return {}
+    t, j = db.trips.c, db.jobs.c
+    with db.engine.begin() as c:
+        rows = c.execute(
+            select(t.source_album, j.date_from, func.count())
+            .select_from(db.trips.join(db.jobs, j.id == t.job_id))
+            .where(t.source_album.in_(names), t.status.in_(("done", "pending", "error")),
+                   (j.date_from < d_from) | (j.date_from > d_to))
+            .group_by(t.source_album, j.date_from)).all()
+    out = collections.defaultdict(dict)
+    for a, w, n in rows:
+        out[a.strip()][w] = n
+    return out
 
 
 def album_overview(d_from, d_to, cases, pre=()):
@@ -277,6 +308,8 @@ def album_overview(d_from, d_to, cases, pre=()):
                 row[e["album"]]["left"] += len(e["leftovers"])
     except Exception:  # noqa: BLE001 — a report that cannot be read leaves the column empty
         pass
+    from ingest import week_label
+    elsewhere = _album_other_weeks(row, d_from, d_to)
     out = []
     for a, v in row.items():
         dup = v["pre"] + v["post"]
@@ -286,15 +319,18 @@ def album_overview(d_from, d_to, cases, pre=()):
         base = len(v["read"]) + len(v["waiting"]) + v["pre"]
         trips_n = len(v["read"]) + len(v["waiting"]) + v["deleted"]
         real = trips_n - v["post"] - v["deleted"]
-        m = OPS_COUNT.search(a or "")
-        ops = int(m.group(1).replace(",", "")) if m else None
+        ops = ops_count(a)
         most = trips_n + v["left"] // 2
+        split = elsewhere.get((a or "").strip(), {})
+        there = sum(split.values())
         out.append([None, a, v["first"], len(v["read"]), len(v["filed"]), v["pre"], v["post"],
                     dup, round(dup / base, 3) if base else None, with_,
                     v["left"] or None, len(v["waiting"]) or None, "ซ้ำ" if dup else "ไม่ซ้ำ",
                     v["halves"] + v["pre"] + v["left"], v["halves"] + v["left"], most, trips_n,
                     v["deleted"] or None, real, real - len(v["filed"]) or None,
-                    ops, ops - (most - v["post"] - v["deleted"]) if ops is not None else None])
+                    ops, ops - (most - v["post"] - v["deleted"] + there) if ops is not None else None,
+                    " · ".join(f"{week_label(w).split('-')[-1]} {n:,}" for w, n in sorted(split.items())) or None,
+                    real + there if split else None])
     out.sort(key=lambda r: (r[2] is None, r[2] or "", r[1]))
     for i, r in enumerate(out, 1):
         r[0] = i

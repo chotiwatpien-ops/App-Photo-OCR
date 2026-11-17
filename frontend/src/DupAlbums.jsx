@@ -302,6 +302,11 @@ export default function DupAlbums({ onGo }) {
                   <td className="py-2 px-4 sm:px-2">
                     <button onClick={() => setAlbum(a.album === album ? '' : a.album)} className="text-left hover:underline break-words">{a.album}</button>
                     <span className="block text-xs text-muted">{when(a.first)}{a.with ? ` · ซ้ำกับ ${a.with}` : ''}</span>
+                    {a.elsewhere ? (
+                      <span className="block text-xs text-muted">
+                        อีกส่วนอยู่ {a.elsewhere} · รวมทุกสัปดาห์ {fmt(a.real_all)} เที่ยว{a.ops != null ? ` จาก Ops ${fmt(a.ops)}` : ''}
+                      </span>
+                    ) : null}
                   </td>
                   <td className="py-2 px-2 text-right">{fmt(a.read)}</td>
                   <td className={`py-2 px-2 text-right font-semibold ${a.dup ? 'text-danger-ink' : pending[a.album] ? 'text-warn-ink' : 'text-ok-ink'}`}>

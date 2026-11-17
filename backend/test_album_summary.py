@@ -80,5 +80,38 @@ labels = [x[0] for x in dx.summary_lines(r)]
 check("การ์ดสรุปเรียงจากรูปทั้งหมดถึงยอดที่ Ops จด",
       labels[0] == "รูปทั้งหมดในอัลบั้ม" and "นับในไฟล์ลูกค้า" in labels and labels[-1].startswith("ยอดที่ Ops"), labels)
 
+# --- one album the pool split between two weeks (2026-11-16: Loli 11 in W46, 94 in W47) ---
+B = "4W Loli 6 งาน 16Nov"
+W2 = ("2026-11-16", "2026-11-22")
+job2 = db.create_job("ดาว Taxi", "Trips", *W2, category="4 W Standard")
+with db.engine.begin() as c:
+    for i in range(2):
+        c.execute(insert(db.trips).values(job_id=job, file_name=f"{B}_{i}1+{i}2_฿50.jpg", source_album=B,
+                                          status="done", committed=1))
+    w47 = [c.execute(insert(db.trips).values(job_id=job2, file_name=f"{B}_{i}5+{i}6_฿50.jpg", source_album=B,
+                                             booking_code=f"A-LOLI{i}", status="done", committed=1)
+                     ).inserted_primary_key[0] for i in range(4)]
+    c.execute(insert(db.trips).values(job_id=job2, file_name=f"{B}_99+98_฿50.jpg", source_album=B,
+                                      booking_code="A-LOLI0", duplicate_of=w47[0],
+                                      status="duplicate", committed=0))
+r46 = dict(zip(dr.ALBUM_COLS, next(r for r in dr.album_overview(*W, cases(), pre) if r[1] == B)))
+check("❗ อัลบั้มที่ถูกแบ่ง: บอกว่าอีกส่วนอยู่สัปดาห์ไหนกี่เที่ยว (แถวซ้ำไม่นับ)",
+      r46["อีกส่วนอยู่สัปดาห์"] == "W47 4", r46["อีกส่วนอยู่สัปดาห์"])
+check("❗ งานจริงทุกสัปดาห์ = ของสัปดาห์นี้ + อีกส่วน และเทียบ Ops จากยอดรวม (ไม่ขึ้นว่าขาด)",
+      r46["งานจริงทุกสัปดาห์"] == 6 and r46["ต่างจากยอด Ops"] == 0, r46)
+r47 = dict(zip(dr.ALBUM_COLS, next(r for r in dr.album_overview(*W2, dr.build(*dr.load(*W2))[0], [])
+                                   if r[1] == B)))
+check("อีกสัปดาห์เห็นส่วนของสัปดาห์แรกเช่นกัน", r47["อีกส่วนอยู่สัปดาห์"] == "W46 2"
+      and r47["งานจริงทุกสัปดาห์"] == 6 and r47["ต่างจากยอด Ops"] == 0, r47)
+check("อัลบั้มที่ไม่ถูกแบ่งไม่มีสองช่องนี้", got.get("อีกส่วนอยู่สัปดาห์") is None)
+r = next(r for r in dr.album_overview(*W, cases(), pre) if r[1] == B)
+check("การ์ดสรุปบอกยอดทุกสัปดาห์ของอัลบั้มที่ถูกแบ่ง",
+      any(x[0] == "งานจริงของอัลบั้มนี้ทุกสัปดาห์" and x[1] == 6 for x in dx.summary_lines(r)))
+
+for name, want in (("4W Loli 105 งาน 16Nov", 105), ("2W Tae รวมงาน 295 16Nov", 295),
+                   ("4 W Ploy 357งาน 11Nov 2", 357), ("2W Parichart2  473 งาน", 473),
+                   ("งาน 16Nov", None), ("2W Win มกรา", None), ("2W Karnjana 1,748 งาน", 1748)):
+    check(f"เลขที่ Ops จด: {name!r} → {want}", dr.ops_count(name) == want, dr.ops_count(name))
+
 print("\nผ่านทั้งหมด ✅" if ok else "\n✗ มีข้อที่ไม่ผ่าน")
 sys.exit(0 if ok else 1)

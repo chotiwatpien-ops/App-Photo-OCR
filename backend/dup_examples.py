@@ -183,7 +183,7 @@ def summary_lines(row):
     """[(label, number, unit, note, kind)] of one album, top to bottom, from its line of
     duplicate_report.album_overview. kind: 'total', 'minus' or 'result'."""
     (_, _, _, _, filed, pre_n, post_n, _, _, _, left, waiting, _,
-     pictures, originals, most, trips_n, deleted, real, pending, ops, gap) = row
+     pictures, originals, most, trips_n, deleted, real, pending, ops, gap, elsewhere, real_all) = row
     lines = [("รูปทั้งหมดในอัลบั้ม", pictures, "รูป", "", "total"),
              ("ไฟล์ซ้ำ อัปโหลดซ้ำ", -pre_n, "รูป", "ไม่ได้นับเป็นงาน", "minus"),
              ("รูปต้นฉบับ", originals, "รูป", "", "total"),
@@ -197,6 +197,8 @@ def summary_lines(row):
     if pending:
         lines.append(("ค้างในระบบ", pending, "งาน",
                       f"รออ่าน {waiting:,} รูป" if waiting else "รอตรวจหรือรอลงงาน", "minus"))
+    if elsewhere:
+        lines.append(("งานจริงของอัลบั้มนี้ทุกสัปดาห์", real_all, "งาน", f"อีกส่วนอยู่ {elsewhere}", "total"))
     if ops is not None:
         lines.append(("ยอดที่ Ops จดในชื่ออัลบั้ม", ops, "งาน",
                       f"ต่างจากที่รูปให้ได้ {gap:,} งาน" if gap else "ตรงกับที่รูปให้ได้", "total"))
