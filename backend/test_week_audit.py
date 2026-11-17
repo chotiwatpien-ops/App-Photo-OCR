@@ -77,6 +77,36 @@ with db.engine.begin() as x:
     after = x.execute(select(db.trips)).mappings().all()
 check("อ่านอย่างเดียว ไม่แก้แถวใด", [dict(r) for r in before] == [dict(r) for r in after])
 
+# --- an album the pool split between two weeks (W46/W47 Tae, 2026-11-16) ---------------------
+N = ("2026-08-24", "2026-08-30")
+n = db.create_job("ดาว Win", "Trips", *N, category="2 W Saver")
+X = "2W Tae รวมงาน 9 16Nov"
+with db.engine.begin() as x:
+    ins = lambda **kw: x.execute(insert(db.trips).values(**{**base, **kw})).inserted_primary_key[0]
+    here = ins(job_id=s, base_fare=44.0, net_earnings=44.0, booking_code="A-ALBUMSAME0001", source_album=X,
+               service_type="Saver Bike", distance_km=3.0, customer_image="WK34-ณัฐพล2.jpg")
+    there = ins(job_id=n, base_fare=44.0, net_earnings=44.0, booking_code="A-ALBUMSAME0001", source_album=X,
+                service_type="Saver Bike", distance_km=3.0, trip_date="2026-08-24")
+    ins(job_id=n, base_fare=55.0, net_earnings=55.0, booking_code="A-OTHERALBUM001", source_album="2W Win อื่น",
+        service_type="Saver Bike", distance_km=3.0, trip_date="2026-08-24")
+    ins(job_id=s, base_fare=55.0, net_earnings=55.0, booking_code="A-OTHERALBUM001", source_album=X,
+        service_type="Saver Bike", distance_km=3.0, customer_image="WK34-ณัฐพล3.jpg")
+    ins(job_id=n, base_fare=66.0, net_earnings=66.0, booking_code="A-PARKEDCOPY001", source_album=X,
+        service_type="Saver Bike", distance_km=3.0, trip_date="2026-08-24", status="duplicate", committed=0)
+    ins(job_id=s, base_fare=66.0, net_earnings=66.0, booking_code="A-PARKEDCOPY001", source_album=X,
+        service_type="Saver Bike", distance_km=3.0, customer_image="WK34-ณัฐพล4.jpg")
+split = wa.audit(wa.week_rows(*W))["งานซ้ำ-อัลบั้มเดียวกันข้ามสัปดาห์"]
+check("❗ อัลบั้มเดียวกัน เลขจองเดียวกัน คนละสัปดาห์ นับทั้งสองสัปดาห์ → เจอ",
+      [[r["id"] for r in g] for g in split] == [[here, there]])
+check("เลขจองเดียวกันแต่คนละอัลบั้ม = งานของอีกสัปดาห์ตามกติกาลูกค้า ไม่นับเป็นซ้ำ · แถวที่พักไว้แล้วไม่นับ",
+      len(split) == 1)
+check("❗ อีกสัปดาห์ก็เห็นคู่เดียวกัน",
+      [[r["id"] for r in g] for g in wa.audit(wa.week_rows(*N))["งานซ้ำ-อัลบั้มเดียวกันข้ามสัปดาห์"]] == [[there, here]])
+import close_week                                               # noqa: E402
+# Album names were reused across weeks (69 of 187 by 2026-11-17) and Porpla=309 held 7 such pairs
+# in W37/W38: a re-sent album is work by the customer's rule, so a person decides; no block.
+check("หมวดนี้ให้คนตัดสิน ไม่ขวางการปิดสัปดาห์", "งานซ้ำ-อัลบั้มเดียวกันข้ามสัปดาห์" not in close_week.BLOCKING)
+
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

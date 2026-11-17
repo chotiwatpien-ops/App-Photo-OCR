@@ -42,6 +42,36 @@ def line(r):
             r.get("customer_image"), r.get("file_name"), r.get("source_url")]
 
 
+def split_album_repeats(rows):
+    """[[a row of this week, its counted copies in other weeks of the same album], ...].
+
+    A repeat across weeks is work (customer, 2026-09-14), but that rule is about a slip sent again
+    later. The pool splits one upload between a short week and the next, so two screenshots of one
+    trip in one album can be filed a week apart and pass the once-per-week guard (W46/W47 Tae and
+    Loli, 2026-11-16: none found, but nothing would have stopped it)."""
+    from sqlalchemy import select
+    t, j = db.trips.c, db.jobs.c
+    mine = {r["id"] for r in rows}
+    keyed = [r["id"] for r in rows if db.trip_key(r)]
+    if not keyed:
+        return []
+    with db.engine.begin() as c:
+        album = {i: a.strip() for i, a in c.execute(
+            select(t.id, t.source_album).where(t.id.in_(keyed), t.source_album.isnot(None))).all() if a.strip()}
+        codes = {r["booking_code"] for r in rows if r["id"] in album}
+        others = [dict(x) for x in c.execute(
+            select(*db.TRIP_COLS, t.source_album, j.driver_name, j.category)
+            .select_from(db.trips.join(db.jobs, j.id == t.job_id))
+            .where(t.booking_code.in_(codes), t.source_album.in_(set(album.values())),
+                   t.status == "done", t.committed == 1)).mappings().all()] if codes else []
+    copies = defaultdict(list)
+    for o in others:
+        if o["id"] not in mine and db.trip_key(o):
+            copies[(o["source_album"].strip(), db.trip_key(o))].append(o)
+    return [[r] + copies[(album[r["id"]], db.trip_key(r))] for r in rows
+            if r["id"] in album and copies.get((album[r["id"]], db.trip_key(r)))]
+
+
 def audit(rows, pictures=None):
     """{sheet name: [(group key, [row, ...]) or row]} and the summary lines."""
     out = {}
@@ -57,6 +87,8 @@ def audit(rows, pictures=None):
     out["งานซ้ำ-เลขจองอ่านเพี้ยน"] = [g for k, g in same_trip.groups(rows)
                                     if k == same_trip.CODE and not {r["id"] for r in g} <= exact]
     misread = {r["id"] for g in out["งานซ้ำ-เลขจองอ่านเพี้ยน"] for r in g}
+    # 1c. one trip of an album the pool split between weeks, counted in both
+    out["งานซ้ำ-อัลบั้มเดียวกันข้ามสัปดาห์"] = split_album_repeats(rows)
     # 2. equal in every column the customer sees, and no code to tell them apart
     key = lambda r: (r.get("trip_date"), r.get("trip_time"), r.get("base_fare"), r.get("distance_km"),
                      (r.get("pickup_text") or "").strip())
