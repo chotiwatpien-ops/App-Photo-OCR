@@ -16,6 +16,7 @@ can build it.
 import collections
 import io
 import json
+import math
 import re
 
 from sqlalchemy import func, select
@@ -26,12 +27,27 @@ from pipeline import car_is_standard
 
 SERVICES = ("Saver Bike", "Standard Bike", "Standard Car")
 # what a trip row's status means for the person being paid
-UNUSABLE = {"duplicate": "ซ้ำ (เลขจองซ้ำ)", "voided": "ยกเลิก", "error": "อ่านไม่ได้", "set_aside": "พักไว้"}
+REPEAT, UNREADABLE, VOIDED, SET_ASIDE = "ซ้ำ (เลขจองซ้ำ)", "อ่านไม่ได้", "ยกเลิก", "พักไว้"
+UNUSABLE = {"duplicate": REPEAT, "voided": VOIDED, "error": UNREADABLE, "set_aside": SET_ASIDE}
 DELETED = "ลบในคิวตรวจ"
 COPY = "รูปซ้ำเป๊ะ (ไฟล์เดียวกัน)"
 UNPAIRED = "รูปครึ่งที่หาคู่ไม่ได้"
+WAITING_PAIR = "รูปครึ่งรอคู่"                  # the same pictures while the week is open
+READING, REVIEW, FILING = "รออ่าน", "รอคนตรวจ", "รอลงไฟล์"
 TAG = re.compile(r"_(\d+)\+(\d+)_฿")
 WHEEL = re.compile(r"^\s*(?:\d\s*W)\s*[-_ ]*(?:(?:win|home|taxi)\b\s*[-_ ]*)?", re.I)
+# Part of an album Ops uploaded under another name. W46: 1,728 + these 20 = the 1,748 in the name
+# of the album they came from (Fiat 2026-11-18: count them as one).
+ALBUM_INTO = {"2W Karnjana ทดสอบ": "2W Karnjana 1748 งาน"}
+
+
+def canon(album):
+    return ALBUM_INTO.get(album, album)
+
+
+def _raw_names(albums):
+    """The names these albums are stored under."""
+    return set(albums) | {k for k, v in ALBUM_INTO.items() if v in albums}
 
 
 def admin_of(album):
@@ -91,11 +107,15 @@ def _first_week(albums):
     if not albums:
         return {}
     t, j = db.trips.c, db.jobs.c
+    out = {}
     with db.engine.begin() as c:
-        return {a.strip(): w for a, w in c.execute(
-            select(t.source_album, func.min(j.date_from))
-            .select_from(db.trips.join(db.jobs, j.id == t.job_id))
-            .where(t.source_album.in_(sorted(albums))).group_by(t.source_album)).all()}
+        for a, w in c.execute(select(t.source_album, func.min(j.date_from))
+                              .select_from(db.trips.join(db.jobs, j.id == t.job_id))
+                              .where(t.source_album.in_(sorted(_raw_names(albums))))
+                              .group_by(t.source_album)).all():
+            a = canon(a.strip())
+            out[a] = min(w, out.get(a, w))
+    return out
 
 
 def _group(rows, key, value):
@@ -129,15 +149,18 @@ def _copies(albums):
                 .mappings().all()] if albums else []
 
 
-def _leftovers(d_from, albums):
+def _leftovers(d_from, d_to, albums, earlier):
     """{album: [file, ...]} half pictures still unpaired, from the latest pool run that saw each
-    album in each week folder (a closed week's pool is not scanned again, so its last word stays)."""
+    album in each week folder (a closed week's pool is not scanned again, so its last word stays).
+
+    Also an album placed in this week's folder that has no trip yet: every picture it holds so far
+    is waiting for its other half, and without this line it would not be on the report at all."""
     import ingest
     with db.engine.begin() as c:
         reports = c.execute(select(db.pool_runs.c.report).where(
             db.pool_runs.c.mode == "move", db.pool_runs.c.started_at >= d_from)
             .order_by(db.pool_runs.c.id.desc()).limit(400)).scalars().all()
-    seen, out = set(), collections.defaultdict(list)
+    seen, out, first = set(), collections.defaultdict(list), {}
     for rep in reports:
         try:
             entries = json.loads(rep or "{}").get("albums") or []
@@ -145,25 +168,36 @@ def _leftovers(d_from, albums):
             continue
         for e in entries:
             key = (e.get("album"), e.get("week"))
-            if e.get("album") not in albums or key in seen or not ingest.parse_range(e.get("week") or ""):
+            rng = ingest.parse_range(e.get("week") or "")
+            if not e.get("album") or key in seen or not rng:
                 continue
             seen.add(key)
-            out[e["album"]] += [x.get("file") for x in e.get("leftovers") or []]
-    return out
+            a, week = canon(e["album"].strip()), rng[0].isoformat()
+            first[a] = min(week, first.get(a, week))
+            if a in albums or (d_from <= week <= d_to and a not in earlier):
+                out[a] += [x.get("file") for x in e.get("leftovers") or []]
+    filed_from = _first_week({a for a in out if a not in albums})   # the rest of it was filed earlier
+    return {a: f for a, f in out.items()
+            if f and (a in albums or (first[a] >= d_from and filed_from.get(a, d_from) >= d_from))}
 
 
 def build(d_from, d_to):
     """{"albums": [..], "admins": [..], "items": [..]} for the albums placed in this week."""
     from ingest import week_label
+    closed = db.week_closed(d_from)
+    unpaired_why = UNPAIRED if closed else WAITING_PAIR
     week_rows = _week_rows(d_from, d_to)
-    album_of = lambda r: dr.album_of(r["file_name"], r.get("folder_name"), r.get("driver_name"),
-                                     r.get("source_album"))
-    pool_albums = {(r.get("source_album") or "").strip() for r in week_rows if (r.get("source_album") or "").strip()}
+    album_of = lambda r: canon(dr.album_of(r["file_name"], r.get("folder_name"), r.get("driver_name"),
+                                           r.get("source_album")))
+    pool_albums = {canon((r.get("source_album") or "").strip()) for r in week_rows
+                   if (r.get("source_album") or "").strip()}
     first = _first_week(pool_albums)
     earlier = {a for a, w in first.items() if w < d_from}          # an earlier week's report holds them
+    from_earlier = collections.Counter(album_of(r) for r in week_rows if album_of(r) in earlier
+                                       and r["status"] == "done" and r["committed"] == 1)
     rows = [r for r in week_rows if album_of(r) not in earlier]
     mine = {album_of(r) for r in rows}
-    rows += _later_rows({a for a in pool_albums if a in mine}, d_to)
+    rows += _later_rows(_raw_names({a for a in pool_albums if a in mine}), d_to)
     # a deleted row is gone; its album is in its file name (a pair) or else its job's other rows
     job_album = {}
     for j_id, names in _group(rows, "job_id", album_of).items():
@@ -173,8 +207,8 @@ def build(d_from, d_to):
                                                         db.jobs.c.date_from <= d_to)).scalars())
     deleted = []
     for d in _deleted(d_from, here | set(job_album)):
-        named = (d.get("source_album") or "").strip() or (
-            dr.album_of(d["file_name"]) if dr.ALBUM.match(d["file_name"]) else "")
+        named = canon((d.get("source_album") or "").strip() or (
+            dr.album_of(d["file_name"]) if dr.ALBUM.match(d["file_name"]) else ""))
         if d["job_id"] in here:
             d["album"] = named or job_album.get(d["job_id"], "ไม่รู้อัลบั้ม")
             if d["album"] not in earlier:
@@ -183,12 +217,13 @@ def build(d_from, d_to):
             # a later week's rider holds work of many albums: only a row that names its album
             d["album"] = named
             deleted.append(d)
-    copies = _copies(mine)
-    left = _leftovers(d_from, mine)
+    left = _leftovers(d_from, d_to, mine, earlier)
+    copies = _copies(_raw_names(mine | set(left)))
 
     acc = collections.defaultdict(lambda: {
         "full": 0, "half": 0, "unknown": 0, "used_here": collections.Counter(), "used_later": 0,
-        "waiting": 0, "bad": collections.Counter(), "bad_pictures": collections.Counter()})
+        "waiting": collections.Counter(), "bad": collections.Counter(),
+        "bad_pictures": collections.Counter(), "copy_full": 0, "copy_half": 0})
     items = []
     tags = collections.defaultdict(set)                     # album -> half tags of its pairs
     longs = collections.defaultdict(set)                    # album -> file names of its long pictures
@@ -212,8 +247,10 @@ def build(d_from, d_to):
                 v["used_here"][car_is_standard((r.get("service_type") or "").strip()) or "ไม่รู้ประเภท"] += 1
             else:
                 v["used_later"] += 1
-        elif st in ("done", "pending"):
-            v["waiting"] += 1
+        elif st == "pending":
+            v["waiting"][READING] += 1
+        elif st == "done":
+            v["waiting"][FILING if r.get("driver_name") == db.HOLDING_RIDER else REVIEW] += 1
         else:
             why = UNUSABLE.get(st, st)
             v["bad"][why] += 1
@@ -231,15 +268,17 @@ def build(d_from, d_to):
                       "amount": d.get("net_earnings"), "pictures": "เต็ม" if full else f"ครึ่ง {half}",
                       "link": d.get("source_url"), "note": ""})
     for cp in copies:
-        a = (cp.get("album") or "").strip()
+        a = canon((cp.get("album") or "").strip())
         kept = (cp.get("same_as") or "").split("/")[-1]
         tag = _half_tag(kept)
         if kept in longs[a]:
             kind = "เต็ม"
             acc[a]["full"] += 1
+            acc[a]["copy_full"] += 1
         elif tag and tag in tags[a] or kept in left.get(a, []):
             kind = "ครึ่ง 1"
             acc[a]["half"] += 1
+            acc[a]["copy_half"] += 1
         else:
             kind = "ไม่ทราบ"
             acc[a]["unknown"] += 1
@@ -251,36 +290,71 @@ def build(d_from, d_to):
         for f in files:
             acc[a]["half"] += 1
             acc[a]["bad_pictures"][UNPAIRED] += 1
-            items.append({"album": a, "why": UNPAIRED, "file": f, "code": None, "amount": None,
+            items.append({"album": a, "why": unpaired_why, "file": f, "code": None, "amount": None,
                           "pictures": "ครึ่ง 1", "link": None, "note": ""})
 
     albums = []
     for a, v in acc.items():
         used_here = sum(v["used_here"].values())
+        waiting = sum(v["waiting"].values())
+        bad = {k: v["bad"].get(k, 0) for k in BAD_TRIPS}
+        lone = v["bad_pictures"].get(UNPAIRED, 0)
+        final = used_here + v["used_later"]
+        # in trips: a full picture is one, two halves are one, a lone half is still one trip short
+        dup_copy = v["copy_full"] + math.ceil((v["copy_half"] + v["unknown"]) / 2)
+        dup_code = bad[REPEAT]
+        other = bad[UNREADABLE] + bad[VOIDED] + bad[SET_ASIDE]
+        pending = waiting + math.ceil(lone / 2)
+        jobs = final + dup_copy + dup_code + bad[DELETED] + other + pending
+        ops = dr.ops_count(a)
         albums.append({
             "album": a, "admin": admin_of(a), "pictures": v["full"] + v["half"] + v["unknown"],
             "full": v["full"], "half": v["half"], "unknown": v["unknown"],
-            "usable": used_here + v["used_later"] + v["waiting"], "used_here": used_here,
+            "usable": used_here + v["used_later"] + waiting, "used_here": used_here,
             **{s: v["used_here"].get(s, 0) for s in SERVICES},
-            "used_later": v["used_later"], "waiting": v["waiting"],
-            "unusable": sum(v["bad"].values()), **{k: v["bad"].get(k, 0) for k in BAD_TRIPS},
+            "used_later": v["used_later"], "waiting": waiting,
+            "unusable": sum(v["bad"].values()), **bad,
             **{k: v["bad_pictures"].get(k, 0) for k in BAD_PICTURES},
-            "ops": dr.ops_count(a)})
+            "jobs": jobs, "final": final, "dup": dup_copy + dup_code, "dup_copy": dup_copy,
+            "other": other, "pending": pending,
+            "read": final + v["waiting"][REVIEW] + v["waiting"][FILING] + dup_code + bad[DELETED]
+                    + bad[VOIDED] + bad[SET_ASIDE],
+            READING: v["waiting"][READING], REVIEW: v["waiting"][REVIEW], FILING: v["waiting"][FILING],
+            "ops": ops, "ops_gap": ops - jobs if ops is not None else None})
     albums.sort(key=lambda x: (x["admin"].lower(), x["album"]))
     admins = []
     for name in sorted({x["admin"] for x in albums}, key=str.lower):
         mine_ = [x for x in albums if x["admin"] == name]
-        admins.append({"admin": name, "albums": len(mine_),
-                       **{k: sum(x[k] for x in mine_) for k in SUM_KEYS}})
+        admins.append(_total(mine_, admin=name, albums=len(mine_)))
     items.sort(key=lambda x: (admin_of(x["album"]).lower(), x["album"], x["why"], str(x["file"])))
-    return {"week": week_label(d_from), "d_from": d_from, "d_to": d_to,
-            "albums": albums, "admins": admins, "items": items}
+    return {"week": week_label(d_from), "d_from": d_from, "d_to": d_to, "closed": closed,
+            "made_at": db._now(), "albums": albums, "admins": admins, "items": items,
+            "total": _total(albums, admin="รวม", albums=len(albums)),
+            "from_earlier": dict(from_earlier)}
 
 
-BAD_TRIPS = ("ซ้ำ (เลขจองซ้ำ)", DELETED, "อ่านไม่ได้", "ยกเลิก", "พักไว้")
+def _total(rows, **head):
+    """The rows added up. Ops' count only when every album has one: a part would mislead."""
+    known = bool(rows) and all(x["ops"] is not None for x in rows)
+    return {**head, **{k: sum(x[k] for x in rows) for k in SUM_KEYS},
+            "ops": sum(x["ops"] for x in rows) if known else None,
+            "ops_gap": sum(x["ops_gap"] for x in rows) if known else None}
+
+
+BAD_TRIPS = (REPEAT, DELETED, UNREADABLE, VOIDED, SET_ASIDE)
 BAD_PICTURES = (COPY, UNPAIRED)
 SUM_KEYS = ("pictures", "full", "half", "unknown", "usable", "used_here", *SERVICES, "used_later",
-            "waiting", "unusable", *BAD_TRIPS, *BAD_PICTURES)
+            "waiting", "unusable", *BAD_TRIPS, *BAD_PICTURES, "jobs", "final", "dup", "dup_copy",
+            "other", "pending", "read", READING, REVIEW, FILING)
+# the first sheet: one line per Admin with its albums under it
+SUMMARY = [("full", "รูปเต็ม"), ("half", "รูปครึ่ง"), ("jobs", "เทียบงาน"), ("ops", "Ops จด"),
+           ("ops_gap", "Ops มากกว่า (+) / น้อยกว่า (-)"), ("read", "อ่านได้"), ("final", "Final"),
+           ("used_here", "Final · ลงไฟล์สัปดาห์นี้"), ("used_later", "Final · ไปลงสัปดาห์ถัดไป"),
+           ("dup", "ซ้ำ"), (DELETED, "ลบ"), ("other", "ใช้ไม่ได้อื่นๆ"), ("pending", "ค้าง"),
+           ("dup_copy", "ซ้ำ · รูปซ้ำเป๊ะ (งาน)"), (REPEAT, "ซ้ำ · เลขจองซ้ำ"),
+           (UNREADABLE, "อื่นๆ · อ่านไม่ได้"), (VOIDED, "อื่นๆ · ยกเลิก"), (SET_ASIDE, "อื่นๆ · พักไว้"),
+           (READING, f"ค้าง · {READING}"), (REVIEW, f"ค้าง · {REVIEW}"), (FILING, f"ค้าง · {FILING}"),
+           (UNPAIRED, f"ค้าง · {WAITING_PAIR} (รูป)")]
 COLUMNS = [("pictures", "รูปที่ส่งมา"), ("full", "รูปเต็ม"), ("half", "รูปครึ่ง"), ("unknown", "รูปไม่ทราบชนิด"),
            ("usable", "งานที่ใช้ได้"), ("used_here", "ลงไฟล์สัปดาห์นี้"),
            *[(s, f"ลงไฟล์ · {s}") for s in SERVICES],
@@ -291,9 +365,51 @@ COLUMNS = [("pictures", "รูปที่ส่งมา"), ("full", "รู�
 
 def build_xlsx(data) -> bytes:
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill
+    from openpyxl.styles import Alignment, Font, PatternFill
     wb = Workbook()
     head, fill = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor="1E3A5F")
+    bold, band = Font(bold=True), PatternFill("solid", fgColor="E8EEF5")
+    state = "ปิดสัปดาห์แล้ว" if data["closed"] else "ยอดชั่วคราว สัปดาห์ยังไม่ปิด ตัวเลขยังเปลี่ยนได้"
+
+    ws = wb.active
+    ws.title = "สรุป"
+    ws.append([f"รายงานบัญชี {data['week']} ({data['d_from']} ถึง {data['d_to']}) · {state} · "
+               f"ออกเมื่อ {data['made_at'].replace('T', ' ')}"])
+    ws["A1"].font = Font(bold=True, size=13, color="000000" if data["closed"] else "B45309")
+    ws.append(["Admin / อัลบั้ม"] + [h for _k, h in SUMMARY])
+    for c in ws[2]:
+        c.font, c.fill = head, fill
+        c.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
+    ws.row_dimensions[2].height = 48
+    ws.sheet_properties.outlinePr.summaryBelow = False
+
+    def line(name, row, strong=False, child=False):
+        ws.append([name] + [row[k] for k, _h in SUMMARY])
+        at = ws.max_row
+        if child:
+            ws.cell(at, 1).alignment = Alignment(indent=2)
+            ws.row_dimensions[at].outlineLevel = 1
+        for c in ws[at]:
+            if strong:
+                c.font, c.fill = bold, band
+            if c.column > 1:
+                c.number_format = "#,##0"
+
+    for a in data["admins"]:
+        line(a["admin"], a, strong=True)
+        for x in data["albums"]:
+            if x["admin"] == a["admin"]:
+                line(x["album"], x, child=True)
+    line("รวมทุก Admin", data["total"], strong=True)
+    if data["from_earlier"]:
+        ws.append([])
+        ws.append([f"งานจากอัลบั้มของสัปดาห์ก่อนที่ลงไฟล์สัปดาห์นี้ {sum(data['from_earlier'].values()):,} งาน "
+                   "(นับในรายงานของสัปดาห์ที่วางอัลบั้มแล้ว ไม่นับซ้ำที่นี่): "
+                   + " · ".join(f"{a} {n:,}" for a, n in sorted(data["from_earlier"].items()))])
+    ws.freeze_panes = "B3"
+    ws.column_dimensions["A"].width = 34
+    for i in range(2, len(SUMMARY) + 2):
+        ws.column_dimensions[ws.cell(2, i).column_letter].width = 12
 
     def sheet(ws, header, rows):
         ws.append(header)
@@ -305,13 +421,12 @@ def build_xlsx(data) -> bytes:
         for col in ws.columns:
             ws.column_dimensions[col[0].column_letter].width = max(10, min(48, max(len(str(c.value or "")) for c in col) + 2))
 
-    ws = wb.active
-    ws.title = "สรุปต่อ Admin"
-    sheet(ws, ["Admin", "จำนวนอัลบั้ม"] + [h for _k, h in COLUMNS],
+    heads = [h if data["closed"] else h.replace(UNPAIRED, WAITING_PAIR) for _k, h in COLUMNS]
+    sheet(wb.create_sheet("สรุปต่อ Admin"), ["Admin", "จำนวนอัลบั้ม"] + heads,
           [[a["admin"], a["albums"]] + [a[k] for k, _h in COLUMNS] for a in data["admins"]]
           + [["รวม", sum(a["albums"] for a in data["admins"])]
              + [sum(a[k] for a in data["admins"]) for k, _h in COLUMNS]])
-    sheet(wb.create_sheet("รายอัลบั้ม"), ["Admin (อ่านจากชื่ออัลบั้ม)", "อัลบั้ม"] + [h for _k, h in COLUMNS]
+    sheet(wb.create_sheet("รายอัลบั้ม"), ["Admin (อ่านจากชื่ออัลบั้ม)", "อัลบั้ม"] + heads
           + ["ยอดที่ Ops จดในชื่ออัลบั้ม"],
           [[x["admin"], x["album"]] + [x[k] for k, _h in COLUMNS] + [x["ops"]] for x in data["albums"]])
     sheet(wb.create_sheet("รายการที่ใช้ไม่ได้"),
@@ -319,17 +434,20 @@ def build_xlsx(data) -> bytes:
           [[admin_of(i["album"]), i["album"], i["why"], i["pictures"], i["file"], i["code"], i["amount"],
             i["note"], i["link"]] for i in data["items"]])
     ws = wb.create_sheet("อ่านก่อน")
-    for line in (f"รายงานบัญชี {data['week']} ({data['d_from']} ถึง {data['d_to']})",
+    for text in (f"รายงานบัญชี {data['week']} ({data['d_from']} ถึง {data['d_to']}) · {state}",
                  "นับทุกอัลบั้มที่วางในโฟลเดอร์ของสัปดาห์นี้ อัลบั้มนับในสัปดาห์ที่วางครั้งแรก",
-                 "งานที่ใช้ได้ = ลงไฟล์สัปดาห์นี้ + ไปลงสัปดาห์ถัดไป (สัปดาห์นี้เต็มแล้ว) + ยังรอตรวจหรือรออ่าน",
-                 "รูปที่ส่งมา = รูปเต็ม (แคปยาว 1 รูปต่อ 1 งาน) + รูปครึ่ง (บนและล่าง 2 รูปต่อ 1 งาน)"
-                 " รวมรูปซ้ำเป๊ะและรูปครึ่งที่หาคู่ไม่ได้",
-                 "ชื่อ Admin อ่านจากชื่ออัลบั้ม ถ้าไม่ตรง ให้ดูชีตรายอัลบั้ม"):
-        ws.append([line])
+                 "เทียบงาน = Final + ซ้ำ + ลบ + ใช้ไม่ได้อื่นๆ + ค้าง",
+                 "รูปเต็ม 1 รูป = 1 งาน · รูปครึ่ง 2 รูป = 1 งาน · รูปครึ่งที่เหลือเศษนับเป็น 1 งาน",
+                 "อ่านได้ = งานที่ AI อ่านผลแล้ว · Final = งานที่ใช้ได้ รวมส่วนที่ไปลงสัปดาห์ถัดไป",
+                 "งานที่ใช้ได้ = Final + งานที่ยังรอตรวจหรือรออ่าน",
+                 "รูปที่ส่งมา รวมรูปซ้ำเป๊ะและรูปครึ่งที่ยังไม่มีคู่",
+                 "ชื่อ Admin อ่านจากชื่ออัลบั้ม ถ้าไม่ตรง ให้ดูแถวอัลบั้ม",
+                 "อัลบั้มที่รวมกัน: " + " · ".join(f"{k} นับเป็น {v}" for k, v in ALBUM_INTO.items())):
+        ws.append([text])
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
 
 
 def file_name(data):
-    return f"บัญชี {data['week']}.xlsx"
+    return f"บัญชี {data['week']}{'' if data['closed'] else ' (ชั่วคราว)'}.xlsx"

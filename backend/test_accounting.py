@@ -102,15 +102,62 @@ check("สรุปต่อ Admin รวมจากทุกอัลบั้
 whys = {(i["album"], i["why"]) for i in d["items"]}
 check("รายการที่ใช้ไม่ได้มีครบทุกเหตุผล พร้อมลิงก์ของรูปซ้ำเป๊ะ",
       {(A, "ซ้ำ (เลขจองซ้ำ)"), (A, "อ่านไม่ได้"), (A, accounting.DELETED), (A, accounting.COPY),
-       (A, accounting.UNPAIRED), (B, accounting.DELETED), (B, accounting.COPY)} <= whys
+       (A, accounting.WAITING_PAIR), (B, accounting.DELETED), (B, accounting.COPY)} <= whys
       and any(i["link"] == "https://drive.google.com/file/d/d1/view" for i in d["items"]))
 check("งานที่ถูกลบใน W47 เองไม่มาอยู่ในรายงาน W46", not any(i["file"] == "lone_w47.jpg" for i in d["items"]))
 
 wb = load_workbook(io.BytesIO(accounting.build_xlsx(d)))
-check("Excel มีชีตสรุปต่อ Admin · รายอัลบั้ม · รายการที่ใช้ไม่ได้ · อ่านก่อน",
-      wb.sheetnames == ["สรุปต่อ Admin", "รายอัลบั้ม", "รายการที่ใช้ไม่ได้", "อ่านก่อน"], wb.sheetnames)
+check("Excel เปิดด้วยหน้าสรุป ตามด้วยชีตรายละเอียด",
+      wb.sheetnames == ["สรุป", "สรุปต่อ Admin", "รายอัลบั้ม", "รายการที่ใช้ไม่ได้", "อ่านก่อน"], wb.sheetnames)
 last = [c.value for c in list(wb["สรุปต่อ Admin"].iter_rows())[-1]]
-check("แถวรวมท้ายชีตสรุป", last[0] == "รวม" and last[2] == sum(x["pictures"] for x in d["admins"]), last)
+check("แถวรวมท้ายชีตสรุปต่อ Admin", last[0] == "รวม" and last[2] == sum(x["pictures"] for x in d["admins"]), last)
+
+# --- the first sheet: pictures → trips → read → final, with the reasons -------------------------
+check("❗ เทียบงาน = Final 6 + ซ้ำ 2 (สำเนา 1 + เลขจอง 1) + ลบ 1 + อ่านไม่ได้ 1 + ค้าง 2",
+      (a["jobs"], a["final"], a["dup"], a[accounting.DELETED], a["other"], a["pending"]) == (12, 6, 2, 1, 1, 2), a)
+check("อ่านได้ = Final + รอคนตรวจ + เลขจองซ้ำ + ลบ (อ่านไม่ได้ไม่นับ)", a["read"] == 6 + 1 + 1 + 1, a)
+check("❗ ค้างแยกเหตุผล: รอคนตรวจ 1 · รูปครึ่งรอคู่ 1 รูป",
+      (a[accounting.REVIEW], a[accounting.READING], a[accounting.FILING], a[accounting.UNPAIRED]) == (1, 0, 0, 1), a)
+check("ยอด Ops เทียบกับเทียบงาน", (a["ops"], a["ops_gap"], b["ops"], b["jobs"], b["ops_gap"]) == (10, -2, 5, 5, 0), (a, b))
+check("❗ แถวรวมต้องบวกกลับได้", d["total"]["jobs"] == d["total"]["final"] + d["total"]["dup"]
+      + d["total"][accounting.DELETED] + d["total"]["other"] + d["total"]["pending"], d["total"])
+check("งานของอัลบั้มสัปดาห์ก่อนที่ลงไฟล์สัปดาห์นี้ แยกบอก ไม่นับซ้ำ", d["from_earlier"] == {OLD: 1}, d["from_earlier"])
+s = list(wb["สรุป"].iter_rows(values_only=True))
+names = [r[0] for r in s]
+check("❗ หน้าสรุปของสัปดาห์ที่ยังไม่ปิดขึ้นว่ายอดชั่วคราว", "ยอดชั่วคราว" in s[0][0], s[0][0])
+check("แถว Admin มีอัลบั้มอยู่ใต้ และปิดท้ายด้วยแถวรวม", names.index("Karnjana") + 1 == names.index(A)
+      and "รวมทุก Admin" in names, names)
+check("แถวอัลบั้มพับเก็บได้", wb["สรุป"].row_dimensions[names.index(A) + 1].outlineLevel == 1)
+check("หน้าสรุปบอกงานจากอัลบั้มสัปดาห์ก่อน", any(str(n).startswith("งานจากอัลบั้มของสัปดาห์ก่อน") for n in names), names)
+check("ชื่อไฟล์บอกว่ายังเป็นยอดชั่วคราว", accounting.file_name(d) == "บัญชี 2026-W46 (ชั่วคราว).xlsx")
+
+W48 = ("2026-11-23", "2026-11-29")
+j48 = db.create_job("ฟ้า Win", "Trips", *W48, category="2 W Saver")
+hold = db.create_job(db.HOLDING_RIDER, "Trips", *W48)
+MAIN, PART, EMPTY = "2W Karnjana 1748 งาน", "2W Karnjana ทดสอบ", "2W ใหม่ 3 งาน"
+trip(j48, f"{MAIN}_3000+3001_฿30.jpg", MAIN, service_type="Saver Bike")
+trip(j48, f"{PART}_3002+3003_฿30.jpg", PART, service_type="Standard Bike")
+trip(hold, f"{MAIN}_3004+3005_฿30.jpg", MAIN, committed=0)
+trip(hold, f"{MAIN}_3006+3007_฿30.jpg", MAIN, status="pending", committed=0)
+db.record_pool_run("move", "Week 23-29 Nov", {}, "", {"started_at": "2026-11-24 00:00:00", "albums": [
+    {"week": "Week 23-29 Nov", "album": EMPTY, "leftovers": [{"file": "p_0.jpg"}, {"file": "q_0.jpg"}, {"file": "r_0.jpg"}]},
+    {"week": "Week 23-29 Nov", "album": A, "leftovers": [{"file": "old_0.jpg"}]}]})
+d48 = accounting.build(*W48)
+by = {x["album"]: x for x in d48["albums"]}
+check("❗ อัลบั้มทดสอบรวมเข้าชุด 1748 เป็นแถวเดียว", PART not in by and by[MAIN]["final"] == 2, sorted(by))
+check("❗ แยกงานค้าง: รออ่าน 1 · รอลงไฟล์ 1",
+      (by[MAIN][accounting.READING], by[MAIN][accounting.FILING], by[MAIN]["pending"]) == (1, 1, 2), by[MAIN])
+check("❗ อัลบั้มที่ยังไม่มีงานเข้าระบบก็ขึ้นในรายงาน โดยนับรูปครึ่งที่รอคู่",
+      EMPTY in by and (by[EMPTY]["half"], by[EMPTY]["pending"], by[EMPTY]["final"]) == (3, 2, 0), sorted(by))
+check("อัลบั้มที่เริ่มสัปดาห์ก่อนไม่โผล่ซ้ำจากรูปที่ค้างในกอง", A not in by, sorted(by))
+
+db.close_week(*W46)
+closed = accounting.build(*W46)
+top = list(load_workbook(io.BytesIO(accounting.build_xlsx(closed)))["สรุป"].iter_rows(values_only=True))[0][0]
+check("❗ สัปดาห์ที่ปิดแล้วไม่ขึ้นยอดชั่วคราว", closed["closed"] and "ปิดสัปดาห์แล้ว" in top and "ชั่วคราว" not in top, top)
+check("ชื่อไฟล์สัปดาห์ที่ปิดแล้ว", accounting.file_name(closed) == "บัญชี 2026-W46.xlsx")
+check("สัปดาห์ที่ปิดแล้วเรียกรูปค้างว่าหาคู่ไม่ได้",
+      any(i["why"] == accounting.UNPAIRED for i in closed["items"]))
 
 for name, want in (("2W Parichart2  473 งาน", "Parichart"), ("4 W Ploy 357งาน 11Nov 2", "Ploy"),
                    ("2W Tae รวมงาน 295 16Nov", "Tae"), ("2W-Win Karnjana = 140", "Karnjana"),
