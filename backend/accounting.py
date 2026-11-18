@@ -367,7 +367,8 @@ def build(d_from, d_to):
 def album_report(data):
     """The report the งานซ้ำ tab shows, for telling each Admin's group what came of their albums."""
     def counts(x):
-        return {"sent": x["jobs"], "ops": x["ops"], "final": x["final"], "dup": x["dup"],
+        return {"pictures": x["pictures"], "full": x["full"], "half": x["half"], "unknown": x["unknown"],
+                "sent": x["jobs"], "ops": x["ops"], "final": x["final"], "dup": x["dup"],
                 "other": x["other"], "pending": x["pending"]}
     return {"week": data["week"], "d_from": data["d_from"], "d_to": data["d_to"], "closed": data["closed"],
             "made_at": data["made_at"], "total": counts(data["total"]),

@@ -215,6 +215,8 @@ kanchana = next(g for g in rep["admins"] if g["admin"] == "Kanchana")["albums"][
 check("❗ รายงานหน้าเว็บ: อัลบั้มอยู่ใต้ Admin ส่งมา 7 = ได้งาน 3 + ซ้ำ 2 + ใช้ไม่ได้ 2",
       (kanchana["album"], kanchana["sent"], kanchana["final"], kanchana["dup"], kanchana["other"], kanchana["pending"])
       == (KAN, 7, 3, 2, 2, 0), kanchana)
+check("❗ บอกจำนวนรูปในอัลบั้ม แยกรูปเต็มกับรูปครึ่ง",
+      (kanchana["pictures"], kanchana["full"], kanchana["half"], kanchana["unknown"]) == (11, 3, 8, 0), kanchana)
 check("❗ ทุกอัลบั้มบวกกลับเป็นยอดส่งมา และแถวรวมตรงกับผลรวม",
       all(x["sent"] == x["final"] + x["dup"] + x["other"] + x["pending"] for g in rep["admins"] for x in g["albums"])
       and rep["total"]["sent"] == sum(x["sent"] for g in rep["admins"] for x in g["albums"]), rep)

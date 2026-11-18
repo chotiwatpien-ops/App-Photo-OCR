@@ -123,6 +123,8 @@ function Section({ title, sub, children }) {
 
 const pct = (part, whole) => (whole ? `${(part / whole * 100).toFixed(1)}%` : '0.0%')
 const dash = (n) => (n ? fmt(n) : '–')
+const pictureKinds = (x) => [x.full && `เต็ม ${fmt(x.full)}`, x.half && `ครึ่ง ${fmt(x.half)}`,
+  x.unknown && `ไม่ทราบชนิด ${fmt(x.unknown)}`].filter(Boolean).join(' · ')
 
 /** What each album sent and what came of it, to tell each Admin's group. */
 function AlbumReport({ week }) {
@@ -145,7 +147,9 @@ function AlbumReport({ week }) {
   const sum = (k) => albums.reduce((s, a) => s + a[k], 0)
   const sent = sum('sent'), dup = sum('dup'), other = sum('other')
   const chip = (on) => `shrink-0 min-h-11 px-4 rounded-full text-sm border ${on ? 'bg-ink text-white border-ink' : 'bg-white text-ink-soft border-line'}`
-  const tiles = [['ส่งมา (งาน)', fmt(sent), 'text-ink'], ['ได้งาน', fmt(sum('final')), 'text-ok-ink'],
+  const allPictures = { full: sum('full'), half: sum('half'), unknown: sum('unknown') }
+  const tiles = [[`รูปในอัลบั้ม · ${pictureKinds(allPictures) || 'ไม่มีรูป'}`, fmt(sum('pictures')), 'text-ink'],
+    ['ส่งมา (งาน)', fmt(sent), 'text-ink'], ['ได้งาน', fmt(sum('final')), 'text-ok-ink'],
     [`ซ้ำ · ${pct(dup, sent)}`, fmt(dup), 'text-warn-ink'], ['ค้าง', fmt(sum('pending')), 'text-ink']]
 
   return (
@@ -163,9 +167,9 @@ function AlbumReport({ week }) {
           <button key={a.admin} onClick={() => setAdmin(a.admin)} aria-pressed={admin === a.admin} className={chip(admin === a.admin)}>{a.admin}</button>
         ))}
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-line-soft border border-line rounded-xl overflow-hidden">
-        {tiles.map(([label, v, tone]) => (
-          <div key={label} className="bg-white px-4 py-3">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-px bg-line-soft border border-line rounded-xl overflow-hidden">
+        {tiles.map(([label, v, tone], i) => (
+          <div key={label} className={`bg-white px-4 py-3 ${i === 0 ? 'col-span-2 sm:col-span-1' : ''}`}>
             <p className={`text-[22px] sm:text-[26px] leading-tight font-semibold tabular-nums ${tone}`}>{v}</p>
             <p className="text-sm text-muted">{label}</p>
           </div>
@@ -177,6 +181,7 @@ function AlbumReport({ week }) {
           <thead>
             <tr className="text-muted border-b border-line">
               <th className="font-normal text-left py-2 px-4">อัลบั้ม</th>
+              <th className="hidden sm:table-cell font-normal text-right py-2 px-4">รูปในอัลบั้ม</th>
               <th className="font-normal text-right py-2 px-2 sm:px-4">ส่งมา</th>
               <th className="font-normal text-right py-2 px-2 sm:px-4">ได้งาน</th>
               <th className="font-normal text-right py-2 px-2 sm:px-4">ซ้ำ</th>
@@ -186,15 +191,20 @@ function AlbumReport({ week }) {
           </thead>
           {shown.map((g) => (
             <tbody key={g.admin}>
-              {!admin && <tr className="border-b border-line-soft"><th colSpan={6} className="text-left font-semibold pt-3 pb-1.5 px-4">{g.admin}</th></tr>}
+              {!admin && <tr className="border-b border-line-soft"><th colSpan={7} className="text-left font-semibold pt-3 pb-1.5 px-4">{g.admin}</th></tr>}
               {g.albums.map((a) => {
                 const high = a.sent > 0 && a.dup / a.sent >= 0.1
                 return (
                   <tr key={a.album} className="border-b border-line-soft">
                     <td className="py-2.5 px-4 break-words">
                       {a.album}
-                      {a.ops != null && a.ops !== a.sent && <span className="block text-xs text-warn-ink">ชื่ออัลบั้มระบุ {fmt(a.ops)} งาน นับจากรูปได้ {fmt(a.sent)}</span>}
+                      <span className="sm:hidden block text-xs text-muted">{fmt(a.pictures)} รูป · {pictureKinds(a)}</span>
+                      {a.ops != null && a.ops !== a.sent &&<span className="block text-xs text-warn-ink">ชื่ออัลบั้มระบุ {fmt(a.ops)} งาน นับจากรูปได้ {fmt(a.sent)}</span>}
                       {a.other > 0 && <span className="block text-xs text-muted">ใช้ไม่ได้ด้วยเหตุผลอื่น {fmt(a.other)} งาน</span>}
+                    </td>
+                    <td className="hidden sm:table-cell py-2.5 px-4 text-right whitespace-nowrap">
+                      {fmt(a.pictures)}
+                      <span className="block text-xs text-muted">{pictureKinds(a)}</span>
                     </td>
                     <td className="py-2.5 px-2 sm:px-4 text-right">{fmt(a.sent)}</td>
                     <td className="py-2.5 px-2 sm:px-4 text-right font-semibold">{fmt(a.final)}</td>
