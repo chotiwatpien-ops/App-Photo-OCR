@@ -208,5 +208,27 @@ check("ดาวน์โหลดจากหน้าเว็บได้ ไ
       and "%E0%B8%9A%E0%B8%B1%E0%B8%8D%E0%B8%8A%E0%B8%B5" in res.headers.get("content-disposition", ""),
       (res.status_code, res.headers.get("content-disposition")))
 
+client = TestClient(main.app)
+main._dup_cache.clear()
+rep = client.get(f"/api/accounting/albums?week={W42[0]}").json()
+kanchana = next(g for g in rep["admins"] if g["admin"] == "Kanchana")["albums"][0]
+check("❗ รายงานหน้าเว็บ: อัลบั้มอยู่ใต้ Admin ส่งมา 7 = ได้งาน 3 + ซ้ำ 2 + ใช้ไม่ได้ 2",
+      (kanchana["album"], kanchana["sent"], kanchana["final"], kanchana["dup"], kanchana["other"], kanchana["pending"])
+      == (KAN, 7, 3, 2, 2, 0), kanchana)
+check("❗ ทุกอัลบั้มบวกกลับเป็นยอดส่งมา และแถวรวมตรงกับผลรวม",
+      all(x["sent"] == x["final"] + x["dup"] + x["other"] + x["pending"] for g in rep["admins"] for x in g["albums"])
+      and rep["total"]["sent"] == sum(x["sent"] for g in rep["admins"] for x in g["albums"]), rep)
+check("บอกว่าสัปดาห์ปิดแล้วหรือยัง", client.get(f"/api/accounting/albums?week={W46[0]}").json()["closed"] is True
+      and rep["closed"] is False)
+real_build, calls = accounting.build, []
+accounting.build = lambda *w: calls.append(w) or real_build(*w)
+client.get(f"/api/accounting/albums?week={W42[0]}")
+check("❗ เปิดแท็บซ้ำไม่คำนวณใหม่", calls == [], calls)
+main._dup_cache.clear()
+client.get(f"/api/accounting/albums?week={W42[0]}")
+check("ล้าง cache แล้วคำนวณใหม่", calls == [W42], calls)
+accounting.build = real_build
+check("สัปดาห์ที่ไม่มีอยู่ → 404", client.get("/api/accounting/albums?week=2020-01-06").status_code == 404)
+
 print("\nผ่านทั้งหมด ✅" if ok else "\n✗ มีข้อที่ไม่ผ่าน")
 sys.exit(0 if ok else 1)

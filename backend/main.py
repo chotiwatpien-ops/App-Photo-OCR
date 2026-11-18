@@ -635,6 +635,22 @@ def duplicate_report_xlsx(week: str):
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
 
 
+@app.get("/api/accounting/albums")
+def accounting_albums(week: str):
+    """Per album: sent, usable, repeated, still waiting. Kept with the week's cached view, so the
+    tab opening again does not query the database again."""
+    from datetime import date, timedelta
+
+    import accounting
+    if week not in _dup_weeks():
+        raise HTTPException(404, "ไม่พบสัปดาห์นี้")
+    d = _dup_week(week)
+    if "accounting" not in d:
+        d["accounting"] = accounting.album_report(
+            accounting.build(week, (date.fromisoformat(week) + timedelta(days=6)).isoformat()))
+    return d["accounting"]
+
+
 @app.get("/api/accounting.xlsx")
 def accounting_xlsx(week: str):
     """What each Admin sent in the week and what came of it, for accounting to pay from."""

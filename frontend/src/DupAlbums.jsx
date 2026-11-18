@@ -121,6 +121,99 @@ function Section({ title, sub, children }) {
   )
 }
 
+const pct = (part, whole) => (whole ? `${(part / whole * 100).toFixed(1)}%` : '0.0%')
+const dash = (n) => (n ? fmt(n) : '–')
+
+/** What each album sent and what came of it, to tell each Admin's group. */
+function AlbumReport({ week }) {
+  const [r, setR] = useState(null)
+  const [error, setError] = useState('')
+  const [admin, setAdmin] = useState('')
+
+  useEffect(() => {
+    let live = true
+    setR(null); setError(''); setAdmin('')
+    api.accountingAlbums(week).then((x) => { if (live) setR(x) }).catch((e) => { if (live) setError(e.message) })
+    return () => { live = false }
+  }, [week])
+
+  if (error) return <p className="text-sm text-danger-ink">โหลดรายงานรายอัลบั้มไม่ได้: {error}</p>
+  if (!r) return <p className="text-sm text-muted">กำลังโหลดรายงานรายอัลบั้ม…</p>
+
+  const shown = r.admins.filter((a) => !admin || a.admin === admin)
+  const albums = shown.flatMap((a) => a.albums)
+  const sum = (k) => albums.reduce((s, a) => s + a[k], 0)
+  const sent = sum('sent'), dup = sum('dup'), other = sum('other')
+  const chip = (on) => `shrink-0 min-h-11 px-4 rounded-full text-sm border ${on ? 'bg-ink text-white border-ink' : 'bg-white text-ink-soft border-line'}`
+  const tiles = [['ส่งมา (งาน)', fmt(sent), 'text-ink'], ['ได้งาน', fmt(sum('final')), 'text-ok-ink'],
+    [`ซ้ำ · ${pct(dup, sent)}`, fmt(dup), 'text-warn-ink'], ['ค้าง', fmt(sum('pending')), 'text-ink']]
+
+  return (
+    <section aria-label="รายงานรายอัลบั้ม" className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h2 className="text-[17px] font-semibold">รายงานรายอัลบั้ม</h2>
+        <span className={`text-xs font-medium rounded-full px-2.5 py-0.5 whitespace-nowrap ${r.closed ? 'bg-ok-bg text-ok-ink' : 'bg-warn-bg text-warn-ink'}`}>
+          {r.closed ? 'ปิดสัปดาห์แล้ว' : 'ยอดชั่วคราว ตัวเลขยังเปลี่ยนได้'}
+        </span>
+        <span className="text-sm text-muted">ข้อมูล ณ {when(r.made_at)} น.</span>
+      </div>
+      <div role="group" aria-label="เลือก Admin" className="flex gap-2 overflow-x-auto">
+        <button onClick={() => setAdmin('')} aria-pressed={!admin} className={chip(!admin)}>ทุก Admin</button>
+        {r.admins.map((a) => (
+          <button key={a.admin} onClick={() => setAdmin(a.admin)} aria-pressed={admin === a.admin} className={chip(admin === a.admin)}>{a.admin}</button>
+        ))}
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-px bg-line-soft border border-line rounded-xl overflow-hidden">
+        {tiles.map(([label, v, tone]) => (
+          <div key={label} className="bg-white px-4 py-3">
+            <p className={`text-[22px] sm:text-[26px] leading-tight font-semibold tabular-nums ${tone}`}>{v}</p>
+            <p className="text-sm text-muted">{label}</p>
+          </div>
+        ))}
+      </div>
+      {other > 0 && <p className="text-sm text-ink-soft">มีงานที่ใช้ไม่ได้ด้วยเหตุผลอื่น {fmt(other)} งาน (อ่านไม่ได้ หรือกดไม่ใช้) จึงไม่อยู่ในช่องด้านบน</p>}
+      <div className="bg-white border border-line rounded-xl overflow-x-auto">
+        <table className="w-full text-sm tabular-nums">
+          <thead>
+            <tr className="text-muted border-b border-line">
+              <th className="font-normal text-left py-2 px-4">อัลบั้ม</th>
+              <th className="font-normal text-right py-2 px-2 sm:px-4">ส่งมา</th>
+              <th className="font-normal text-right py-2 px-2 sm:px-4">ได้งาน</th>
+              <th className="font-normal text-right py-2 px-2 sm:px-4">ซ้ำ</th>
+              <th className="hidden sm:table-cell font-normal text-right py-2 px-4">% ซ้ำ</th>
+              <th className="hidden sm:table-cell font-normal text-right py-2 px-4">ค้าง</th>
+            </tr>
+          </thead>
+          {shown.map((g) => (
+            <tbody key={g.admin}>
+              {!admin && <tr className="border-b border-line-soft"><th colSpan={6} className="text-left font-semibold pt-3 pb-1.5 px-4">{g.admin}</th></tr>}
+              {g.albums.map((a) => {
+                const high = a.sent > 0 && a.dup / a.sent >= 0.1
+                return (
+                  <tr key={a.album} className="border-b border-line-soft">
+                    <td className="py-2.5 px-4 break-words">
+                      {a.album}
+                      {a.ops != null && a.ops !== a.sent && <span className="block text-xs text-warn-ink">ชื่ออัลบั้มระบุ {fmt(a.ops)} งาน นับจากรูปได้ {fmt(a.sent)}</span>}
+                      {a.other > 0 && <span className="block text-xs text-muted">ใช้ไม่ได้ด้วยเหตุผลอื่น {fmt(a.other)} งาน</span>}
+                    </td>
+                    <td className="py-2.5 px-2 sm:px-4 text-right">{fmt(a.sent)}</td>
+                    <td className="py-2.5 px-2 sm:px-4 text-right font-semibold">{fmt(a.final)}</td>
+                    <td className="py-2.5 px-2 sm:px-4 text-right">{dash(a.dup)}</td>
+                    <td className="hidden sm:table-cell py-2.5 px-4 text-right">
+                      {a.dup ? <span className={high ? 'inline-block rounded-full px-2 py-0.5 bg-warn-bg text-warn-ink font-medium' : ''}>{pct(a.dup, a.sent)}</span> : '–'}
+                    </td>
+                    <td className="hidden sm:table-cell py-2.5 px-4 text-right">{dash(a.pending)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          ))}
+        </table>
+      </div>
+    </section>
+  )
+}
+
 function Copies({ copies }) {
   const [open, setOpen] = useState(false)
   const [n, setN] = useState(20)
@@ -227,6 +320,8 @@ export default function DupAlbums({ onGo }) {
           </div>
         </div>
       </div>
+
+      <AlbumReport week={d.week} />
 
       <Verdict d={d} onQueue={toQueue} />
 

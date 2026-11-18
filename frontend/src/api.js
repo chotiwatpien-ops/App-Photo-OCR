@@ -91,6 +91,7 @@ export const api = {
   duplicateWeek: (week = '') => fetch(`/api/duplicates/week?week=${week}`).then(handle),
   duplicateReportUrl: (week) => `/api/duplicates/report.xlsx?week=${week}`,
   accountingReportUrl: (week) => `/api/accounting.xlsx?week=${week}`,
+  accountingAlbums: (week) => fetch(`/api/accounting/albums?week=${week}`).then(handle),
   weekFileUrl: (week) => `/api/export/week?week=${week}`,
   spreadDates: (jobId, allRows = false) =>
     fetch(`/api/jobs/${jobId}/spread-dates?all_rows=${allRows}`, { method: 'POST' }).then(handle),

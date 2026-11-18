@@ -364,6 +364,17 @@ def build(d_from, d_to):
             "from_earlier": dict(from_earlier)}
 
 
+def album_report(data):
+    """The report the งานซ้ำ tab shows, for telling each Admin's group what came of their albums."""
+    def counts(x):
+        return {"sent": x["jobs"], "ops": x["ops"], "final": x["final"], "dup": x["dup"],
+                "other": x["other"], "pending": x["pending"]}
+    return {"week": data["week"], "d_from": data["d_from"], "d_to": data["d_to"], "closed": data["closed"],
+            "made_at": data["made_at"], "total": counts(data["total"]),
+            "admins": [{"admin": a["admin"], "albums": [{"album": x["album"], **counts(x)} for x in data["albums"]
+                                                         if x["admin"] == a["admin"]]} for a in data["admins"]]}
+
+
 def _total(rows, **head):
     """The rows added up. Ops' count only when every album has one: a part would mislead."""
     known = bool(rows) and all(x["ops"] is not None for x in rows)
