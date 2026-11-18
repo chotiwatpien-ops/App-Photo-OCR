@@ -663,31 +663,6 @@ def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True, force=Fals
     return errors, failed
 
 
-def cleanup(drive, exports_id, delete_job_ids=None, delete_trip_ids=None) -> int:
-    """User-ordered data cleanup: drop whole jobs (duplicate manual uploads) and/or specific rows
-    the team has checked by picture. Rewrites the workbook after."""
-    if delete_job_ids:
-        for r in db.delete_jobs(delete_job_ids):
-            if r["found"]:
-                log(f"🗑 ลบ job #{r['job_id']} {r['driver_name']} ({r['date_from']}) — {r['trips']} แถว")
-            else:
-                log(f"   (ไม่พบ job #{r['job_id']})")
-    if delete_trip_ids:
-        gone = db.delete_trips(delete_trip_ids)
-        baht = sum(r.get("net", 0) for r in gone if r["found"])
-        for r in gone:
-            if r["found"]:
-                log(f"🗑 ลบแถว #{r['id']} {r['driver_name']} {r['file_name']} "
-                    f"(job #{r['job_id']}, ฿{r['net']:g}" +
-                    (f", ครึ่งที่รวมไว้ {r['halves']} รูป)" if r["halves"] else ")"))
-            else:
-                log(f"   (ไม่พบแถว #{r['id']})")
-        log(f"🧹 ลบแถวที่สั่งไว้ {sum(1 for r in gone if r['found'])} แถว (฿{baht:,.0f})")
-    import week_files
-    _n, errs_files = week_files.write(drive, exports_id, log=log)
-    return 1 if errs_files else 0
-
-
 def fix_hidden_turbo() -> int:
     """Maintenance pass (no Drive, no Gemini): waiting rows that fail the check with a small
     positive net−base gap and bonus/turbo both 0 are the 'collapsed-accordion' family — the
@@ -1416,11 +1391,6 @@ def main():
                          "The workbooks are still written from every row.")
     ap.add_argument("--fix-hidden-turbo", action="store_true",
                     help="DB-only maintenance: fill small net-base gaps (collapsed sections) into Turbo")
-    ap.add_argument("--delete-jobs", metavar="IDS", help="comma-separated job ids to delete")
-    ap.add_argument("--delete-trips", metavar="IDS",
-                    help="comma-separated trip ids to delete (team-verified repeats), then rewrite the xlsx")
-    ap.add_argument("--redo-model", metavar="SUBSTR",
-                    help="delete trips read by a model matching SUBSTR, then re-read them this run")
     ap.add_argument("--min-gap", type=float, metavar="HOURS",
                     help="do nothing if a round finished less than this many hours ago "
                          "(scheduled runs only — a person pressing the button always runs)")
@@ -1441,8 +1411,7 @@ def main():
         log(("▶ " if due else "⏭ ") + why)
         if not due:
             sys.exit(0)
-    if not (a.exports_only or a.xlsx_only or a.exports_jobs or a.fix_hidden_turbo
-            or a.delete_jobs or a.delete_trips):
+    if not (a.exports_only or a.xlsx_only or a.exports_jobs or a.fix_hidden_turbo):
         # a reading round files rows into the week while close_week.py is counting and carrying
         # them; the two would disagree about what is over target. The close takes minutes.
         active = db.close_run_active()
@@ -1452,10 +1421,6 @@ def main():
             sys.exit(0)
     if a.fix_hidden_turbo:
         sys.exit(fix_hidden_turbo())
-    if a.redo_model:
-        st = db.delete_model_trips(a.redo_model)
-        log(f"🔁 redo '{a.redo_model}': ลบ {st['trips']} แถว · {st['files']} ไฟล์บันทึก · "
-            f"{st['jobs']} job ว่าง — จะอ่านซ้ำด้วยโมเดลปัจจุบันในรอบนี้เลย")
     if a.source.startswith("local:"):
         root = a.source[6:]
         drive = LocalDrive(root)
@@ -1469,10 +1434,6 @@ def main():
         log(f"Drive auth: {drive.mode}" + ("" if drive.mode == "oauth" else "  (service account = อ่านได้ เขียนไม่ได้ — รัน drive_auth.py เพื่อเขียนกลับ)"))
         inbox = config.DRIVE_INBOX_FOLDER_ID
         exports = a.exports or config.DRIVE_EXPORTS_FOLDER_ID
-    if a.delete_jobs or a.delete_trips:
-        ids = [int(x) for x in (a.delete_jobs or "").replace(" ", "").split(",") if x]
-        tids = [int(x) for x in (a.delete_trips or "").replace(" ", "").split(",") if x]
-        sys.exit(cleanup(drive, exports, delete_job_ids=ids, delete_trip_ids=tids))
     if a.exports_jobs:
         only = {int(x) for x in a.exports_jobs.replace(" ", "").split(",") if x}
         log(f"🖼 สร้างรูปส่งลูกค้าใหม่เฉพาะ job {sorted(only)}")

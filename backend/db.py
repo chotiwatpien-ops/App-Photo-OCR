@@ -806,26 +806,6 @@ def create_ingested_trip(job_id, drive_id, file_name, image_bytes, mime, source_
         return tid
 
 
-def delete_jobs(job_ids) -> list:
-    """User-ordered removal of whole jobs (e.g. duplicate manual uploads). Returns a log."""
-    out = []
-    with engine.begin() as c:
-        for jid in job_ids:
-            j = c.execute(select(jobs.c.id, jobs.c.driver_name, jobs.c.date_from)
-                          .where(jobs.c.id == jid)).mappings().first()
-            if not j:
-                out.append({"job_id": jid, "found": False})
-                continue
-            n = c.execute(select(func.count()).select_from(trips)
-                          .where(trips.c.job_id == jid)).scalar()
-            c.execute(delete(ingested_files).where(ingested_files.c.job_id == jid))
-            c.execute(delete(trips).where(trips.c.job_id == jid))
-            c.execute(delete(jobs).where(jobs.c.id == jid))
-            out.append({"job_id": jid, "found": True, "driver_name": j["driver_name"],
-                        "date_from": j["date_from"], "trips": n})
-    return out
-
-
 def mark_orphan_bottom_duplicates(job_id) -> int:
     """A code-less lower half that never paired is either (a) the other half of a trip already
     counted — its amount matches an approved row in the same job, so flag it as a duplicate for
@@ -1404,28 +1384,6 @@ def fail_ingest_run(run_id, note):
                                             ingest_runs.c.finished_at.is_(None))
                   .values(finished_at=_now(), errors=func.coalesce(ingest_runs.c.errors, 0) + 1,
                           notes=note))
-
-
-def delete_model_trips(model_substring: str) -> dict:
-    """User-ordered redo: drop every trip read by the given model (plus its ingest records,
-    and any job left empty) so the next discovery re-reads those files with the current model."""
-    with engine.begin() as c:
-        ids = [r[0] for r in c.execute(select(trips.c.id)
-                                       .where(trips.c.model.ilike(f"%{model_substring}%")))]
-        if not ids:
-            return {"trips": 0, "files": 0, "jobs": 0}
-        jids = {r[0] for r in c.execute(select(trips.c.job_id)
-                                        .where(trips.c.id.in_(ids))).all()}
-        nf = c.execute(delete(ingested_files).where(ingested_files.c.trip_id.in_(ids))).rowcount
-        nt = c.execute(delete(trips).where(trips.c.id.in_(ids))).rowcount
-        nj = 0
-        for j in jids:
-            left = c.execute(select(func.count()).select_from(trips)
-                             .where(trips.c.job_id == j)).scalar()
-            if left == 0:
-                c.execute(delete(jobs).where(jobs.c.id == j))
-                nj += 1
-        return {"trips": nt, "files": nf or 0, "jobs": nj}
 
 
 def normalize_booking_codes() -> int:

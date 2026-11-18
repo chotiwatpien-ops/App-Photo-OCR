@@ -101,5 +101,12 @@ copy = trip("n.jpg", booking_code="A-TESTEEE000001", base_fare=80, duplicate_of=
 out(top)
 check("แถวที่ชี้มาหาแถวนี้ถูกปลดธงซ้ำ", db.get_trip(copy)["duplicate_of"] is None)
 
+with open(".github/workflows/ingest.yml", encoding="utf-8") as f:
+    workflow = f.read()
+check("❗ workflow อ่านรูปไม่มีช่องสั่งลบแล้ว",
+      not any(w in workflow for w in ("delete_jobs", "delete_trips", "redo_model", "--delete-", "--redo-model")))
+check("❗ ไม่มีคำสั่งลบทั้ง job หรือลบตามโมเดลในฐานข้อมูล",
+      not hasattr(db, "delete_jobs") and not hasattr(db, "delete_model_trips"))
+
 print("\nผ่านทั้งหมด ✅" if ok else "\n✗ มีข้อที่ไม่ผ่าน")
 sys.exit(0 if ok else 1)

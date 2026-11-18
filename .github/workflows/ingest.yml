@@ -51,14 +51,6 @@ on:
         description: "Override model THIS run only (blank = default 3.7-flash)"
         type: string
         default: ""
-      delete_jobs:
-        description: "ลบ job ตาม id (คั่นด้วยจุลภาค) เช่น 167,168"
-        type: string
-        default: ""
-      delete_trips:
-        description: "ลบแถวตาม id (คั่นด้วยจุลภาค) — ใช้กับแถวซ้ำที่ตรวจรูปยืนยันแล้ว"
-        type: string
-        default: ""
       live_read:
         description: "อ่านสดรอบนี้ (ไม่ใช้ batch) — ผลมาทันทีแต่จ่ายเต็มราคา"
         type: boolean
@@ -71,10 +63,6 @@ on:
         description: "ยกเลิก batch ที่ค้าง แล้วอ่านรูปพวกนั้นแบบสดในรอบนี้ (จ่ายเต็มราคาเฉพาะรูปที่ค้าง · รูปใหม่รอบนี้ก็อ่านสด)"
         type: boolean
         default: false
-      redo_model:
-        description: "อ่านใหม่เฉพาะงานที่โมเดลนี้เคยอ่าน เช่น flash-lite (ตั้งช่อง model ข้างบนเป็นตัวที่จะใช้อ่านแทน)"
-        type: string
-        default: ""
 
 jobs:
   # Outside the drive-write queue on purpose: GitHub keeps one waiting run per concurrency group,
@@ -165,9 +153,6 @@ jobs:
           if [ "${{ github.event.inputs.xlsx_only }}" = "true" ]; then ARGS="$ARGS --xlsx-only"; fi
           if [ -n "${{ github.event.inputs.exports_jobs }}" ]; then ARGS="$ARGS --exports-jobs ${{ github.event.inputs.exports_jobs }}"; fi
           if [ -n "${{ github.event.inputs.exports_week }}" ]; then ARGS="$ARGS --exports-week ${{ github.event.inputs.exports_week }}"; fi
-          if [ -n "${{ github.event.inputs.redo_model }}" ]; then ARGS="$ARGS --redo-model ${{ github.event.inputs.redo_model }}"; fi
-          if [ -n "${{ github.event.inputs.delete_jobs }}" ]; then ARGS="$ARGS --delete-jobs ${{ github.event.inputs.delete_jobs }}"; fi
-          if [ -n "${{ github.event.inputs.delete_trips }}" ]; then ARGS="$ARGS --delete-trips ${{ github.event.inputs.delete_trips }}"; fi
           if [ -n "${{ github.event.inputs.limit }}" ]; then ARGS="$ARGS --limit ${{ github.event.inputs.limit }}"; fi
           python ingest.py $ARGS
       # A cancelled or timed-out round is killed before it can stamp its own row, and an unstamped
