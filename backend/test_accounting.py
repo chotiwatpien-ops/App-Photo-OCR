@@ -164,6 +164,38 @@ for name, want in (("2W Parichart2  473 งาน", "Parichart"), ("4 W Ploy 357
                    ("2W-Home สแตน = 39", "สแตน"), ("4W Loli 105 งาน 16Nov", "Loli")):
     check(f"Admin ของ {name!r} = {want}", accounting.admin_of(name) == want, accounting.admin_of(name))
 
+# --- a row a person deleted: a repeat of a counted trip, and whose album it was --------------------
+W41, W42 = ("2026-10-05", "2026-10-11"), ("2026-10-12", "2026-10-18")
+TAE, KAN = "2W Tae 9 งาน 5Oct", "2W Kanchana 8 งาน 12Oct"
+j41 = db.create_job("ต้น Win", "Trips", *W41, category="2 W Saver")
+j42 = db.create_job("ต้น Win", "Trips", *W42, category="2 W Saver")
+trip(j41, "S__501_0.jpg", TAE, service_type="Saver Bike", booking_code="A-TESTAAA000001", base_fare=40)
+trip(j42, "S__502_0.jpg", TAE, service_type="Saver Bike", booking_code="A-TESTAAA000002", base_fare=50)
+for i in range(3):                                              # most of this job is another album
+    trip(j42, f"{KAN}_{10 + 2 * i}+{11 + 2 * i}_฿30.jpg", KAN, service_type="Saver Bike",
+         booking_code=f"A-TESTKKK00000{i + 1}", base_fare=30 + i)
+for target, name, code, fare in (
+        (910, "S__503_0.jpg", "A-TESTAAA000002", 50),            # Tae's: same code as its trip here
+        (911, f"{KAN}_90+91_฿30.jpg", "A-TESTKKK000001", 30),    # same code
+        (912, "S__504_0.jpg", "A-TESTKKK000092", 31),            # one letter off, same fare
+        (913, "S__505_0.jpg", "A-TESTAAA000001", 40),            # that code is only in the week before
+        (914, "S__506_0.jpg", "A-TESTKKK000093", 99)):           # one letter off, another fare
+    db.log_action(action="trip.delete", target=f"trip:{target}", status=200,
+                  detail={"row": {"job_id": j42, "file_name": name, "booking_code": code, "base_fare": fare}})
+d41, d42 = accounting.build(*W41), accounting.build(*W42)
+tae = next(x for x in d41["albums"] if x["album"] == TAE)
+kan = next(x for x in d42["albums"] if x["album"] == KAN)
+check("❗ แถวที่ไม่รู้อัลบั้ม ตามงานที่มันซ้ำ ไม่ใช่อัลบั้มส่วนใหญ่ของ job",
+      (tae[accounting.DELETED_REPEAT], tae["dup"], tae["full"], tae["jobs"], tae["final"]) == (1, 1, 3, 3, 2), tae)
+check("❗ คนกดลบงานที่ซ้ำ นับเป็นซ้ำ (เลขจองตรง และเพี้ยนแต่ค่ารอบตรง)",
+      (kan[accounting.DELETED_REPEAT], kan["dup"]) == (2, 2), kan)
+check("❗ ลบแล้วไม่ตรงกับงานในสัปดาห์เดียวกัน ยังเป็นลบ (ข้ามสัปดาห์ · ค่ารอบต่าง)", kan[accounting.DELETED] == 2, kan)
+check("❗ เทียบงานบวกกลับได้ และไม่นับแถวของอัลบั้มอื่น",
+      (kan["jobs"], kan["read"], kan["full"], kan["half"]) == (7, 7, 3, 8), kan)
+check("อัลบั้มสัปดาห์ก่อนไม่โผล่ในรายงานนี้", all(x["album"] != TAE for x in d42["albums"]))
+check("รายการบอกว่าซ้ำกับงานไหน", any(i["why"] == accounting.DELETED_REPEAT and i["file"] == "S__503_0.jpg"
+                                       and i["note"] == "ซ้ำกับ S__502_0.jpg" for i in d41["items"]), d41["items"])
+
 import main                                                     # noqa: E402
 from fastapi.testclient import TestClient                       # noqa: E402
 import config                                                   # noqa: E402

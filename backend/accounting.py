@@ -18,11 +18,13 @@ import io
 import json
 import math
 import re
+from datetime import date, timedelta
 
 from sqlalchemy import func, select
 
 import db
 import duplicate_report as dr
+import same_trip
 from pipeline import car_is_standard
 
 SERVICES = ("Saver Bike", "Standard Bike", "Standard Car")
@@ -30,7 +32,9 @@ SERVICES = ("Saver Bike", "Standard Bike", "Standard Car")
 REPEAT, UNREADABLE, VOIDED, SET_ASIDE = "ซ้ำ (เลขจองซ้ำ)", "อ่านไม่ได้", "ยกเลิก", "พักไว้"
 UNUSABLE = {"duplicate": REPEAT, "voided": VOIDED, "error": UNREADABLE, "set_aside": SET_ASIDE}
 DELETED = "ลบในคิวตรวจ"
-COPY = "รูปซ้ำเป๊ะ (ไฟล์เดียวกัน)"
+# The queue tells people to delete a repeat, so most deletes are repeats (W46/W47: all 4)
+DELETED_REPEAT = "ซ้ำ (คนกดลบ)"
+COPY ="รูปซ้ำเป๊ะ (ไฟล์เดียวกัน)"
 UNPAIRED = "รูปครึ่งที่หาคู่ไม่ได้"
 WAITING_PAIR = "รูปครึ่งรอคู่"                  # the same pictures while the week is open
 READING, REVIEW, FILING = "รออ่าน", "รอคนตรวจ", "รอลงไฟล์"
@@ -73,7 +77,8 @@ def _pictures(file_name, kind=None, status=None):
 
 
 COLS = [db.trips.c[k] for k in ("id", "job_id", "file_name", "status", "committed", "kind", "service_type",
-                                 "booking_code", "net_earnings", "source_url", "source_album", "note")]
+                                 "booking_code", "base_fare", "net_earnings", "source_url", "source_album",
+                                 "note")]
 
 
 def _half_tag(file_name):
@@ -142,6 +147,21 @@ def _deleted(d_from, job_ids):
     return out
 
 
+def _monday(day):
+    d = date.fromisoformat(day)
+    return d - timedelta(days=d.weekday())
+
+
+def _twin(deleted, counted):
+    """The counted trip a deleted row repeats, or None. `counted` is one week's: a repeat across
+    weeks is work (customer, 2026-09-14)."""
+    code = same_trip.fold(deleted.get("booking_code"))
+    if not code:
+        return None
+    return next((r for r in counted if same_trip.fold(r.get("booking_code")) == code),
+                next((r for r in counted if same_trip.kind(deleted, r) == same_trip.CODE), None))
+
+
 def _copies(albums):
     t = db.skipped_copies.c
     with db.engine.begin() as c:
@@ -197,24 +217,33 @@ def build(d_from, d_to):
                                        and r["status"] == "done" and r["committed"] == 1)
     rows = [r for r in week_rows if album_of(r) not in earlier]
     mine = {album_of(r) for r in rows}
-    rows += _later_rows(_raw_names({a for a in pool_albums if a in mine}), d_to)
-    # a deleted row is gone; its album is in its file name (a pair) or else its job's other rows
+    later = _later_rows(_raw_names({a for a in pool_albums if a in mine}), d_to)
+    rows += later
+    counted = collections.defaultdict(list)                 # Monday -> trips counted that week
+    for r in week_rows + later:
+        if r["status"] == "done" and r["committed"] == 1:
+            counted[_monday(r["date_from"])].append(r)
+    # a deleted row is gone; its album is in its file name (a pair), the trip it repeats, or else
+    # its job's other rows
     job_album = {}
     for j_id, names in _group(rows, "job_id", album_of).items():
         job_album[j_id] = names.most_common(1)[0][0]
     with db.engine.begin() as c:
-        here = set(c.execute(select(db.jobs.c.id).where(db.jobs.c.date_from >= d_from,
-                                                        db.jobs.c.date_from <= d_to)).scalars())
+        job_from = dict(c.execute(select(db.jobs.c.id, db.jobs.c.date_from)
+                                  .where(db.jobs.c.date_from >= d_from)).all())
+    here = {j for j, w in job_from.items() if w <= d_to}
     deleted = []
     for d in _deleted(d_from, here | set(job_album)):
+        d["twin"] = _twin(d, counted[_monday(job_from[d["job_id"]])])
         named = canon((d.get("source_album") or "").strip() or (
-            dr.album_of(d["file_name"]) if dr.ALBUM.match(d["file_name"]) else ""))
+            dr.album_of(d["file_name"]) if dr.ALBUM.match(d["file_name"]) else "")
+            or (album_of(d["twin"]) if d["twin"] else ""))
         if d["job_id"] in here:
             d["album"] = named or job_album.get(d["job_id"], "ไม่รู้อัลบั้ม")
             if d["album"] not in earlier:
                 deleted.append(d)
         elif named in mine:
-            # a later week's rider holds work of many albums: only a row that names its album
+            # a later week's rider holds work of many albums: only a row whose album is known
             d["album"] = named
             deleted.append(d)
     left = _leftovers(d_from, d_to, mine, earlier)
@@ -263,10 +292,12 @@ def build(d_from, d_to):
         full, half = _pictures(d["file_name"], d.get("kind"))
         v["full"] += full
         v["half"] += half
-        v["bad"][DELETED] += 1
-        items.append({"album": a, "why": DELETED, "file": d["file_name"], "code": d.get("booking_code"),
+        why = DELETED_REPEAT if d["twin"] else DELETED
+        v["bad"][why] += 1
+        items.append({"album": a, "why": why, "file": d["file_name"], "code": d.get("booking_code"),
                       "amount": d.get("net_earnings"), "pictures": "เต็ม" if full else f"ครึ่ง {half}",
-                      "link": d.get("source_url"), "note": ""})
+                      "link": d.get("source_url"),
+                      "note": f"ซ้ำกับ {d['twin']['file_name']}" if d["twin"] else ""})
     for cp in copies:
         a = canon((cp.get("album") or "").strip())
         kept = (cp.get("same_as") or "").split("/")[-1]
@@ -302,10 +333,10 @@ def build(d_from, d_to):
         final = used_here + v["used_later"]
         # in trips: a full picture is one, two halves are one, a lone half is still one trip short
         dup_copy = v["copy_full"] + math.ceil((v["copy_half"] + v["unknown"]) / 2)
-        dup_code = bad[REPEAT]
+        dup_read = bad[REPEAT] + bad[DELETED_REPEAT]
         other = bad[UNREADABLE] + bad[VOIDED] + bad[SET_ASIDE]
         pending = waiting + math.ceil(lone / 2)
-        jobs = final + dup_copy + dup_code + bad[DELETED] + other + pending
+        jobs = final + dup_copy + dup_read + bad[DELETED] + other + pending
         ops = dr.ops_count(a)
         albums.append({
             "album": a, "admin": admin_of(a), "pictures": v["full"] + v["half"] + v["unknown"],
@@ -315,9 +346,9 @@ def build(d_from, d_to):
             "used_later": v["used_later"], "waiting": waiting,
             "unusable": sum(v["bad"].values()), **bad,
             **{k: v["bad_pictures"].get(k, 0) for k in BAD_PICTURES},
-            "jobs": jobs, "final": final, "dup": dup_copy + dup_code, "dup_copy": dup_copy,
+            "jobs": jobs, "final": final, "dup": dup_copy + dup_read, "dup_copy": dup_copy,
             "other": other, "pending": pending,
-            "read": final + v["waiting"][REVIEW] + v["waiting"][FILING] + dup_code + bad[DELETED]
+            "read": final + v["waiting"][REVIEW] + v["waiting"][FILING] + dup_read + bad[DELETED]
                     + bad[VOIDED] + bad[SET_ASIDE],
             READING: v["waiting"][READING], REVIEW: v["waiting"][REVIEW], FILING: v["waiting"][FILING],
             "ops": ops, "ops_gap": ops - jobs if ops is not None else None})
@@ -341,7 +372,7 @@ def _total(rows, **head):
             "ops_gap": sum(x["ops_gap"] for x in rows) if known else None}
 
 
-BAD_TRIPS = (REPEAT, DELETED, UNREADABLE, VOIDED, SET_ASIDE)
+BAD_TRIPS = (REPEAT, DELETED_REPEAT, DELETED, UNREADABLE, VOIDED, SET_ASIDE)
 BAD_PICTURES = (COPY, UNPAIRED)
 SUM_KEYS = ("pictures", "full", "half", "unknown", "usable", "used_here", *SERVICES, "used_later",
             "waiting", "unusable", *BAD_TRIPS, *BAD_PICTURES, "jobs", "final", "dup", "dup_copy",
@@ -351,7 +382,7 @@ SUMMARY = [("full", "รูปเต็ม"), ("half", "รูปครึ่ง
            ("ops_gap", "Ops มากกว่า (+) / น้อยกว่า (-)"), ("read", "อ่านได้"), ("final", "Final"),
            ("used_here", "Final · ลงไฟล์สัปดาห์นี้"), ("used_later", "Final · ไปลงสัปดาห์ถัดไป"),
            ("dup", "ซ้ำ"), (DELETED, "ลบ"), ("other", "ใช้ไม่ได้อื่นๆ"), ("pending", "ค้าง"),
-           ("dup_copy", "ซ้ำ · รูปซ้ำเป๊ะ (งาน)"), (REPEAT, "ซ้ำ · เลขจองซ้ำ"),
+           ("dup_copy", "ซ้ำ · รูปซ้ำเป๊ะ (งาน)"), (REPEAT, "ซ้ำ · เลขจองซ้ำ"), (DELETED_REPEAT, "ซ้ำ · คนกดลบ"),
            (UNREADABLE, "อื่นๆ · อ่านไม่ได้"), (VOIDED, "อื่นๆ · ยกเลิก"), (SET_ASIDE, "อื่นๆ · พักไว้"),
            (READING, f"ค้าง · {READING}"), (REVIEW, f"ค้าง · {REVIEW}"), (FILING, f"ค้าง · {FILING}"),
            (UNPAIRED, f"ค้าง · {WAITING_PAIR} (รูป)")]
@@ -437,6 +468,8 @@ def build_xlsx(data) -> bytes:
     for text in (f"รายงานบัญชี {data['week']} ({data['d_from']} ถึง {data['d_to']}) · {state}",
                  "นับทุกอัลบั้มที่วางในโฟลเดอร์ของสัปดาห์นี้ อัลบั้มนับในสัปดาห์ที่วางครั้งแรก",
                  "เทียบงาน = Final + ซ้ำ + ลบ + ใช้ไม่ได้อื่นๆ + ค้าง",
+                 "ซ้ำ รวมงานที่คนกดลบ เมื่อเลขจองตรงกับงานที่นับแล้วในสัปดาห์เดียวกัน "
+                 "(หรือต่างกันไม่เกิน 2 ตัวและค่ารอบตรงกัน) · ลบ = งานที่คนกดลบและไม่ตรงกับงานไหน",
                  "รูปเต็ม 1 รูป = 1 งาน · รูปครึ่ง 2 รูป = 1 งาน · รูปครึ่งที่เหลือเศษนับเป็น 1 งาน",
                  "อ่านได้ = งานที่ AI อ่านผลแล้ว · Final = งานที่ใช้ได้ รวมส่วนที่ไปลงสัปดาห์ถัดไป",
                  "งานที่ใช้ได้ = Final + งานที่ยังรอตรวจหรือรออ่าน",
