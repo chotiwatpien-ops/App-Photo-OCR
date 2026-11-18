@@ -869,6 +869,7 @@ def mark_orphan_bottom_duplicates(job_id) -> int:
 DUP_FULL_CODE = 15
 SUSPECT = "สงสัยว่าซ้ำ"     # same_trip.SUSPECT: a note carrying it is never parked automatically
 KEPT = "กู้คืนโดยผู้ใช้"    # a person said "not a repeat": the round leaves the row to people from then on
+NOT_USED = "คนกดไม่ใช้"     # a person took this row out of the work; see set_not_used
 
 
 def trip_key(row):
@@ -993,17 +994,18 @@ def discarded_duplicates(limit=200, everything=False):
     there were three weeks of settled repeats nobody was going to look at again, and a counter
     that only ever grows stops being read. Clearing hides, never deletes — everything=True still
     shows the lot, and the rows keep their note, their image and their restore button."""
+    by_hand = trips.c.note.contains(NOT_USED, autoescape=True)
+    out_of_work = (trips.c.status == "duplicate") | ((trips.c.status == "voided") & by_hand)
     q = (select(*TRIP_COLS, jobs.c.driver_name)
          .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
-         .where(trips.c.status == "duplicate"))
+         .where(out_of_work))
     if not everything:
         seen = state_get(DISCARD_SEEN_KEY)
         if seen:
-            q = q.where(trips.c.id > int(seen))
+            q = q.where((trips.c.id > int(seen)) | by_hand)     # the id says when it was read, not when it was taken out
     with engine.begin() as c:
         rows = [dict(r) for r in c.execute(q.order_by(trips.c.id.desc()).limit(limit)).mappings().all()]
-        hidden = c.execute(select(func.count()).select_from(trips)
-                           .where(trips.c.status == "duplicate")).scalar() or 0
+        hidden = c.execute(select(func.count()).select_from(trips).where(out_of_work)).scalar() or 0
     return {"rows": rows, "hidden": max(0, hidden - len(rows)) if not everything else 0}
 
 
@@ -1113,19 +1115,63 @@ def restore_refusal(trip_id):
         twin = _approved_twin(c, r, _job_week(c, r["job_id"]))
     if twin and twin["id"] != trip_id:
         return (f"เลขจองนี้นับไปแล้วในสัปดาห์นี้ ({twin['file_name']}) — เก็บไว้ไม่ได้ "
-                "ถ้าใบที่นับไปแล้วผิด ให้ลบใบนั้นก่อน แล้วค่อยกดเก็บใบนี้")
+                "ถ้าใบที่นับไปแล้วผิด ให้เอาใบนั้นออกจากงานก่อน แล้วค่อยกดเก็บใบนี้")
     return None
 
 
 def restore_discarded(trip_id) -> bool:
-    """Put an auto-discarded row back in the queue — the undo behind the log panel's button.
+    """Put a row taken out of the work back in the queue — the undo behind the log panel's button.
     The note carries KEPT, so the round never flags, parks or approves it again on its own."""
     with engine.begin() as c:
         r = c.execute(update(trips)
-                      .where(trips.c.id == trip_id, trips.c.status == "duplicate")
+                      .where(trips.c.id == trip_id,
+                             (trips.c.status == "duplicate")
+                             | ((trips.c.status == "voided") & trips.c.note.contains(NOT_USED, autoescape=True)))
                       .values(status="done", duplicate_of=None,
                               note=func.coalesce(trips.c.note, "") + " | " + KEPT))
         return r.rowcount > 0
+
+
+def _approved_at_fares(c, week, fares):
+    """This week's approved rows at these base fares, with what same_trip compares."""
+    return [dict(t) for t in c.execute(
+        select(trips.c.id, trips.c.file_name, trips.c.booking_code, trips.c.base_fare,
+               trips.c.distance_km, trips.c.pickup_text, trips.c.dropoff_text, trips.c.trip_time)
+        .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+        .where(trips.c.committed == 1, trips.c.base_fare.in_(fares),
+               jobs.c.date_from == week[0], jobs.c.date_to == week[1])).mappings().all()]
+
+
+def set_not_used(trip_id):
+    """A person takes a waiting row out of the work. Nothing is removed (Fiat 2026-11-18: nothing
+    is deleted, so everything stays visible): a repeat is parked as 'duplicate', anything else is
+    'voided', and the row keeps its note, its picture and its way back (restore_discarded).
+
+    Returns the new status, or None when the row is not one a person can take out."""
+    import same_trip
+    with engine.begin() as c:
+        r = c.execute(select(trips.c.id, trips.c.job_id, trips.c.status, trips.c.committed, trips.c.note,
+                             trips.c.duplicate_of, trips.c.booking_code, trips.c.base_fare,
+                             trips.c.distance_km, trips.c.pickup_text, trips.c.dropoff_text,
+                             trips.c.trip_time).where(trips.c.id == trip_id)).mappings().first()
+        if not r or r["committed"] or r["status"] not in ("done", "error"):
+            return None
+        week = _job_week(c, r["job_id"])
+        twin = None
+        if r["duplicate_of"]:
+            twin = c.execute(select(trips.c.file_name).where(trips.c.id == r["duplicate_of"],
+                                                             trips.c.status == "done")).mappings().first()
+        if not twin and r["booking_code"]:
+            twin = _approved_twin(c, r, week)
+        if not twin and r["base_fare"] is not None:
+            twin = same_trip.find_twin(dict(r), _approved_at_fares(c, week, [r["base_fare"]]))[0]
+        status = "duplicate" if twin else "voided"
+        why = f"{NOT_USED}: ซ้ำกับ {twin['file_name']}" if twin else f"{NOT_USED}: ไม่ใช่งาน"
+        c.execute(update(trips).where(trips.c.id == trip_id)
+                  .values(status=status, note=f"{why} | {r['note']}" if r["note"] else why))
+        _release_dup_flags(c, [trip_id])
+        _release_parked_copies(c, [trip_id])
+        return status
 
 
 def _is_repeat(row, seen) -> bool:
@@ -1147,19 +1193,14 @@ def _hold_suspects(c, job_id, rows):
     if not fares:
         return [r["id"] for r in rows]
     week = _job_week(c, job_id)
-    approved = [dict(t) for t in c.execute(
-        select(trips.c.id, trips.c.file_name, trips.c.booking_code, trips.c.base_fare,
-               trips.c.distance_km, trips.c.pickup_text, trips.c.dropoff_text, trips.c.trip_time)
-        .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
-        .where(trips.c.committed == 1, trips.c.base_fare.in_(fares),
-               jobs.c.date_from == week[0], jobs.c.date_to == week[1])).mappings().all()]
+    approved = _approved_at_fares(c, week, fares)
     free = []
     for r in rows:
         twin, k = same_trip.find_twin(r, approved + free)
         if twin is None:
             free.append(r)
             continue
-        msg = f"{same_trip.SUSPECT}: {same_trip.REASON[k]} กับ {twin['file_name']} — ดูรูปคู่กัน ถ้าเที่ยวเดียวกันให้ลบ"
+        msg = f"{same_trip.SUSPECT}: {same_trip.REASON[k]} กับ {twin['file_name']} — ดูรูปคู่กัน ถ้าเที่ยวเดียวกันให้กดไม่ใช้งานนี้"
         c.execute(update(trips).where(trips.c.id == r["id"])
                   .values(duplicate_of=twin["id"], note=f"{msg} | {r['note']}" if r["note"] else msg))
     return [r["id"] for r in free]
@@ -1823,11 +1864,6 @@ def update_trip(trip_id, fields: dict):
         return
     with engine.begin() as c:
         c.execute(update(trips).where(trips.c.id == trip_id).values(**vals))
-
-
-def delete_trip(trip_id):
-    with engine.begin() as c:
-        c.execute(delete(trips).where(trips.c.id == trip_id))
 
 
 def trips_from_album(prefix):

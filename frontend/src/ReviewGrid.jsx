@@ -95,9 +95,9 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
   }
 
   const removeTrip = async (tripId) => {
-    if (!confirm('ลบรายการนี้?')) return
+    if (!confirm('ไม่ใช้งานนี้?\n\nแถวยังอยู่ในระบบ ดูและเอากลับเข้าคิวได้จากคิวตรวจ')) return
     try {
-      await api.deleteTrip(tripId)
+      await api.setNotUsed(tripId)
       onJobUpdate({ ...job, trips: trips.filter((t) => t.id !== tripId) })
     } catch (e) {
       setMsg({ type: 'err', text: e.message })
@@ -406,7 +406,7 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
                       <button
                         onClick={() => removeTrip(t.id)}
                         className="text-slate-300 hover:text-red-500 px-1"
-                        title="ลบรายการ"
+                        title="ไม่ใช้งานนี้"
                       >✕</button>
                     )}
                   </div>

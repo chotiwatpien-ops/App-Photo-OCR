@@ -67,12 +67,10 @@ check("❗ เก็บค่าก่อนและหลังแก้", a["
 tid2 = db.create_trip(job, "b.jpg", b"y", "image/jpeg")
 with db.engine.begin() as c:
     c.execute(update(db.trips).where(db.trips.c.id == tid2).values(status="done", base_fare=60, booking_code="B-2"))
-import trash_picture                                            # noqa: E402
-trash_picture.move_to_trash = lambda trip_id: None
-web.delete(f"/api/trips/{tid2}")
+web.post(f"/api/trips/{tid2}/not-used")
 a = db.list_actions(1)[0]
-check("❗ ลบแถว → เก็บค่าของแถวไว้ก่อนหาย", a["action"] == "trip.delete"
-      and a["detail"]["row"]["booking_code"] == "B-2" and a["detail"]["row"]["base_fare"] == 60)
+check("❗ กดไม่ใช้งาน → บันทึกว่าใครทำกับแถวไหน และแถวยังอยู่", a["action"] == "trip.not_used"
+      and a["detail"]["new_status"] == "voided" and db.get_trip(tid2)["booking_code"] == "B-2")
 
 web.post(f"/api/trips/{tid}/approve")
 check("อนุมัติ → trip.approve", db.list_actions(1)[0]["action"] == "trip.approve")
@@ -93,7 +91,7 @@ r = web.get(f"/api/diag/actions?target=trip:{tid}", headers=K).json()["actions"]
 check("ค้นตามแถว: เห็นประวัติของแถวนั้นครบ", [x["action"] for x in r] == ["trip.approve", "trip.edit"])
 check("ค้นตามประเภท: trip. ได้ทุกอย่างของแถว",
       {x["action"] for x in web.get("/api/diag/actions?action=trip.", headers=K).json()["actions"]}
-      == {"trip.edit", "trip.delete", "trip.approve"})
+      == {"trip.edit", "trip.not_used", "trip.approve"})
 check("❗ ไม่มีทางลบหรือแก้ action log ผ่านเว็บ",
       not any(p.path.startswith("/api/diag/actions") and m != "GET"
               for p in main.app.routes for m in getattr(p, "methods", set()) or set()))

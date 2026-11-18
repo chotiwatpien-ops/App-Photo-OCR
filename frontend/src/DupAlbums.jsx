@@ -250,7 +250,7 @@ export default function DupAlbums({ onGo }) {
 
       {decide.length > 0 && (
         <Section title={`รอคนตัดสิน ${fmt(decide.length)} เที่ยว`}
-          sub="ตรงกับเที่ยวที่นับไปแล้ว (เลขจอง หรือเส้นทาง ระยะ ยอด) แต่ระบบไม่ตัดเอง ถ้าเป็นเที่ยวเดียวกันให้ลบในคิวตรวจ ถ้าไม่ใช่ให้อนุมัติ">
+          sub="ตรงกับเที่ยวที่นับไปแล้ว (เลขจอง หรือเส้นทาง ระยะ ยอด) แต่ระบบไม่ตัดเอง ถ้าเป็นเที่ยวเดียวกันให้กดไม่ใช้งานนี้ในคิวตรวจ ถ้าไม่ใช่ให้อนุมัติ">
           <ul className="grid gap-3 md:grid-cols-2">
             {decide.map((p) => (
               <PairCard key={p.trip_id} p={p}>
@@ -279,7 +279,7 @@ export default function DupAlbums({ onGo }) {
                           ไม่ใช่งานซ้ำ · เก็บไว้
                         </button>
                       ) : (
-                        <p className="text-sm text-muted">เลขจองเดียวกับใบที่นับแล้ว ถ้าใบที่นับผิด ให้ลบใบนั้นก่อน</p>
+                        <p className="text-sm text-muted">เลขจองเดียวกับใบที่นับแล้ว ถ้าใบที่นับผิด ให้เอาใบนั้นออกจากงานก่อน</p>
                       )}
                     </PairCard>
                   ))}

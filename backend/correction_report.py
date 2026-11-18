@@ -88,7 +88,7 @@ def load(d_from, d_to):
     with db.engine.begin() as c:
         logs = c.execute(select(a.action, a.target, a.detail)
                          .where(a.at >= d_from, a.at < (date.fromisoformat(d_to) + timedelta(days=1)).isoformat(),
-                                a.action.in_(["trip.edit", "trip.approve", "trip.delete",
+                                a.action.in_(["trip.edit", "trip.approve", "trip.delete", "trip.not_used",
                                               "queue.approve_passing"]),
                                 (a.status.is_(None)) | (a.status < 400))
                          .order_by(a.id)).all()
@@ -102,7 +102,7 @@ def load(d_from, d_to):
                     touched[tid]["edits"].append((k, (d.get("before") or {}).get(k), after))
         elif action == "trip.approve" and tid:
             touched[tid]["approved"] = True
-        elif action == "trip.delete" and tid:
+        elif action in ("trip.delete", "trip.not_used") and tid:
             touched[tid]["deleted"] = True
             touched[tid]["snapshot"] = d.get("row")
         elif action == "queue.approve_passing":

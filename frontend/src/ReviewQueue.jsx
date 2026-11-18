@@ -41,15 +41,15 @@ function fareWarning(t) {
 function why(t) {
   if (t.duplicate_of && (t.note || '').includes('สงสัยว่าซ้ำ:')) {
     return { tone: 'danger', chip: 'สงสัยว่าซ้ำ', head: 'ข้อมูลตรงกับเที่ยวที่อนุมัติแล้ว แต่เลขจองไม่ตรงทุกตัว',
-             body: 'AI อาจอ่านเลขจองเพี้ยนตรงที่ขึ้นบรรทัดใหม่ เทียบรูปคู่กัน ถ้าเป็นเที่ยวเดียวกันให้กดลบ ถ้าไม่ใช่ให้อนุมัติ' }
+             body: 'AI อาจอ่านเลขจองเพี้ยนตรงที่ขึ้นบรรทัดใหม่ เทียบรูปคู่กัน ถ้าเป็นเที่ยวเดียวกันให้กดไม่ใช้งานนี้ ถ้าไม่ใช่ให้อนุมัติ' }
   }
   if (t.duplicate_of) {
     return { tone: 'danger', chip: 'สงสัยว่าซ้ำ', head: 'รูปนี้ซ้ำกับอีกแถวของไรเดอร์คนเดียวกัน',
-             body: 'เลขจองตรงกัน — ถ้าเป็นเที่ยวเดียวกันจริง ให้กดลบ' }
+             body: 'เลขจองตรงกัน — ถ้าเป็นเที่ยวเดียวกันจริง ให้กดไม่ใช้งานนี้' }
   }
   if (t.seen_in_job) {
     return { tone: 'danger', chip: 'อนุมัติไปแล้ว', head: 'เลขจองนี้อนุมัติไปแล้วในสัปดาห์นี้',
-             body: 'ถ้าอนุมัติอีก เงินจะถูกนับสองรอบ — ดูรูปแล้วลบถ้าซ้ำจริง' }
+             body: 'ถ้าอนุมัติอีก เงินจะถูกนับสองรอบ — ดูรูปแล้วกดไม่ใช้งานนี้ถ้าซ้ำจริง' }
   }
   if (t.check_status === 'fail') {
     const m = money(t)
@@ -258,7 +258,7 @@ function DayPick({ from, onPick }) {
   )
 }
 
-/** Repeats the system parked by itself. Hides, never deletes: each keeps its restore button. */
+/** Rows taken out of the work, by the system or by a person. Each keeps its restore button. */
 function DiscardedLog() {
   const [rows, setRows] = useState(null)
   const [hidden, setHidden] = useState(0)
@@ -296,8 +296,8 @@ function DiscardedLog() {
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 sm:px-5 py-2">
         <button onClick={() => setOpen(!open)} aria-expanded={open} className="min-h-11 text-left flex items-center gap-2 flex-1 min-w-0">
           <Icon name="chevron" size={16} className={`text-muted transition-transform ${open ? 'rotate-90' : ''}`} />
-          <span className="font-medium">งานซ้ำที่ระบบตัดเอง</span>
-          <span className="text-sm text-muted">{rows.length === 0 ? 'ยังไม่มีของใหม่' : `${fmt(rows.length)} เที่ยว · ไม่ต้องทำอะไร ดูได้ถ้าอยากตรวจ`}</span>
+          <span className="font-medium">งานที่ไม่ได้ใช้</span>
+          <span className="text-sm text-muted">{rows.length === 0 ? 'ยังไม่มีของใหม่' : `${fmt(rows.length)} เที่ยว · ระบบตัดเองหรือคนกดไม่ใช้ เอากลับเข้าคิวได้`}</span>
         </button>
         <div className="flex items-center gap-3 text-sm shrink-0">
           {hidden > 0 && !everything && (
@@ -400,9 +400,9 @@ export default function ReviewQueue({ onOpenJob, onCount }) {
 
   const remove = useCallback(async (t) => {
     if (!t || inflight.current.has(t.id)) return
-    if (!confirm(`ลบเที่ยวนี้ของ ${t.driver_name} ออก?\n\nใช้เมื่อรูปซ้ำ หรือไม่ใช่งาน — แถวจะไม่อยู่ในไฟล์ และรูปจะถูกย้ายไปโฟลเดอร์ "_ทิ้ง-กดลบ" (ไม่ได้ลบรูปทิ้ง)`)) return
+    if (!confirm(`ไม่ใช้เที่ยวนี้ของ ${t.driver_name}?\n\nใช้เมื่อรูปซ้ำ หรือไม่ใช่งาน — เที่ยวนี้จะไม่อยู่ในไฟล์ แต่ยังอยู่ในระบบ ดูและเอากลับเข้าคิวได้ที่ "งานที่ไม่ได้ใช้"`)) return
     inflight.current.add(t.id)
-    try { await api.deleteTrip(t.id); setMsg(''); drop(new Set([t.id])) } catch (e) { setMsg(e.message) } finally { inflight.current.delete(t.id) }
+    try { await api.setNotUsed(t.id); setMsg(''); drop(new Set([t.id])) } catch (e) { setMsg(e.message) } finally { inflight.current.delete(t.id) }
   }, [])
 
   const skip = useCallback(() => setAt((i) => Math.min(i + 1, Math.max(0, shown.length - 1))), [shown])
@@ -682,13 +682,13 @@ export default function ReviewQueue({ onOpenJob, onCount }) {
                         className="min-h-11 px-4 rounded-lg border border-line bg-white hover:bg-ground text-[15px] disabled:opacity-40">
                         ข้ามไปก่อน
                       </button>
-                      <button onClick={() => remove(cur)} title="ลบ (X)"
+                      <button onClick={() => remove(cur)} title="ไม่ใช้งานนี้ (X)"
                         className="ml-auto min-h-11 px-4 rounded-lg border border-danger-bg bg-white hover:bg-danger-bg text-danger-ink text-[15px]">
-                        ไม่ใช่งาน / ลบ
+                        ไม่ใช้งานนี้
                       </button>
                     </div>
                     <p className="hidden lg:block text-xs text-muted">
-                      ปุ่มลัด: A อนุมัติ · S ข้าม · X ลบ · J/K แถวก่อน/ถัดไป · Z ขยายรูป · F เต็มจอ · E ไปช่องตัวเลข
+                      ปุ่มลัด: A อนุมัติ · S ข้าม · X ไม่ใช้งานนี้ · J/K แถวก่อน/ถัดไป · Z ขยายรูป · F เต็มจอ · E ไปช่องตัวเลข
                       · ในช่อง: Enter บันทึกแล้วไปช่องถัดไป · Ctrl+Enter บันทึกและอนุมัติ
                     </p>
                     <button onClick={() => approveRest(cur.job_id, cur.driver_name)} disabled={busy}
@@ -734,7 +734,7 @@ export default function ReviewQueue({ onOpenJob, onCount }) {
               </button>
             </div>
             <div className="grid grid-cols-[1fr_1fr_2fr] gap-2">
-              <button onClick={() => remove(cur)} className="min-h-12 rounded-xl border border-danger-bg text-danger-ink text-[15px]">ลบ</button>
+              <button onClick={() => remove(cur)} className="min-h-12 rounded-xl border border-danger-bg text-danger-ink text-[15px]">ไม่ใช้งานนี้</button>
               <button onClick={skip} disabled={shown.indexOf(cur) >= shown.length - 1} className="min-h-12 rounded-xl border border-line text-[15px] disabled:opacity-40">ข้าม</button>
               <button onClick={() => approve(cur)} disabled={!cur.trip_date}
                 className="min-h-12 rounded-xl bg-accent text-white text-base font-semibold disabled:opacity-40">

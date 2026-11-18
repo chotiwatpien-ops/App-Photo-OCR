@@ -334,9 +334,9 @@ def build(d_from, d_to):
         # in trips: a full picture is one, two halves are one, a lone half is still one trip short
         dup_copy = v["copy_full"] + math.ceil((v["copy_half"] + v["unknown"]) / 2)
         dup_read = bad[REPEAT] + bad[DELETED_REPEAT]
-        other = bad[UNREADABLE] + bad[VOIDED] + bad[SET_ASIDE]
+        other = bad[DELETED] + bad[UNREADABLE] + bad[VOIDED] + bad[SET_ASIDE]
         pending = waiting + math.ceil(lone / 2)
-        jobs = final + dup_copy + dup_read + bad[DELETED] + other + pending
+        jobs = final + dup_copy + dup_read + other + pending
         ops = dr.ops_count(a)
         albums.append({
             "album": a, "admin": admin_of(a), "pictures": v["full"] + v["half"] + v["unknown"],
@@ -381,9 +381,11 @@ SUM_KEYS = ("pictures", "full", "half", "unknown", "usable", "used_here", *SERVI
 SUMMARY = [("full", "รูปเต็ม"), ("half", "รูปครึ่ง"), ("jobs", "เทียบงาน"), ("ops", "Ops จด"),
            ("ops_gap", "Ops มากกว่า (+) / น้อยกว่า (-)"), ("read", "อ่านได้"), ("final", "Final"),
            ("used_here", "Final · ลงไฟล์สัปดาห์นี้"), ("used_later", "Final · ไปลงสัปดาห์ถัดไป"),
-           ("dup", "ซ้ำ"), (DELETED, "ลบ"), ("other", "ใช้ไม่ได้อื่นๆ"), ("pending", "ค้าง"),
-           ("dup_copy", "ซ้ำ · รูปซ้ำเป๊ะ (งาน)"), (REPEAT, "ซ้ำ · เลขจองซ้ำ"), (DELETED_REPEAT, "ซ้ำ · คนกดลบ"),
+           ("dup", "ซ้ำ"), ("other", "ใช้ไม่ได้อื่นๆ"), ("pending", "ค้าง"),
+           ("dup_copy", "ซ้ำ · รูปซ้ำเป๊ะ (งาน)"), (REPEAT, "ซ้ำ · เลขจองซ้ำ"),
+           (DELETED_REPEAT, "ซ้ำ · คนกดลบ (ก่อนเลิกปุ่มลบ)"),
            (UNREADABLE, "อื่นๆ · อ่านไม่ได้"), (VOIDED, "อื่นๆ · ยกเลิก"), (SET_ASIDE, "อื่นๆ · พักไว้"),
+           (DELETED, "อื่นๆ · คนกดลบ (ก่อนเลิกปุ่มลบ)"),
            (READING, f"ค้าง · {READING}"), (REVIEW, f"ค้าง · {REVIEW}"), (FILING, f"ค้าง · {FILING}"),
            (UNPAIRED, f"ค้าง · {WAITING_PAIR} (รูป)")]
 COLUMNS = [("pictures", "รูปที่ส่งมา"), ("full", "รูปเต็ม"), ("half", "รูปครึ่ง"), ("unknown", "รูปไม่ทราบชนิด"),
@@ -467,9 +469,10 @@ def build_xlsx(data) -> bytes:
     ws = wb.create_sheet("อ่านก่อน")
     for text in (f"รายงานบัญชี {data['week']} ({data['d_from']} ถึง {data['d_to']}) · {state}",
                  "นับทุกอัลบั้มที่วางในโฟลเดอร์ของสัปดาห์นี้ อัลบั้มนับในสัปดาห์ที่วางครั้งแรก",
-                 "เทียบงาน = Final + ซ้ำ + ลบ + ใช้ไม่ได้อื่นๆ + ค้าง",
-                 "ซ้ำ รวมงานที่คนกดลบ เมื่อเลขจองตรงกับงานที่นับแล้วในสัปดาห์เดียวกัน "
-                 "(หรือต่างกันไม่เกิน 2 ตัวและค่ารอบตรงกัน) · ลบ = งานที่คนกดลบและไม่ตรงกับงานไหน",
+                 "เทียบงาน = Final + ซ้ำ + ใช้ไม่ได้อื่นๆ + ค้าง",
+                 "งานที่คนกดไม่ใช้ยังอยู่ในระบบ: ถ้าตรงกับงานที่นับแล้วในสัปดาห์เดียวกันนับเป็นซ้ำ ถ้าไม่ตรงนับเป็นยกเลิก",
+                 "งานที่คนกดลบก่อนเลิกปุ่มลบ: ถ้าเลขจองตรงกับงานที่นับแล้วในสัปดาห์เดียวกัน "
+                 "(หรือต่างกันไม่เกิน 2 ตัวและค่ารอบตรงกัน) นับเป็นซ้ำ ถ้าไม่ตรงนับในใช้ไม่ได้อื่นๆ",
                  "รูปเต็ม 1 รูป = 1 งาน · รูปครึ่ง 2 รูป = 1 งาน · รูปครึ่งที่เหลือเศษนับเป็น 1 งาน",
                  "อ่านได้ = งานที่ AI อ่านผลแล้ว · Final = งานที่ใช้ได้ รวมส่วนที่ไปลงสัปดาห์ถัดไป",
                  "งานที่ใช้ได้ = Final + งานที่ยังรอตรวจหรือรออ่าน",

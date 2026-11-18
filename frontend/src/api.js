@@ -57,7 +57,7 @@ export const api = {
   drivers: () => fetch('/api/drivers').then(handle),
   createJob: (formData) => fetch('/api/jobs', { method: 'POST', body: formData }).then(handle),
   patchTrip: (id, fields) => fetch(`/api/trips/${id}`, json('PATCH', fields)).then(handle),
-  deleteTrip: (id) => fetch(`/api/trips/${id}`, { method: 'DELETE' }).then(handle),
+  setNotUsed: (id) => fetch(`/api/trips/${id}/not-used`, { method: 'POST' }).then(handle),
   weeks: () => fetch('/api/weeks').then(handle),
   // ปิดสัปดาห์ = ส่งไฟล์ให้ลูกค้าแล้ว งานอัตโนมัติจะไม่แตะสัปดาห์นั้นอีก (เก็บกวาดรูปซ้ำ,
   // สร้างรูปส่งลูกค้าทับของเดิม) เปิดใหม่ได้ถ้ายังต้องแก้ต่อ

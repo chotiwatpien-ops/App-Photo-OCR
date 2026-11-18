@@ -52,7 +52,8 @@ log("trip.edit", f"trip:{glyph}", before={"net_earnings": 847, "note": "a"}, aft
 log("trip.edit", f"trip:{glyph}", before={"service_type": "Standard Bike"}, after={"service_type": "Saver Bike"})
 log("trip.approve", f"trip:{glyph}")
 log("trip.delete", f"trip:{gone}", row={"file_name": "x.jpg", "booking_code": "A-SECRETCODE99"})
-db.delete_trip(gone)
+with db.engine.begin() as c:                                    # rows deleted before the button went
+    c.execute(db.trips.delete().where(db.trips.c.id == gone))
 log("queue.approve_passing", trip_ids=[bulk], approved=1)
 db.log_action(action="trip.approve", target=f"trip:{bulk + 99}", status=400)      # refused: not counted
 

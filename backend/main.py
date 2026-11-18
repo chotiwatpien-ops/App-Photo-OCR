@@ -254,26 +254,23 @@ def patch_trip(trip_id: int, fields: dict):
     return t
 
 
-@app.delete("/api/trips/{trip_id}")
-def remove_trip(trip_id: int):
+@app.post("/api/trips/{trip_id}/not-used")
+def not_used(trip_id: int):
+    """Take a waiting row out of the work. The row stays; the round moves its picture out of the
+    rider's folder like any parked row's (free_dup_seats)."""
     t = db.get_trip(trip_id)
     if not t:
         raise HTTPException(404, "ไม่พบรายการ")
     if t["committed"]:
-        raise HTTPException(409, "รายการนี้อนุมัติแล้ว ลบไม่ได้")
-    _note("trip.delete", f"trip:{trip_id}", row={k: t.get(k) for k in (
-        "job_id", "file_name", "booking_code", "trip_date", "trip_time", "service_type",
-        "base_fare", "net_earnings", "status", "source_url", "source_album", "kind")})
-    # The picture goes to <week>/_ทิ้ง-กดลบ/<rider>/ before the row does, while the job and the
-    # Drive id can still be read off it. A row thrown away by hand is a picture worth looking at
-    # again — and left in the rider's folder it is worse than useless, because the sweep counts
-    # it as read and Ops count it as a trip. A failed move never fails the delete.
-    import trash_picture
-    moved = trash_picture.move_to_trash(trip_id)
-    _note(picture_moved_to=moved)
-    db.delete_trip(trip_id)
+        raise HTTPException(409, "รายการนี้อนุมัติแล้ว เอาออกจากงานไม่ได้")
+    _note("trip.not_used", f"trip:{trip_id}", job=t["job_id"], file=t.get("file_name"))
+    status = db.set_not_used(trip_id)
+    if not status:
+        raise HTTPException(409, "แถวนี้ยังอ่านไม่เสร็จ หรือถูกเอาออกจากงานไปแล้ว")
+    _note(new_status=status)
+    _dup_cache.clear()
     db.refresh_job_status(t["job_id"])
-    return {"deleted": trip_id, "picture": moved}
+    return {"id": trip_id, "status": status}
 
 
 _DRIVE_PIC = {}          # trip image fetched back from Drive, kept for this process only

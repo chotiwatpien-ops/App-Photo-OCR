@@ -113,14 +113,15 @@ last = [c.value for c in list(wb["สรุปต่อ Admin"].iter_rows())[-1]
 check("แถวรวมท้ายชีตสรุปต่อ Admin", last[0] == "รวม" and last[2] == sum(x["pictures"] for x in d["admins"]), last)
 
 # --- the first sheet: pictures → trips → read → final, with the reasons -------------------------
-check("❗ เทียบงาน = Final 6 + ซ้ำ 2 (สำเนา 1 + เลขจอง 1) + ลบ 1 + อ่านไม่ได้ 1 + ค้าง 2",
-      (a["jobs"], a["final"], a["dup"], a[accounting.DELETED], a["other"], a["pending"]) == (12, 6, 2, 1, 1, 2), a)
+check("❗ เทียบงาน = Final 6 + ซ้ำ 2 (สำเนา 1 + เลขจอง 1) + อื่นๆ 2 (ลบเดิม 1 + อ่านไม่ได้ 1) + ค้าง 2",
+      (a["jobs"], a["final"], a["dup"], a[accounting.DELETED], a["other"], a["pending"]) == (12, 6, 2, 1, 2, 2), a)
 check("อ่านได้ = Final + รอคนตรวจ + เลขจองซ้ำ + ลบ (อ่านไม่ได้ไม่นับ)", a["read"] == 6 + 1 + 1 + 1, a)
 check("❗ ค้างแยกเหตุผล: รอคนตรวจ 1 · รูปครึ่งรอคู่ 1 รูป",
       (a[accounting.REVIEW], a[accounting.READING], a[accounting.FILING], a[accounting.UNPAIRED]) == (1, 0, 0, 1), a)
 check("ยอด Ops เทียบกับเทียบงาน", (a["ops"], a["ops_gap"], b["ops"], b["jobs"], b["ops_gap"]) == (10, -2, 5, 5, 0), (a, b))
 check("❗ แถวรวมต้องบวกกลับได้", d["total"]["jobs"] == d["total"]["final"] + d["total"]["dup"]
-      + d["total"][accounting.DELETED] + d["total"]["other"] + d["total"]["pending"], d["total"])
+      + d["total"]["other"] + d["total"]["pending"], d["total"])
+check("หน้าสรุปไม่มีคอลัมน์ลบแล้ว", "ลบ" not in list(wb["สรุป"].iter_rows(values_only=True))[1])
 check("งานของอัลบั้มสัปดาห์ก่อนที่ลงไฟล์สัปดาห์นี้ แยกบอก ไม่นับซ้ำ", d["from_earlier"] == {OLD: 1}, d["from_earlier"])
 s = list(wb["สรุป"].iter_rows(values_only=True))
 names = [r[0] for r in s]
