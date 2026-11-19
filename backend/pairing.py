@@ -207,6 +207,10 @@ MAX_FILL = 0.75    # ink density above which a green block is a bar or an icon, 
 # other, with nothing on either page to say why. Accepted between neighbours and nowhere else.
 NEIGHBOUR_ONLY = 4
 MIN_AMOUNT = 15    # no Grab trip nets less than this; a smaller "amount" is a misread digit
+# A tall picture is a lower half only when 'คุณได้รับ' opens it. Across 268 tall pictures the
+# lower halves carry the figure at 5-9% of the height; a number read at 18-23% is the address or
+# the map of a whole slip whose real figure did not read (W46: ฿21 read as 18, ฿110 as 21).
+TALL_BOTTOM_MAX = 0.15
 
 # What inspect() answered for a picture is cached on the picture's bytes, which is right until the
 # reader itself changes: the '฿78 read as 878' fix shipped and the very next round handed back the
@@ -249,7 +253,9 @@ def ensure_theme(info, source):
 # r10: nothing is turned upside down before it is read (NO_FLIP) — r9 holds '฿99' as 66.
 # r11: the black-figure screen (read_black_layout) — r10 holds every one of them as a bottom
 # half with no amount and, usually, no clock.
-READER = "r13"
+# r14: a whole tall slip is no longer taken for a lower half (TALL_BOTTOM_MAX), and a dark lower
+# half is no longer read through its white fare cards as a top.
+READER = "r14"
 
 # The status-bar clock: '19:56 น.' — hour and minute, a colon between, no digit touching it on
 # the left (the app writes '3.41 km' straight over the clock on a top half, and '314:56' is
@@ -487,13 +493,16 @@ def inspect(source):
     if theme_of(a) == "มืด":
         # The same app in dark mode prints the earnings figure white, not green (Porpla=177).
         # The green map legend still paints blocks all over such a screen, so the switch is made
-        # on whether any BIG green block reads as money — not on whether green was found at all.
-        def _priced(m, bl):
+        # on whether any green block reads as money — not on whether green was found at all. Small
+        # green counts: a dark lower half prints its income small and green, and a white ฿91 in
+        # its fare cards made it a top half (W47: 9 pairs stuck; of 2,195 dark pictures this
+        # changes only such screens, and the 4 white-figure ones still switch).
+        def _priced(m, bl, smallest):
             return any((_try_amount(im, m, y0, y1)[0] or 0) >= MIN_AMOUNT for y0, y1 in bl
-                       if im.width * 0.055 <= y1 - y0 <= im.width * 0.16 and y0 > im.height * 0.04)
-        if not _priced(mask, blocks):
+                       if im.width * smallest <= y1 - y0 <= im.width * 0.16 and y0 > im.height * 0.04)
+        if not _priced(mask, blocks, 0.015):
             wmask, wblocks = _white_blocks(a)
-            if _priced(wmask, wblocks):
+            if _priced(wmask, wblocks, 0.055):
                 mask, blocks = wmask, wblocks
 
     def is_text(y0, y1):
@@ -539,13 +548,12 @@ def inspect(source):
             # figure in the top 9% and no map anywhere — the lower half of a pair, just long.
             # Fifteen of them were called 'long', moved nowhere ('ไม่รู้ประเภทรถ', because the
             # chip lives on the other half) and their fifteen tops sat unpaired beside them. A
-            # whole trip in one tall screenshot carries the route and the map above the figure,
-            # which puts the figure well below the top quarter.
+            # whole trip in one tall screenshot carries the route and the map above the figure.
             read = {t: _try_amount(im, mask, *t) for t in big}
             priced = [t for t in big if (read[t][0] or 0) >= MIN_AMOUNT]
             if priced:
                 y0, y1 = max(priced, key=lambda t: t[1])
-                if (y0 + y1) / 2 < im.height * 0.25:
+                if (y0 + y1) / 2 < im.height * TALL_BOTTOM_MAX:
                     info["role"] = "bottom"
                     info["amount"], info["alts"] = read[(y0, y1)]
                     info["numbers"], info["seq"] = _all_numbers(im)
