@@ -1815,6 +1815,18 @@ def set_notes(notes: dict) -> None:
             update_trip(int(k), {"note": v})
 
 
+def set_trip_fields(values: dict) -> None:
+    """{trip_id: {field: value}}, the same fields on every row, in one transaction."""
+    if not values:
+        return
+    from sqlalchemy import bindparam
+    keys = sorted(set(TRIP_EDITABLE + _SYSTEM_FIELDS) & set(next(iter(values.values()))))
+    with engine.begin() as c:
+        c.execute(update(trips).where(trips.c.id == bindparam("tid"))
+                  .values({k: bindparam(f"v_{k}") for k in keys}),
+                  [{"tid": int(i), **{f"v_{k}": f[k] for k in keys}} for i, f in values.items()])
+
+
 def update_trip(trip_id, fields: dict):
     allowed = set(TRIP_EDITABLE + _SYSTEM_FIELDS)
     vals = {k: v for k, v in fields.items() if k in allowed}

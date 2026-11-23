@@ -16,6 +16,10 @@ What happens:
     dates). The next round of that week files them as if they had arrived there.
 Rows whose service no group takes are left alone and reported. Nothing is deleted, nothing re-read.
 
+fill_earlier runs the other way inside every ingest round: an open week short in a group takes
+that group's work back from the later open weeks first, waiting or already filed, however long
+ago the week ended (Fiat 2026-11-23). Only closing the week ends that.
+
     python move_staged.py --week "Week 14-20 Sep" --from 2026-09-14 --to 2026-09-20          # report
     python move_staged.py ... --apply
 """
@@ -23,10 +27,12 @@ import argparse
 import re
 import sys
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, timedelta
 
 from sqlalchemy import select
 
+import config
 import db
 import file_after_read as far
 import redate_to_week
@@ -127,54 +133,139 @@ def rows_to_bring_back(d_from, d_to, ids):
     return ok, bad
 
 
-def bring_back(drive, inbox_id, d_from, d_to, rows, log=print):
-    """Rows the pool sent on to next week while this week still had room come back to this week's
-    _พร้อมอ่าน, to be filed by the next round like any read row.
+def bring_back(drive, inbox_id, d_from, d_to, rows, log=print,
+               why="เพราะกองนับที่ว่างตามโฟลเดอร์ ยกไปทั้งที่ยังขาด"):
+    """Rows a later week holds come back to this week's _พร้อมอ่าน, to be filed by the next
+    round like any read row.
 
     W38 Saver (2026-09-21): the pool counted room by folder, saw 1,470 where the customer counted
     1,466, and sent 4 of the 20 Ploy trips Ops had uploaded to fill W38 into W39's พัดชา Win. Per
-    row: the stitched picture into this week's _พร้อมอ่าน, the picture next week already delivered
-    into its Export Pic week's _แทนที่แล้ว (so its name is not left naming a trip that moved), the
-    row to this week's '(รออ่าน)' job, its delivered name cleared, dated across this
+    row: the stitched picture into this week's _พร้อมอ่าน, the picture its own week already
+    delivered into that Export Pic week's _แทนที่แล้ว (so its name is not left naming a trip that
+    moved), the row to this week's '(รออ่าน)' job, its delivered name cleared, dated across this
     week."""
     import ingest
     from carry_excess import REPLACED_DIR
-    n_from, _n_to = next_week(d_from, d_to)
     _week, hold, jid = waiting_room(drive, inbox_id, d_from, d_to)
-    next_exports = ingest.export_week_folder(drive, n_from)
-    done, listing, replaced = Counter(), {}, None
+    done, exports, dirs, listing, replaced = Counter(), {}, {}, {}, {}
     pics = db.drive_ids_for_trips([r["id"] for r in rows])
+    moves = []
     for r in rows:
         pic = pics.get(r["id"])
         if pic:
-            drive.move_file(pic, hold)
-            done["ย้ายรูปรวมร่าง"] += 1
+            moves.append((pic, hold, "ย้ายรูปรวมร่าง"))
         else:
             done["ไม่พบรูปรวมร่างบน Drive"] += 1
-        cdir = None
-        if r.get("customer_image") and next_exports:
-            if "_dirs" not in listing:
-                listing["_dirs"] = {f["name"].strip(): f["id"] for f in drive.list_folders(next_exports)}
-            cdir = listing["_dirs"].get((r.get("category") or "").strip())
-        if cdir:
-            if cdir not in listing:
-                listing[cdir] = {i["name"]: i["id"] for i in drive.list_images(cdir)}
-            cid = listing[cdir].get(r["customer_image"])
-            if cid:
-                replaced = replaced or drive.ensure_folder(next_exports, REPLACED_DIR)
-                drive.move_file(cid, replaced)
-                done["เก็บรูปลูกค้าสัปดาห์หน้าออก"] += 1
-            else:
-                done["ไม่พบรูปลูกค้าสัปดาห์หน้า"] += 1
+        if not r.get("customer_image"):
+            continue
+        wk = r["date_from"]
+        if wk not in exports:
+            exports[wk] = ingest.export_week_folder(drive, wk)
+        if not exports[wk]:
+            continue
+        if wk not in dirs:
+            dirs[wk] = {f["name"].strip(): f["id"] for f in drive.list_folders(exports[wk])}
+        cdir = dirs[wk].get((r.get("category") or "").strip())
+        if not cdir:
+            continue
+        if cdir not in listing:
+            listing[cdir] = {i["name"]: i["id"] for i in drive.list_images(cdir)}
+        cid = listing[cdir].get(r["customer_image"])
+        if cid:
+            if wk not in replaced:
+                replaced[wk] = drive.ensure_folder(exports[wk], REPLACED_DIR)
+            moves.append((cid, replaced[wk], "เก็บรูปลูกค้าของสัปดาห์เดิมออก"))
+        else:
+            done["ไม่พบรูปลูกค้าของสัปดาห์เดิม"] += 1
+
+    def move(m):
+        drive.move_file(m[0], m[1])
+        return m[2]
+    with ThreadPoolExecutor(max_workers=max(1, config.DRIVE_PARALLEL)) as ex:
+        done.update(ex.map(move, moves))
     db.move_trips_to_job([r["id"] for r in rows], jid)
+    fields = {}
     for r, new in redate_to_week.spread(rows, d_from, d_to):
         note = (f"ดึงกลับจาก {r['driver_name']} {r['date_from']}..{r['date_to']} มา {d_from}..{d_to} "
-                f"เพราะกองนับที่ว่างตามโฟลเดอร์ ยกไปทั้งที่ยังขาด · วันที่ {r.get('trip_date')} → {new}")
-        db.update_trip(r["id"], {"trip_date": new, "customer_image": None,
-                                 "note": f"{note} | {r['note']}" if r.get("note") else note})
-        done["ดึงแถวกลับ"] += 1
+                f"{why} · วันที่ {r.get('trip_date')} → {new}")
+        fields[r["id"]] = {"trip_date": new, "customer_image": None,
+                           "note": f"{note} | {r['note']}" if r.get("note") else note}
+    db.set_trip_fields(fields)
+    done["ดึงแถวกลับ"] += len(fields)
     log(f"  → job #{jid} {far.HOLDING_RIDER} · {d_from}..{d_to}")
     return done, jid
+
+
+GROUPS = ("2 W Saver", "2 W Standard", "4 W Standard")
+
+
+def week_rows(d_from, d_to):
+    """(staged, filed): the week's finished rows an earlier week may take, each with its group and
+    oldest-driven first. Staged rows wait in _พร้อมอ่าน; filed rows are approved into a rider's
+    job. Rows in the review queue, and rows no group takes, are not offered."""
+    t, j = db.trips.c, db.jobs.c
+    with db.engine.begin() as c:
+        rows = [dict(r) for r in c.execute(
+            select(t.id, t.committed, t.file_name, t.service_type, t.trip_date, t.trip_time,
+                   t.customer_image, t.note, j.date_from, j.date_to, j.category, j.driver_name)
+            .select_from(db.trips.join(db.jobs, j.id == t.job_id))
+            .where(j.date_from == d_from, j.date_to == d_to, t.status == "done")).mappings().all()]
+    staged, filed = [], []
+    for r in rows:
+        r["group"] = far.GROUP_OF.get(car_is_standard((r.get("service_type") or "").strip()))
+        if not r["group"]:
+            continue
+        if r["driver_name"] == far.HOLDING_RIDER:
+            staged.append(r)
+        elif r["committed"] == 1:
+            filed.append(r)
+
+    def driven(r):
+        return r.get("trip_date") or "", r.get("trip_time") or "", r["id"]
+    return sorted(staged, key=driven), sorted(filed, key=driven)
+
+
+def fill_plan(weeks, target):
+    """{(earlier week, later week): [row]} so that no open week is short in a group while a later
+    open week holds work of that group (Fiat 2026-11-23: "งานใน WK ก่อนหน้าต้องครบก่อน").
+
+    weeks: [(range, have, staged, filed)] of the open weeks, oldest first, with have from
+    db.week_group_counts and staged/filed from week_rows. A week's room is the target less what
+    it has filed and what waits in its _พร้อมอ่าน. It takes from the next later week first, rows
+    still waiting before rows already filed, earliest driven first; a row it takes leaves room in
+    the week it came from, which that week then fills from the weeks after it."""
+    room = {rng: {g: target - have.get(g, 0) - sum(r["group"] == g for r in staged) for g in GROUPS}
+            for rng, have, staged, _filed in weeks}
+    plan, taken = defaultdict(list), set()
+    for i, (into, *_rest) in enumerate(weeks):
+        for g in GROUPS:
+            for came, _have, staged, filed in weeks[i + 1:]:
+                for r in staged + filed:
+                    if room[into][g] <= 0:
+                        break
+                    if r["group"] == g and r["id"] not in taken:
+                        taken.add(r["id"])
+                        plan[(into, came)].append(r)
+                        room[into][g] -= 1
+                        room[came][g] += 1
+    return dict(plan)
+
+
+def fill_earlier(drive, inbox_id, open_weeks, target=None, log=print):
+    """Move the work later open weeks hold into the earlier open weeks still short of it. Returns
+    the weeks whose rows changed. The rows land in the earlier week's _พร้อมอ่าน, so the round's
+    filing that follows gives them a rider there."""
+    target = config.WEEKLY_TARGET_PER_GROUP if target is None else target
+    weeks = [(rng, db.week_group_counts(*rng), *week_rows(*rng)) for rng in sorted(open_weeks)]
+    plan = fill_plan(weeks, target)
+    for (into, came), rows in plan.items():
+        log(f"⤺ เติมสัปดาห์ {into[0]} ให้ครบก่อน: ดึง "
+            + " · ".join(f"{g} {n}" for g, n in sorted(Counter(r["group"] for r in rows).items()))
+            + f" จากสัปดาห์ {came[0]}")
+        done, _jid = bring_back(drive, inbox_id, *into, rows, log=log,
+                                why=f"เพราะสัปดาห์ {into[0]} ยังไม่ครบ ต้องเติมสัปดาห์ก่อนให้เต็มก่อน")
+        log("    " + " · ".join(f"{k} {v}" for k, v in done.most_common()))
+    return {w for pair in plan for w in pair}
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="ย้ายแถวที่ค้างในกองพักเพราะกลุ่มเต็ม ไปกองพักสัปดาห์หน้า")

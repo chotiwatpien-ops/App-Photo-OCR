@@ -1207,7 +1207,16 @@ def _run(drive, inbox_id, exports_id, run_id, dry_run=False, limit=None, only=No
         # whatever read them — this round's live read, or a batch answered days later — rows in
         # the waiting room are filed here, once, by what their own slip says
         import free_dup_seats as _fds_stage
+        import move_staged
         shut_stage = set(db.closed_weeks())
+        try:
+            touched_weeks |= move_staged.fill_earlier(
+                drive, config.DRIVE_INBOX_FOLDER_ID,
+                [w for w in db.jobs_by_week() if _fds_stage.week_is_open(*w, closed=shut_stage)], log=log)
+        except Exception as e:  # noqa: BLE001 — filing must not take the round down
+            log(f"  ✗ เติมสัปดาห์ก่อนหน้าให้ครบไม่สำเร็จ: {str(e)[:150]}")
+            issues.append(("fill-earlier", "process", f"เติมสัปดาห์ก่อนหน้าให้ครบไม่สำเร็จ: {str(e)[:200]}"))
+            errors += 1
         for (wf, wt), js in sorted(db.jobs_by_week().items()):
             hold = [j for j in js if (j.get("driver_name") or "") == HOLDING_RIDER]
             if not hold or not _fds_stage.week_is_open(wf, wt, closed=shut_stage):
