@@ -149,6 +149,16 @@ class DriveClient:
     def upload_xlsx(self, parent_id, name, data: bytes) -> str:
         return self.upload_file(parent_id, name, data, XLSX_MIME)
 
+    def replace_content(self, file_id, data: bytes, mime: str) -> None:
+        """New bytes for a file that keeps its id, name and folder (rows point at the id)."""
+        from googleapiclient.http import MediaIoBaseUpload
+
+        def _rep():
+            media = MediaIoBaseUpload(io.BytesIO(data), mimetype=mime, resumable=False)
+            self.svc.files().update(fileId=file_id, media_body=media, supportsAllDrives=True).execute()
+
+        self._retry(_rep)
+
     def create_file(self, parent_id, name, data: bytes, mime: str) -> str:
         """Always a new file, even when one of that name is already there.
 
@@ -252,6 +262,9 @@ class LocalDrive:
 
     def upload_xlsx(self, parent_id, name, data: bytes) -> str:
         return self.upload_file(parent_id, name, data, XLSX_MIME)
+
+    def replace_content(self, file_id, data: bytes, mime: str) -> None:
+        Path(file_id).write_bytes(data)
 
     def create_file(self, parent_id, name, data: bytes, mime: str) -> str:
         """A filesystem cannot hold two files of one name, so the second gets ' (2)' — the

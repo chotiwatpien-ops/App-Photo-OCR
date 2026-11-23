@@ -358,6 +358,20 @@ check("สั่งตัดแล้วแถบหายจากรูปท�
 check("ตัดเฉพาะครึ่งบน ครึ่งล่างไม่ถูกแตะ",
       cut.getpixel((400 + 16 + 5, 995)) == (255, 255, 255) and cut.height == 1000)
 
+# W47 (2026-11-23): a screenshot that keeps the phone's status bar. The first band of writing is
+# the clock, so cutting at the first gap took the clock and left the date on the customer picture.
+from PIL import ImageDraw as _Draw, ImageFont as _Font               # noqa: E402
+sb = _Img.new("RGB", (870, 1880), "white")
+_d, _f = _Draw.Draw(sb), _Font.load_default(size=40)
+_d.rectangle((0, 0, 870, 100), fill=(240, 240, 240))
+_d.text((60, 35), "16:33", fill="black", font=_f)
+_d.text((140, 150), "11 Oct 2026, 05:15 AM", fill="black", font=_f)
+_d.text((36, 255), "5.67 km", fill="black", font=_f)
+_d.text((110, 320), "Noble Reddy Soi Ari 1", fill="black", font=_f)
+_cut = pairing.date_bar_cut(sb)
+check("❗ มีแถบสถานะอยู่บนสุด: ตัดใต้แถบวันที่ เหนือบรรทัดระยะทาง ไม่ใช่ใต้นาฬิกา",
+      _cut is not None and 195 < _cut < 255)
+
 dates = "Phase2/For Train Model/Remove Date Train"
 if os.path.isdir(dates) and os.environ.get("PAIRING_SAMPLE", "1") == "1":
     tops = bots = 0

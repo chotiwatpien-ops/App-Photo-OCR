@@ -255,7 +255,8 @@ def ensure_theme(info, source):
 # half with no amount and, usually, no clock.
 # r14: a whole tall slip is no longer taken for a lower half (TALL_BOTTOM_MAX), and a dark lower
 # half is no longer read through its white fare cards as a top.
-READER = "r14"
+# r15: cut_top lands above the distance line, not under the status bar (date_bar_cut).
+READER = "r15"
 
 # The status-bar clock: '19:56 น.' — hour and minute, a colon between, no digit touching it on
 # the left (the app writes '3.41 km' straight over the clock on a top half, and '314:56' is
@@ -400,6 +401,18 @@ def date_bar_cut(im):
     runs = [r for r in runs if r[1] - r[0] >= 8]          # ignore hairlines and specks
     if len(runs) < 2:
         return None                                        # nothing under it to cut above
+    # Cut right above the distance line. The first gap is not the place: a screenshot that keeps
+    # the phone's status bar has the clock as its first band, and cutting there took the clock and
+    # left '11 ต.ค. 2026, 05:15' on W47's pictures (2047_0: cut at 108, the bar ends at 195).
+    for i in range(1, len(runs)):
+        y0, y1 = runs[i]
+        line = band.crop((0, max(0, y0 - 4), band.width, min(band.height, y1 + 5)))
+        try:
+            said = " ".join(_read_text(line.resize((line.width * 2, line.height * 2), Image.LANCZOS)).split())
+        except Exception:  # noqa: BLE001 — fall through to the next line
+            continue
+        if UNDER_BAR.search(said) and not DATE_BAR.search(said):
+            return (runs[i - 1][1] + y0) // 2
     return (runs[0][1] + runs[1][0]) // 2
 
 
