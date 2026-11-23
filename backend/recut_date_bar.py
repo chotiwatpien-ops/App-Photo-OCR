@@ -93,11 +93,55 @@ def week_rows(d_from, d_to):
     return [dict(r, job=jobs[r["job_id"]]) for r in rows if drive_id(r["source_url"])]
 
 
+def restore(week, names, apply_it):
+    """Remake pictures a second recut cut too far, from the bytes kept before the first cut.
+
+    Every cut leaves the bytes it replaced in _ก่อนตัดวันที่ under '<row id>_<file name>', so a
+    picture cut twice has two of them: the original, which still has its date bar, and the first
+    cut. The one recut() still finds a bar on is the original; cut once from it."""
+    db.init_db()
+    rng = next((w for w in db.jobs_by_week() if w[0] == week), None)
+    if rng is None:
+        print(f"✗ ไม่มีสัปดาห์ที่เริ่ม {week}")
+        return 1
+    wk = week_label(rng[0])
+    rows = {r["customer_image"]: r for r in week_rows(*rng) if r["customer_image"] in names}
+    for n in names:
+        if n not in rows:
+            print(f"  ✗ {n}: ไม่พบแถวในสัปดาห์นี้")
+    from drive_client import DriveClient
+    drive = DriveClient(config.GOOGLE_SERVICE_ACCOUNT, config.DRIVE_OAUTH_TOKEN)
+    backup = drive.ensure_folder(drive.ensure_folder(config.DRIVE_EXPORTS_FOLDER_ID, BACKUP_DIR), wk)
+    kept = {}
+    for f in drive.list_images(backup):
+        kept.setdefault(f["name"], []).append(f["id"])
+    week_dir = drive.ensure_folder(config.DRIVE_EXPORTS_FOLDER_ID, wk)
+    bad = 0
+    for n, r in rows.items():
+        olds = [drive.download(i) for i in kept.get(f"{r['id']}_{r['file_name']}", [])]
+        made = next((x for x in (recut(o) for o in olds) if x), None)
+        if made is None:
+            print(f"  ✗ {n}: ไม่มีต้นฉบับที่ยังมีแถบวันที่ใน {BACKUP_DIR}/{wk} ({len(olds)} ไฟล์)")
+            bad += 1
+            continue
+        print(f"  {'✔' if apply_it else '·'} {n}: ทำใหม่จากต้นฉบับ ({len(olds)} ไฟล์สำรอง)")
+        if apply_it:
+            drive.replace_content(drive_id(r["source_url"]), made, "image/jpeg")
+            cat = r["job"].get("category") or "อัปโหลดมือ"
+            drive.upload_file(drive.ensure_folder(week_dir, cat), n, stitch.stitch(made), "image/jpeg")
+    print(f"{'ทำใหม่แล้ว' if apply_it else 'จะทำใหม่'} {len(rows) - bad} รูป · ไม่ได้ {bad + len(names) - len(rows)}")
+    return 1 if bad or len(rows) < len(names) else 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="ตัดแถบวันที่ออกจากรูปที่ต่อแล้วของสัปดาห์หนึ่ง")
     ap.add_argument("--week", required=True, help="วันแรกของสัปดาห์ เช่น 2026-11-16")
     ap.add_argument("--apply", action="store_true", help="ทำจริง (ไม่ใส่ = รายงานอย่างเดียว)")
+    ap.add_argument("--restore", default="",
+                    help="ชื่อรูปส่งลูกค้าที่ถูกตัดเกิน คั่นด้วย , — ทำใหม่จากต้นฉบับใน _ก่อนตัดวันที่")
     a = ap.parse_args(argv)
+    if a.restore:
+        return restore(a.week, [n.strip() for n in a.restore.split(",") if n.strip()], a.apply)
     db.init_db()
     rng = next((w for w in db.jobs_by_week() if w[0] == a.week), None)
     if rng is None:

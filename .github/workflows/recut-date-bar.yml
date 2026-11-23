@@ -16,6 +16,10 @@ on:
         description: "ทำจริง (ไม่ติ๊ก = รายงานอย่างเดียว ไม่แตะอะไร)"
         type: boolean
         default: false
+      restore:
+        description: "ชื่อรูปที่ถูกตัดเกิน คั่นด้วย , — ทำใหม่จากต้นฉบับที่เก็บไว้ (ว่าง = ตรวจทั้งสัปดาห์ตามปกติ)"
+        type: string
+        default: ""
 
 concurrency:
   group: drive-write
@@ -42,10 +46,10 @@ jobs:
           DRIVE_INBOX_FOLDER_ID: ${{ secrets.DRIVE_INBOX_FOLDER_ID }}
           DRIVE_EXPORTS_FOLDER_ID: ${{ secrets.DRIVE_EXPORTS_FOLDER_ID }}
           WEEK: ${{ github.event.inputs.week }}
+          RESTORE: ${{ github.event.inputs.restore }}
           TZ: Asia/Bangkok
         run: |
-          if [ "${{ github.event.inputs.apply }}" = "true" ]; then
-            python recut_date_bar.py --week "$WEEK" --apply
-          else
-            python recut_date_bar.py --week "$WEEK"
-          fi
+          ARGS=(--week "$WEEK")
+          if [ -n "$RESTORE" ]; then ARGS+=(--restore "$RESTORE"); fi
+          if [ "${{ github.event.inputs.apply }}" = "true" ]; then ARGS+=(--apply); fi
+          python recut_date_bar.py "${ARGS[@]}"

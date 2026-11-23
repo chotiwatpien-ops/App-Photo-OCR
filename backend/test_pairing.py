@@ -371,6 +371,13 @@ _d.text((110, 320), "Noble Reddy Soi Ari 1", fill="black", font=_f)
 _cut = pairing.date_bar_cut(sb)
 check("❗ มีแถบสถานะอยู่บนสุด: ตัดใต้แถบวันที่ เหนือบรรทัดระยะทาง ไม่ใช่ใต้นาฬิกา",
       _cut is not None and 195 < _cut < 255)
+# W47 run 4 (2026-11-24): a picture cut once already opens on the distance line, and an address
+# with '2030' under it passed the band test; the second recut took the distance line off.
+done = sb.crop((0, _cut or 228, sb.width, sb.height))
+_d2 = _Draw.Draw(done)
+_d2.text((110, 160), "2030, Wang Mai, Rama 6", fill="black", font=_f)
+check("❗ ตัดไปแล้วรอบหนึ่ง (บรรทัดระยะทางอยู่บนสุด ที่อยู่มีเลข 2030): ไม่ตัดซ้ำ",
+      pairing.date_bar_cut(done) is None)
 
 dates = "Phase2/For Train Model/Remove Date Train"
 if os.path.isdir(dates) and os.environ.get("PAIRING_SAMPLE", "1") == "1":

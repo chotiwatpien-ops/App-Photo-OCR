@@ -404,16 +404,24 @@ def date_bar_cut(im):
     # Cut right above the distance line. The first gap is not the place: a screenshot that keeps
     # the phone's status bar has the clock as its first band, and cutting there took the clock and
     # left '11 ต.ค. 2026, 05:15' on W47's pictures (2047_0: cut at 108, the bar ends at 195).
-    for i in range(1, len(runs)):
-        y0, y1 = runs[i]
+    # The year has to be ABOVE that line too. A picture cut once already opens on '6.08 km', and an
+    # address under it such as '2030, Wang Mai' passed the band test, so a second recut took the
+    # distance line off (W47 run 4, 2026-11-24). No distance line found, or nothing with a year
+    # above it: no cut — a date left on is fixable, a line taken off is not.
+    said = []
+    for y0, y1 in runs:
         line = band.crop((0, max(0, y0 - 4), band.width, min(band.height, y1 + 5)))
         try:
-            said = " ".join(_read_text(line.resize((line.width * 2, line.height * 2), Image.LANCZOS)).split())
-        except Exception:  # noqa: BLE001 — fall through to the next line
-            continue
-        if UNDER_BAR.search(said) and not DATE_BAR.search(said):
-            return (runs[i - 1][1] + y0) // 2
-    return (runs[0][1] + runs[1][0]) // 2
+            said.append(" ".join(_read_text(line.resize((line.width * 2, line.height * 2),
+                                                        Image.LANCZOS)).split()))
+        except Exception:  # noqa: BLE001 — a line we cannot read is not one we can place
+            said.append("")
+        i = len(said) - 1
+        if UNDER_BAR.search(said[i]) and not DATE_BAR.search(said[i]):
+            if i and any(DATE_BAR.search(s) for s in said[:i]):
+                return (runs[i - 1][1] + y0) // 2
+            return None
+    return None
 
 
 # --- the black-figure screen (Grab on iPhone, Sep 2026) -----------------------------------------
