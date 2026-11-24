@@ -13,13 +13,21 @@ replace the old in the same Drive file (rows keep pointing at the same id), and 
 of that row is made again under its own name. The old bytes go to Exports/_ก่อนตัดวันที่/<week>/
 first: nothing is lost.
 
+A picture found free of a bar is remembered by its bytes (sweep), so a second look at the same
+week opens only what is new, what changed, and what still carries a bar. W47 was swept five times,
+57 + 32 + 86 + 113 + 84 minutes, each time downloading and reading all 4,411 pictures again.
+
     python recut_date_bar.py --week 2026-11-16            # report only
     python recut_date_bar.py --week 2026-11-16 --apply
 """
 import argparse
+import contextlib
+import hashlib
 import io
 import re
 import sys
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
@@ -35,6 +43,13 @@ from ingest import week_label
 
 BACKUP_DIR = "_ก่อนตัดวันที่"
 GAP = 16
+# Half of the version a 'no bar' verdict is remembered under; pairing.READER is the other half and
+# follows date_bar_cut. Bump this when halves() or recut() could answer differently for bytes they
+# have already seen, or when requirements-pairing.txt moves the OCR to another version.
+CHECKER = 1
+META_THREADS = 12       # a checksum is one small Drive call; the OCR stays at OCR_THREADS
+OCR_THREADS = 4
+PROGRESS_EVERY = 200
 
 
 def drive_id(url):
@@ -84,6 +99,98 @@ def recut(data):
     return buf.getvalue()
 
 
+def clean_key(md5_hex):
+    """The pool_ocr_cache row that says: these exact bytes, seen by this checker, carry no date bar."""
+    key = f"c{CHECKER}{pairing.READER}:{md5_hex}"
+    assert len(key) <= 40, f"คีย์ {key!r} ยาวเกินคอลัมน์ 40 ตัวอักษรของ pool_ocr_cache"
+    return key
+
+
+_ocr = threading.local()
+
+
+@contextlib.contextmanager
+def ocr_failures_noted():
+    """While a sweep runs, a read the OCR failed on leaves a mark on its thread.
+
+    date_bar_cut answers None both for 'no bar' and for 'the OCR could not read this', and only
+    the first is true of the bytes. Remembering the second would hide a bar for good."""
+    read = pairing._read_text
+
+    def noted(img):
+        try:
+            return read(img)
+        except Exception:
+            _ocr.failed = True
+            raise
+
+    pairing._read_text = noted
+    try:
+        yield
+    finally:
+        pairing._read_text = read
+
+
+def remember(clean):
+    try:
+        db.pool_ocr_cache_save(clean)
+    except Exception as e:  # noqa: BLE001 — the memory only saves time; the sweep's answer does not need it
+        print(f"  ⚠ จำผลไม่ได้ {len(clean)} รูป (รอบหน้าจะเปิดดูใหม่): {str(e)[:120]}")
+
+
+def sweep(drive, rows):
+    """(pictures with a bar, pictures that could not be opened, how many were skipped, how many
+    the OCR failed on) for the rows of one week.
+
+    A picture is skipped only when the md5 Drive holds for it now is one recut() has already
+    answered None for under this checker, so skipping gives the verdict a fresh look would give.
+    Only 'no bar' is remembered, under the md5 of the bytes that were actually read. A picture
+    with a bar is opened every time; once it is cut its bytes are new, so the next sweep reads
+    the cut picture for real before it is remembered."""
+    def checksum(r):
+        try:
+            return drive.md5(drive_id(r["source_url"]))
+        except Exception:  # noqa: BLE001 — no checksum only means the picture is opened
+            return None
+
+    t0 = time.time()
+    with ThreadPoolExecutor(max_workers=META_THREADS) as ex:
+        sums = list(ex.map(checksum, rows))
+    known = db.pool_ocr_cache_load({clean_key(h) for h in sums if h})
+    todo = [r for r, h in zip(rows, sums) if not h or clean_key(h) not in known]
+    skipped = len(rows) - len(todo)
+    print(f"เคยตรวจแล้วว่าไม่มีแถบ {skipped:,} รูป (ไม่ต้องโหลด) · ต้องเปิดดู {len(todo):,} รูป"
+          f" · ถาม Drive {time.time() - t0:.0f} วิ")
+
+    def look(r):
+        _ocr.failed = False
+        try:
+            old = drive.download(drive_id(r["source_url"]))
+            return r, old, recut(old), None, _ocr.failed
+        except Exception as e:  # noqa: BLE001 — one picture must not stop the week
+            return r, None, None, str(e)[:120], False
+
+    t0 = time.time()
+    hit, bad, clean, unread = [], [], {}, 0
+    with ocr_failures_noted(), ThreadPoolExecutor(max_workers=OCR_THREADS) as ex:
+        for n, (r, old, new, err, ocr_failed) in enumerate(ex.map(look, todo), 1):
+            if err:
+                bad.append((r, err))
+            elif new:
+                hit.append((r, old, new))
+            elif ocr_failed:
+                unread += 1
+            else:
+                clean[clean_key(hashlib.md5(old).hexdigest())] = {"bar": False}
+            if n % PROGRESS_EVERY == 0:
+                # saved as it goes: a run that is cancelled or times out keeps what it has checked
+                remember(clean)
+                clean = {}
+                print(f"  … เปิดดูแล้ว {n:,}/{len(todo):,} รูป · พบแถบวันที่ {len(hit):,} · {time.time() - t0:.0f} วิ")
+    remember(clean)
+    return hit, bad, skipped, unread
+
+
 def week_rows(d_from, d_to):
     jobs = {j["id"]: j for j in db.jobs_by_week().get((d_from, d_to), [])}
     t = db.trips
@@ -113,7 +220,12 @@ def from_original(olds, drop):
     return buf.getvalue()
 
 
-def restore(week, names, apply_it):
+def _drive():
+    from drive_client import DriveClient
+    return DriveClient(config.GOOGLE_SERVICE_ACCOUNT, config.DRIVE_OAUTH_TOKEN)
+
+
+def restore(week, names, apply_it, drive=None):
     """Remake pictures a second recut cut too far, from the bytes kept before the first cut.
 
     Every cut leaves the bytes it replaced in _ก่อนตัดวันที่ under '<row id>_<file name>', so a
@@ -134,8 +246,7 @@ def restore(week, names, apply_it):
     for n in names:
         if n not in rows:
             print(f"  ✗ {n}: ไม่พบแถวในสัปดาห์นี้")
-    from drive_client import DriveClient
-    drive = DriveClient(config.GOOGLE_SERVICE_ACCOUNT, config.DRIVE_OAUTH_TOKEN)
+    drive = drive or _drive()
     backup = drive.ensure_folder(drive.ensure_folder(config.DRIVE_EXPORTS_FOLDER_ID, BACKUP_DIR), wk)
     kept = {}
     for f in drive.list_images(backup):
@@ -161,7 +272,7 @@ def restore(week, names, apply_it):
     return 1 if bad or len(rows) < len(names) else 0
 
 
-def main(argv=None):
+def main(argv=None, drive=None):
     ap = argparse.ArgumentParser(description="ตัดแถบวันที่ออกจากรูปที่ต่อแล้วของสัปดาห์หนึ่ง")
     ap.add_argument("--week", required=True, help="วันแรกของสัปดาห์ เช่น 2026-11-16")
     ap.add_argument("--apply", action="store_true", help="ทำจริง (ไม่ใส่ = รายงานอย่างเดียว)")
@@ -169,7 +280,7 @@ def main(argv=None):
                     help="ชื่อรูปส่งลูกค้าที่ถูกตัดเกิน คั่นด้วย , — ทำใหม่จากต้นฉบับใน _ก่อนตัดวันที่ (ชื่อ:N = ตัดบนออก N แถว, ชื่อ:0 = คืนต้นฉบับตามเดิม)")
     a = ap.parse_args(argv)
     if a.restore:
-        return restore(a.week, [n.strip() for n in a.restore.split(",") if n.strip()], a.apply)
+        return restore(a.week, [n.strip() for n in a.restore.split(",") if n.strip()], a.apply, drive)
     db.init_db()
     rng = next((w for w in db.jobs_by_week() if w[0] == a.week), None)
     if rng is None:
@@ -178,27 +289,16 @@ def main(argv=None):
     wk = week_label(rng[0])
     rows = week_rows(*rng)
     print(f"{wk}: ตรวจ {len(rows):,} รูป")
-
-    from drive_client import DriveClient
-    drive = DriveClient(config.GOOGLE_SERVICE_ACCOUNT, config.DRIVE_OAUTH_TOKEN)
-
-    def look(r):
-        try:
-            old = drive.download(drive_id(r["source_url"]))
-            return r, old, recut(old), None
-        except Exception as e:  # noqa: BLE001 — one picture must not stop the week
-            return r, None, None, str(e)[:120]
-
-    with ThreadPoolExecutor(max_workers=4) as ex:
-        seen = list(ex.map(look, rows))
-    bad = [s for s in seen if s[3]]
-    hit = [s for s in seen if s[2]]
-    for r, _, _, err in bad:
+    drive = drive or _drive()
+    hit, bad, skipped, unread = sweep(drive, rows)
+    for r, err in bad:
         print(f"  ⚠ #{r['id']} {r['file_name']}: {err}")
     by_job = {}
     for r, *_ in hit:
         by_job.setdefault(r["job"]["driver_name"], []).append(r["customer_image"] or r["file_name"])
-    print(f"มีแถบวันที่ {len(hit):,} รูป · อ่านไม่ได้ {len(bad)} รูป")
+    print(f"มีแถบวันที่ {len(hit):,} รูป · อ่านไม่ได้ {len(bad)} รูป"
+          f" · ข้าม {skipped:,} รูปที่เคยตรวจแล้วว่าไม่มีแถบ"
+          + (f" · OCR อ่านไม่ได้ {unread} รูป (ไม่จำ รอบหน้าเปิดดูใหม่)" if unread else ""))
     for name, files in sorted(by_job.items()):
         print(f"  {name}: {len(files)} — {', '.join(files[:6])}{' …' if len(files) > 6 else ''}")
     if not a.apply or not hit:
@@ -213,7 +313,7 @@ def main(argv=None):
             cat_dirs[cat] = drive.ensure_folder(week_dir, cat)
 
     def fix(s):
-        r, old, new, _ = s
+        r, old, new = s
         try:
             drive.create_file(backup, f"{r['id']}_{r['file_name']}", old, "image/jpeg")
             drive.replace_content(drive_id(r["source_url"]), new, "image/jpeg")
@@ -233,5 +333,6 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.stdout.reconfigure(encoding="utf-8")
+    # line by line, or the run log stays empty until the sweep is over
+    sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
     sys.exit(main())

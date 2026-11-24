@@ -7,6 +7,7 @@ Both expose the same tiny interface:
     download(file_id)       -> bytes
     upload_xlsx(parent_id, name, data) -> file id   (overwrites a same-named file)
 """
+import hashlib
 import io
 import json
 import os
@@ -116,6 +117,13 @@ class DriveClient:
             return buf.getvalue()
 
         return self._retry(_dl)
+
+    def md5(self, file_id):
+        """md5 of the bytes Drive holds for a file right now, without downloading them."""
+        def _get():
+            return self.svc.files().get(fileId=file_id, fields="md5Checksum",
+                                        supportsAllDrives=True).execute()
+        return self._retry(_get).get("md5Checksum")
 
     def ensure_folder(self, parent_id, name) -> str:
         """Id of child folder `name`, created if missing."""
@@ -248,6 +256,9 @@ class LocalDrive:
 
     def download(self, file_id) -> bytes:
         return Path(file_id).read_bytes()
+
+    def md5(self, file_id):
+        return hashlib.md5(Path(file_id).read_bytes()).hexdigest()
 
     def ensure_folder(self, parent_id, name) -> str:
         p = Path(parent_id) / name
