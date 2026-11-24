@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, PICTURE_NOT_RETURNED } from './api.js'
+import { useConfirm } from './Confirm.jsx'
 import Icon from './Icon.jsx'
 
 // คิวตรวจ — the rows the system was not sure of, one at a time, with the picture beside the
@@ -265,6 +266,7 @@ function DiscardedLog() {
   const [everything, setEverything] = useState(false)
   const [open, setOpen] = useState(false)
   const [note, setNote] = useState(null)   // {text, warn}: warn is something the person must act on
+  const ask = useConfirm()
 
   const load = useCallback((all = false) => {
     api.discarded(all)
@@ -274,7 +276,7 @@ function DiscardedLog() {
   useEffect(() => { load(false) }, [load])
 
   const restore = async (t) => {
-    if (!confirm('เอาเที่ยวนี้กลับเข้าคิวตรวจ?')) return
+    if (!(await ask({ text: 'เอาเที่ยวนี้กลับเข้าคิวตรวจ?', confirm: 'เอากลับเข้าคิว' }))) return
     try {
       const r = await api.restoreTrip(t.id)
       setRows(rows.filter((x) => x.id !== t.id))
@@ -283,7 +285,10 @@ function DiscardedLog() {
     } catch (e) { setNote({ warn: true, text: e.message }) }
   }
   const clear = async () => {
-    if (!confirm(`ซ่อนรายการเก่า ${rows.length} รายการ แล้วเริ่มนับใหม่?\nไม่ได้ลบ — กด "ดูของเก่า" กลับมาดูได้ทุกเมื่อ`)) return
+    if (!(await ask({
+      text: `ซ่อนรายการเก่า ${rows.length} รายการ แล้วเริ่มนับใหม่?\nไม่ได้ลบ — กด "ดูของเก่า" กลับมาดูได้ทุกเมื่อ`,
+      confirm: 'ซ่อนรายการเก่า',
+    }))) return
     try {
       const r = await api.clearDiscarded()
       setNote({ text: `ซ่อนไว้ ${r.hidden} รายการ — จากนี้จะนับเฉพาะของใหม่` })
@@ -368,6 +373,7 @@ export default function ReviewQueue({ onOpenJob, onCount }) {
   const listRef = useRef(null)
   const inflight = useRef(new Set())       // rows whose approve or delete is on its way
   const saving = useRef(Promise.resolve()) // the last field save, which an approve waits for
+  const ask = useConfirm()
 
   const load = useCallback(() => {
     api.reviewQueue()
@@ -404,10 +410,14 @@ export default function ReviewQueue({ onOpenJob, onCount }) {
 
   const remove = useCallback(async (t) => {
     if (!t || inflight.current.has(t.id)) return
-    if (!confirm(`ไม่ใช้เที่ยวนี้ของ ${t.driver_name}?\n\nใช้เมื่อรูปซ้ำ หรือไม่ใช่งาน — เที่ยวนี้จะไม่อยู่ในไฟล์ แต่ยังอยู่ในระบบ ดูและเอากลับเข้าคิวได้ที่ "งานที่ไม่ได้ใช้"`)) return
+    // the row can be brought back, so Enter confirms: X then Enter, hands still on the keyboard
+    if (!(await ask({
+      text: `ไม่ใช้เที่ยวนี้ของ ${t.driver_name}?\n\nใช้เมื่อรูปซ้ำ หรือไม่ใช่งาน — เที่ยวนี้จะไม่อยู่ในไฟล์ แต่ยังอยู่ในระบบ ดูและเอากลับเข้าคิวได้ที่ "งานที่ไม่ได้ใช้"`,
+      confirm: 'ไม่ใช้เที่ยวนี้',
+    }))) return
     inflight.current.add(t.id)
     try { await api.setNotUsed(t.id); setMsg(''); drop(new Set([t.id])) } catch (e) { setMsg(e.message) } finally { inflight.current.delete(t.id) }
-  }, [])
+  }, [ask])
 
   const skip = useCallback(() => setAt((i) => Math.min(i + 1, Math.max(0, shown.length - 1))), [shown])
 
@@ -436,7 +446,11 @@ export default function ReviewQueue({ onOpenJob, onCount }) {
   const approveAllPassing = async () => {
     const ok = rows.filter(passing)
     if (!ok.length) return setMsg('ไม่มีแถวที่ตัวเลขผ่านให้อนุมัติ')
-    if (!confirm(`อนุมัติ ${ok.length} แถวที่ตัวเลขผ่านการตรวจทั้งหมด?\n\nแถวที่ระบบไม่แน่ใจ (ตัวเลขไม่ลงตัว / สงสัยว่าซ้ำ / ไม่มีวันที่) จะยังอยู่ในคิว`)) return
+    if (!(await ask({
+      text: `อนุมัติ ${ok.length} แถวที่ตัวเลขผ่านการตรวจทั้งหมด?\n\nแถวที่ระบบไม่แน่ใจ (ตัวเลขไม่ลงตัว / สงสัยว่าซ้ำ / ไม่มีวันที่) จะยังอยู่ในคิว`,
+      confirm: `อนุมัติ ${ok.length} แถว`,
+      danger: true,
+    }))) return
     setBusy(true)
     try {
       const res = await api.approvePassing()
@@ -451,7 +465,11 @@ export default function ReviewQueue({ onOpenJob, onCount }) {
     const ok = mine.filter(passing)
     if (!ok.length) return setMsg(`${name} ไม่มีแถวที่ตัวเลขผ่านให้อนุมัติ — ต้องตรวจทีละแถว`)
     const left = mine.length - ok.length
-    if (!confirm(`อนุมัติ ${ok.length} แถวของ ${name} ที่ตัวเลขผ่าน?` + (left ? `\n\nอีก ${left} แถวที่ระบบไม่แน่ใจจะยังอยู่ในคิว` : ''))) return
+    if (!(await ask({
+      text: `อนุมัติ ${ok.length} แถวของ ${name} ที่ตัวเลขผ่าน?` + (left ? `\n\nอีก ${left} แถวที่ระบบไม่แน่ใจจะยังอยู่ในคิว` : ''),
+      confirm: `อนุมัติ ${ok.length} แถว`,
+      danger: true,
+    }))) return
     setBusy(true)
     try {
       const r = await api.approvePassing(jobId)

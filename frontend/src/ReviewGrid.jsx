@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { api, exportUrl } from './api.js'
+import { useConfirm } from './Confirm.jsx'
 
 // one car product: Saver Car counts as Standard Car (Fiat 2026-10-31), so it is no longer offered
 const SERVICE_OPTIONS = ['Saver Bike', 'Standard Bike', 'Standard Car']
@@ -71,6 +72,7 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
   const [committing, setCommitting] = useState(false)
   const [msg, setMsg] = useState(null) // {type:'ok'|'warn'|'err', text}
   const [bulkDate, setBulkDate] = useState('')
+  const ask = useConfirm()
 
   const dates = useMemo(() => dateRange(job.date_from, job.date_to), [job.date_from, job.date_to])
   const trips = useMemo(() => {
@@ -107,7 +109,10 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
   }
 
   const removeTrip = async (tripId) => {
-    if (!confirm('ไม่ใช้งานนี้?\n\nแถวยังอยู่ในระบบ ดูและเอากลับเข้าคิวได้จากคิวตรวจ')) return
+    if (!(await ask({
+      text: 'ไม่ใช้งานนี้?\n\nแถวยังอยู่ในระบบ ดูและเอากลับเข้าคิวได้จากคิวตรวจ',
+      confirm: 'ไม่ใช้เที่ยวนี้',
+    }))) return
     try {
       await api.setNotUsed(tripId)
       onJobUpdate({ ...job, trips: trips.filter((t) => t.id !== tripId) })
@@ -139,7 +144,7 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
       if (fresh) onJobUpdate(fresh)
     } catch (e) {
       if (!force && e.message.includes('บันทึกซ้ำ')) {
-        if (confirm(`⚠️ ${e.message}\n\nยืนยันบันทึกซ้ำหรือไม่?`)) {
+        if (await ask({ text: `⚠️ ${e.message}\n\nยืนยันบันทึกซ้ำหรือไม่?`, confirm: 'บันทึกซ้ำ', danger: true })) {
           setCommitting(false)
           return commit(true)
         }

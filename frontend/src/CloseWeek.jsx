@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api } from './api.js'
+import { useConfirm } from './Confirm.jsx'
 import Icon from './Icon.jsx'
 
 // ปิดสัปดาห์และไฟล์ — check the week is ready, see what closing would do, close it, take the
@@ -170,6 +171,7 @@ export default function CloseWeek({ onOpenJob }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const ask = useConfirm()
 
   const load = useCallback((w) => api.closeWeekPage(w).then((d) => { setData(d); setError('') })
     .catch((e) => setError(e.message)), [])
@@ -211,22 +213,31 @@ export default function CloseWeek({ onOpenJob }) {
   const lastDone = data.runs.find((r) => (r.mode === 'apply' || r.mode === 'recheck') && r.status === 'done')
   const canRecheck = !closed && !live && !!lastDone && !lastDone.result?.closed
 
-  const start = (mode) => {
-    if (mode === 'recheck' && !window.confirm(
-      `ตรวจ ${label} ซ้ำแล้วติดป้ายปิด?
+  const start = async (mode) => {
+    if (mode === 'recheck' && !(await ask({
+      text: `ตรวจ ${label} ซ้ำแล้วติดป้ายปิด?
 
 ไม่ย้าย ไม่ยกงาน ไม่สร้างรูปใหม่ — ตรวจอย่างเดียว ถ้าผ่านจะติดป้ายปิดให้
 
-ใช้เวลาประมาณ 5–10 นาที`)) return
-    if (mode === 'apply' && !window.confirm(
-      `ปิด ${label} จริง?\n\nระบบจะย้ายแถวตาม Service Type ยกงานที่เกินไป ${nextLabel} ดึงงานกลับถ้ากลุ่มไหนขาด ` +
-      'สร้างรูปใหม่ ออกไฟล์ แล้วตรวจซ้ำ — ถ้าตรวจผ่านจะติดป้ายปิดให้เอง\n\nใช้เวลาประมาณ 10–30 นาที')) return
+ใช้เวลาประมาณ 5–10 นาที`,
+      confirm: 'ตรวจซ้ำและติดป้าย',
+      danger: true,
+    }))) return
+    if (mode === 'apply' && !(await ask({
+      text: `ปิด ${label} จริง?\n\nระบบจะย้ายแถวตาม Service Type ยกงานที่เกินไป ${nextLabel} ดึงงานกลับถ้ากลุ่มไหนขาด `
+        + 'สร้างรูปใหม่ ออกไฟล์ แล้วตรวจซ้ำ — ถ้าตรวจผ่านจะติดป้ายปิดให้เอง\n\nใช้เวลาประมาณ 10–30 นาที',
+      confirm: 'ปิดจริง',
+      danger: true,
+    }))) return
     setBusy(true)
     api.closeWeekStart(data.week, mode).then(() => load(data.week))
       .catch((e) => setError(e.message)).finally(() => setBusy(false))
   }
-  const reopen = () => {
-    if (!window.confirm(`เปิด ${label} อีกครั้ง?\n\nงานอัตโนมัติจะกลับมาแตะสัปดาห์นี้ได้ และกดปิดใหม่ได้`)) return
+  const reopen = async () => {
+    if (!(await ask({
+      text: `เปิด ${label} อีกครั้ง?\n\nงานอัตโนมัติจะกลับมาแตะสัปดาห์นี้ได้ และกดปิดใหม่ได้`,
+      confirm: 'เปิดอีกครั้ง',
+    }))) return
     setBusy(true)
     api.reopenWeek(data.week).then(() => load(data.week)).catch((e) => setError(e.message)).finally(() => setBusy(false))
   }

@@ -49,8 +49,10 @@ export function exportUrl({ dateFrom, dateTo, driver, jobId, committedOnly = tru
 
 // A restore answers 200 with picture_returned false when the web could not move the picture back
 // (it has no Drive access of its own on some days). The row is back; the person has to hear the rest.
+// "ถ้า": a row parked since the last round still has its picture in the rider's folder.
 export const PICTURE_NOT_RETURNED = 'แถวกลับเข้าคิวตรวจแล้ว แต่ระบบย้ายรูปกลับเข้าโฟลเดอร์ไรเดอร์ให้ไม่ได้ — '
-  + 'รูปยังอยู่ในโฟลเดอร์ _ซ้ำ ของสัปดาห์นั้นบน Drive ให้ย้ายกลับเข้าโฟลเดอร์ของไรเดอร์เองก่อนปิดสัปดาห์ ไม่งั้นเที่ยวนี้จะไม่มีรูปส่งลูกค้า'
+  + 'เปิดโฟลเดอร์ _ซ้ำ ของสัปดาห์นั้นบน Drive ถ้ารูปของเที่ยวนี้อยู่ในนั้น ให้ย้ายกลับเข้าโฟลเดอร์ของไรเดอร์เองก่อนปิดสัปดาห์ '
+  + 'ไม่งั้นเที่ยวนี้จะไม่มีรูปส่งลูกค้า'
 
 export const api = {
   health: () => fetch('/api/health').then(handle),

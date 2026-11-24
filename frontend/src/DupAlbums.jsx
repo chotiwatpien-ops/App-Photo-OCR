@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, PICTURE_NOT_RETURNED } from './api.js'
+import { useConfirm } from './Confirm.jsx'
 import Icon from './Icon.jsx'
 
 // งานซ้ำ — one week answered top to bottom (Fiat 2026-11-11: "ดูง่ายๆ และตรวจสอบง่าย"):
@@ -269,6 +270,7 @@ export default function DupAlbums({ onGo }) {
   const [album, setAlbum] = useState('')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState(null)   // {text, warn}
+  const ask = useConfirm()
 
   const load = useCallback((w) => api.duplicateWeek(w).then((r) => { setD(r); setError('') })
     .catch((e) => setError(e.message)), [])
@@ -278,8 +280,11 @@ export default function DupAlbums({ onGo }) {
     try { sessionStorage.setItem('queue.only', 'dup') } catch { /* private window: the queue opens on every row */ }
     onGo?.('queue')
   }
-  const keep = (p) => {
-    if (!window.confirm('ไม่ใช่งานซ้ำ เก็บเที่ยวนี้ไว้?\n\nแถวจะกลับเข้าคิวตรวจ ให้คนกดอนุมัติอีกครั้ง')) return
+  const keep = async (p) => {
+    if (!(await ask({
+      text: 'ไม่ใช่งานซ้ำ เก็บเที่ยวนี้ไว้?\n\nแถวจะกลับเข้าคิวตรวจ ให้คนกดอนุมัติอีกครั้ง',
+      confirm: 'เก็บไว้',
+    }))) return
     setBusy(true)
     api.restoreTrip(p.trip_id)
       .then((r) => {

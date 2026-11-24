@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, exportUrl } from './api.js'
+import { useConfirm } from './Confirm.jsx'
 import NewJobForm from './NewJobForm.jsx'
 import { RunsOverview, IssuesPanel } from './RunsIssues.jsx'
 
@@ -83,15 +84,20 @@ function RunStatus({ run, canTrigger, onTriggered, batchWaiting = 0, batchSince 
 }
 
 function JobRow({ j, onOpen, onRenamed }) {
+  const ask = useConfirm()
   const rename = async () => {
-    const name = prompt(`ชื่อไรเดอร์ของ job #${j.id}
-(โฟลเดอร์บน Drive ควรใช้ชื่อเดียวกัน ไม่งั้นรอบหน้าจะสร้าง job ใหม่)`, j.driver_name)
-    if (!name || name.trim() === j.driver_name) return
+    const name = await ask({
+      text: `ชื่อไรเดอร์ของ job #${j.id}
+(โฟลเดอร์บน Drive ควรใช้ชื่อเดียวกัน ไม่งั้นรอบหน้าจะสร้าง job ใหม่)`,
+      input: { label: 'ชื่อไรเดอร์', value: j.driver_name },
+      confirm: 'เปลี่ยนชื่อ',
+    })
+    if (!name || name === j.driver_name) return
     try {
-      const r = await api.renameJobRider(j.id, name.trim())
-      alert(`เปลี่ยนชื่อ ${r.old} → ${r.new} แล้ว (${r.trips} แถว)`)
+      const r = await api.renameJobRider(j.id, name)
+      await ask({ text: `เปลี่ยนชื่อ ${r.old} → ${r.new} แล้ว (${r.trips} แถว)`, notice: true })
       onRenamed && onRenamed()
-    } catch (e) { alert(e.message) }
+    } catch (e) { ask({ text: e.message, notice: true }) }
   }
 
   const st = j.pending ? ['กำลังอ่าน', 'bg-amber-100 text-amber-700']
@@ -245,6 +251,7 @@ export default function Home({ onOpenJob, onJobCreated }) {
   const [err, setErr] = useState('')
   const [showUpload, setShowUpload] = useState(false)
   const [openWeeks, setOpenWeeks] = useState({})
+  const ask = useConfirm()
 
   const load = useCallback(() => api.weeks().then(setData).catch((e) => setErr(e.message)), [])
   useEffect(() => { load() }, [load])
@@ -304,12 +311,12 @@ export default function Home({ onOpenJob, onJobCreated }) {
                   button เป็น HTML ที่เบราว์เซอร์ไม่รับ — คลิกแล้วไม่ถึง handler นี้เลย */}
               <span role="button" tabIndex={0}
                 onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.currentTarget.click() }}
-                onClick={(e) => {
+                onClick={async (e) => {
                 e.stopPropagation()
-                const ask = W.closed
+                const text = W.closed
                   ? `เปิดสัปดาห์ ${W.week} อีกครั้ง? งานอัตโนมัติจะกลับมาแตะสัปดาห์นี้ได้`
                   : `ล็อกสัปดาห์ ${W.week}? ส่งไฟล์ให้ลูกค้าแล้วใช่ไหม — หลังจากนี้งานอัตโนมัติจะไม่แตะสัปดาห์นี้อีก\n\n(ปุ่มนี้ล็อกอย่างเดียว ถ้าจะย้าย ยกงาน ออกไฟล์ และ audit ด้วย ใช้แท็บ 'ปิดสัปดาห์')`
-                if (!window.confirm(ask)) return
+                if (!(await ask({ text, confirm: W.closed ? 'เปิดอีกครั้ง' : 'ล็อกสัปดาห์' }))) return
                 const p = W.closed ? api.reopenWeek(W.date_from) : api.closeWeek(W.date_from, W.date_to)
                 p.then(load).catch((e2) => setErr(e2.message))
               }}
