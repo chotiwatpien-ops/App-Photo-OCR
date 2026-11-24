@@ -93,12 +93,37 @@ def week_rows(d_from, d_to):
     return [dict(r, job=jobs[r["job_id"]]) for r in rows if drive_id(r["source_url"])]
 
 
+def from_original(olds, drop):
+    """Bytes to put back, made from the tallest kept copy (every cut only shortens a picture).
+
+    With `drop` the operator has looked at that copy: its date sits under the phone's status bar
+    where date_bar_cut cannot see it, so exactly that many rows come off the top (0 = the copy
+    carried no date at all and goes back as it was)."""
+    if not olds:
+        return None
+    sized = [(Image.open(io.BytesIO(o)).height, o) for o in olds]
+    orig = max(sized, key=lambda s: s[0])[1]
+    if drop is None:
+        return recut(orig)
+    if not drop:
+        return orig
+    im = Image.open(io.BytesIO(orig)).convert("RGB")
+    buf = io.BytesIO()
+    im.crop((0, drop, im.width, im.height)).save(buf, "JPEG", quality=88)
+    return buf.getvalue()
+
+
 def restore(week, names, apply_it):
     """Remake pictures a second recut cut too far, from the bytes kept before the first cut.
 
     Every cut leaves the bytes it replaced in _ก่อนตัดวันที่ under '<row id>_<file name>', so a
-    picture cut twice has two of them: the original, which still has its date bar, and the first
-    cut. The one recut() still finds a bar on is the original; cut once from it."""
+    picture cut twice has two of them: the original and the first cut. A name alone cuts the date
+    bar once from the original; 'name:N' takes N rows off its top instead (see from_original)."""
+    drops = {}
+    for n in names:
+        name, _, rows_off = n.partition(":")
+        drops[name] = int(rows_off) if rows_off else None
+    names = list(drops)
     db.init_db()
     rng = next((w for w in db.jobs_by_week() if w[0] == week), None)
     if rng is None:
@@ -119,12 +144,15 @@ def restore(week, names, apply_it):
     bad = 0
     for n, r in rows.items():
         olds = [drive.download(i) for i in kept.get(f"{r['id']}_{r['file_name']}", [])]
-        made = next((x for x in (recut(o) for o in olds) if x), None)
+        made = from_original(olds, drops[n])
         if made is None:
             print(f"  ✗ {n}: ไม่มีต้นฉบับที่ยังมีแถบวันที่ใน {BACKUP_DIR}/{wk} ({len(olds)} ไฟล์)")
             bad += 1
             continue
-        print(f"  {'✔' if apply_it else '·'} {n}: ทำใหม่จากต้นฉบับ ({len(olds)} ไฟล์สำรอง)")
+        how = ("ตัดแถบวันที่ครั้งเดียว" if drops[n] is None else
+               "คืนต้นฉบับตามเดิม" if not drops[n] else f"ตัดบนออก {drops[n]} แถว")
+        h = Image.open(io.BytesIO(made)).height
+        print(f"  {'✔' if apply_it else '·'} {n}: ทำใหม่จากต้นฉบับ — {how}, สูง {h}px ({len(olds)} ไฟล์สำรอง)")
         if apply_it:
             drive.replace_content(drive_id(r["source_url"]), made, "image/jpeg")
             cat = r["job"].get("category") or "อัปโหลดมือ"
@@ -138,7 +166,7 @@ def main(argv=None):
     ap.add_argument("--week", required=True, help="วันแรกของสัปดาห์ เช่น 2026-11-16")
     ap.add_argument("--apply", action="store_true", help="ทำจริง (ไม่ใส่ = รายงานอย่างเดียว)")
     ap.add_argument("--restore", default="",
-                    help="ชื่อรูปส่งลูกค้าที่ถูกตัดเกิน คั่นด้วย , — ทำใหม่จากต้นฉบับใน _ก่อนตัดวันที่")
+                    help="ชื่อรูปส่งลูกค้าที่ถูกตัดเกิน คั่นด้วย , — ทำใหม่จากต้นฉบับใน _ก่อนตัดวันที่ (ชื่อ:N = ตัดบนออก N แถว, ชื่อ:0 = คืนต้นฉบับตามเดิม)")
     a = ap.parse_args(argv)
     if a.restore:
         return restore(a.week, [n.strip() for n in a.restore.split(",") if n.strip()], a.apply)
