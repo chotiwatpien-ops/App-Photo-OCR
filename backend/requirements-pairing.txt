@@ -1,1 +1,10 @@
 rapidocr_onnxruntime==1.4.4   # free local OCR, used only by pairing.py (pool pairing before Gemini); pinned — pairing.READER assumes one reader
+# What the OCR runs on. Unpinned, each of these arrived as "the newest" on every runner, about
+# once a month for onnxruntime and numpy, and a new release can read a picture differently with
+# no change in this repository. These are the versions the rounds ran on 2026-11-24. To move one,
+# change the number here on purpose and compare the reads on the sample albums first.
+onnxruntime==1.32.0
+opencv-python==5.1.0.95
+numpy==2.5.5
+pyclipper==1.4.0
+Shapely==2.2.0

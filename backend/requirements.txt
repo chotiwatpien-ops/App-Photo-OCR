@@ -6,6 +6,6 @@ google-genai
 sqlalchemy>=2.0
 psycopg[binary]
 itsdangerous
-Pillow
+Pillow==13.0.0   # opens, cuts and stitches every picture; pinned with the OCR stack (requirements-pairing.txt)
 google-api-python-client
 google-auth
