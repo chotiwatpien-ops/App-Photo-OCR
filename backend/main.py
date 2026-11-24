@@ -332,8 +332,21 @@ def commit(job_id: int, force: bool = False):
     j = db.get_job(job_id)
     if not j:
         raise HTTPException(404, "ไม่พบ job")
+    if (j["driver_name"] or "") == db.HOLDING_RIDER:
+        # read and waiting to be filed: approved here, the rows would reach the customer with
+        # '(รออ่าน)' as their rider's name (db.auto_approve_job refuses them for the same reason)
+        raise HTTPException(409, "งานนี้เป็นกองพัก (รออ่าน) แถวยังไม่มีไรเดอร์ อนุมัติจากตรงนี้ไม่ได้ — "
+                                 "รอบอ่านรูปถัดไปจะลงโฟลเดอร์ไรเดอร์ให้เอง")
     if j["status"] == "committed":
         raise HTTPException(409, "job นี้อนุมัติไปแล้ว")
+    if not config.EXCEL_APPEND:
+        # The cloud app has no workbook to write, so 'the whole job' only ever meant approving
+        # every read row at once, rows whose numbers do not add up included, and `force` stepped
+        # past the in-job repeat check too. The queue's bulk path is used instead: what passed is
+        # approved, the rest waits for a person, one row at a time.
+        r = approve_passing(job_id)
+        return {"written": r["approved"], "file": None, "left": r["skipped"] + len(r["failed"]),
+                "reasons": r["reasons"], "failed": r["failed"]}
     done = [t for t in j["trips"] if t["status"] == "done" and not t["committed"]]
     if not done:
         raise HTTPException(400, "ไม่มีรายการที่รออนุมัติ")
@@ -1241,6 +1254,17 @@ def review_queue_count():
     return {"count": db.review_queue_count()}
 
 
+def _why_waiting(r):
+    """Why a bulk approve left this row: the bucket the queue files it under (ReviewQueue.jsx kind)."""
+    if r.get("duplicate_of") or r.get("seen_in_job"):
+        return "dup"
+    if r.get("check_status") == "fail":
+        return "fail"
+    if r.get("check_status") != "pass":
+        return "no_data"
+    return "nodate"
+
+
 @app.post("/api/review-queue/approve-passing")
 def approve_passing(job_id: int = None):
     """One click for the whole queue, or for one rider's rows with job_id: approve every waiting
@@ -1259,7 +1283,14 @@ def approve_passing(job_id: int = None):
             done += 1
             ids.append(r["id"])
     _note("queue.approve_passing", approved=done, trip_ids=ids, failed=len(failed), job_id=job_id)
-    return {"approved": done, "skipped": len(rows) - len(ok), "failed": failed, "ids": ids}
+    passed = {r["id"] for r in ok}
+    reasons = {}
+    for r in rows:
+        if r["id"] not in passed:
+            why = _why_waiting(r)
+            reasons[why] = reasons.get(why, 0) + 1
+    return {"approved": done, "skipped": len(rows) - len(ok), "failed": failed, "ids": ids,
+            "reasons": reasons}
 
 
 @app.post("/api/trips/{trip_id}/approve")

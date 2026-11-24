@@ -7,6 +7,13 @@ const PAYMENT_OPTIONS = ['CASH', 'GRAB PAY', 'QR PAY', 'UNKNOWN']
 const PROVINCE_OPTIONS = ['BKK', 'NBI', 'PTE', 'SPK', 'SKN', 'NPT', 'CBI', 'AYA', 'OTHER']
 
 const THAI_DAYS = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส']
+// why a row stayed after a bulk approve, in the words of the review queue's chips
+const REASON_TH = { fail: 'ตัวเลขไม่ลงตัว', dup: 'สงสัยว่าซ้ำ', no_data: 'ข้อมูลไม่ครบ', nodate: 'ไม่มีวันที่' }
+const MSG_TONE = {
+  ok: 'text-emerald-700 bg-emerald-50 border-emerald-200',
+  warn: 'text-amber-800 bg-amber-50 border-amber-200',
+  err: 'text-red-700 bg-red-50 border-red-200',
+}
 
 function localISO(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -62,7 +69,7 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
   const appendsToFile = !!health?.excel_append
   const [modalTrip, setModalTrip] = useState(null)
   const [committing, setCommitting] = useState(false)
-  const [msg, setMsg] = useState(null) // {type:'ok'|'err', text}
+  const [msg, setMsg] = useState(null) // {type:'ok'|'warn'|'err', text}
   const [bulkDate, setBulkDate] = useState('')
 
   const dates = useMemo(() => dateRange(job.date_from, job.date_to), [job.date_from, job.date_to])
@@ -80,6 +87,9 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
   const errors = trips.filter((t) => t.status === 'error')
   const totalNet = done.reduce((s, t) => s + (t.net_earnings || 0), 0)
   const missingDates = waiting.filter((t) => !t.trip_date).length
+  // the cloud app's bulk button approves only these; the server also holds back a row whose
+  // booking code is already approved this week, which this page cannot see
+  const passWaiting = waiting.filter((t) => t.check_status === 'pass' && !t.duplicate_of && t.trip_date).length
   const passCount = done.filter((t) => t.check_status === 'pass' && !t.duplicate_of).length
   const attnCount = done.length - passCount
   const isCommitted = job.status === 'committed'
@@ -109,13 +119,22 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
     setCommitting(true)
     try {
       const r = await api.commit(job.id, force)
-      setMsg({
-        type: 'ok',
-        text: r.file
-          ? `บันทึก ${r.written} รายการลงไฟล์ ${r.file} เรียบร้อย ✅`
-          : `อนุมัติ ${r.written} รายการแล้ว ✅ กด "⬇ Excel" เพื่อดาวน์โหลด`,
-      })
-      onJobUpdate({ ...job, status: 'committed' })
+      if (r.file) {
+        setMsg({ type: 'ok', text: `บันทึก ${r.written} รายการลงไฟล์ ${r.file} เรียบร้อย ✅` })
+      } else if (!r.left) {
+        setMsg({ type: 'ok', text: `อนุมัติ ${r.written} รายการแล้ว ✅ กด "⬇ Excel" เพื่อดาวน์โหลด` })
+      } else {
+        const why = Object.entries(r.reasons || {}).map(([k, n]) => `${REASON_TH[k] || k} ${n}`).join(' · ')
+        const refused = r.failed?.length ? ` · อนุมัติไม่ได้ ${r.failed.length} แถว: ${r.failed[0].error}` : ''
+        setMsg({
+          type: 'warn',
+          text: `อนุมัติ ${r.written} แถวที่ตัวเลขผ่านแล้ว · อีก ${r.left} แถวยังรออยู่ เพราะระบบไม่แน่ใจ`
+            + `${why ? ` (${why})` : ''}${refused} — แก้ตัวเลขหรือวันที่ของแถวนั้นให้ผ่าน หรือเปิดแท็บคิวตรวจแล้วกดอนุมัติทีละแถว`,
+        })
+      }
+      // the server says which rows it approved; the page no longer assumes it was all of them
+      const fresh = await api.job(job.id).catch(() => null)
+      if (fresh) onJobUpdate(fresh)
     } catch (e) {
       if (!force && e.message.includes('บันทึกซ้ำ')) {
         if (confirm(`⚠️ ${e.message}\n\nยืนยันบันทึกซ้ำหรือไม่?`)) {
@@ -226,12 +245,12 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
           >⬇ Excel</a>
           <button
             onClick={() => commit()}
-            disabled={committing || isCommitted || pending.length > 0 || waiting.length === 0 || missingDates > 0}
-            className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-lg px-5 py-2.5 text-sm font-medium"
+            disabled={committing || isCommitted || pending.length > 0
+              || (appendsToFile ? waiting.length === 0 || missingDates > 0 : passWaiting === 0)}            className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-lg px-5 py-2.5 text-sm font-medium"
           >
             {isCommitted ? 'อนุมัติแล้ว ✓'
               : committing ? 'กำลังบันทึก...'
-              : appendsToFile ? `อนุมัติ + บันทึกลง Excel (${waiting.length})` : `อนุมัติ (${waiting.length})`}
+              : appendsToFile ? `อนุมัติ + บันทึกลง Excel (${waiting.length})` : `อนุมัติแถวที่ตัวเลขผ่าน (${passWaiting})`}
           </button>
         </div>
       </div>
@@ -285,11 +304,8 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
         </div>
       )}
       {msg && (
-        <p className={`mb-3 text-sm rounded-lg px-4 py-2 border ${
-          msg.type === 'ok'
-            ? 'text-emerald-700 bg-emerald-50 border-emerald-200'
-            : 'text-red-700 bg-red-50 border-red-200'
-        }`}>{msg.text}</p>
+        <p role={msg.type === 'ok' ? 'status' : 'alert'}
+          className={`mb-3 text-sm rounded-lg px-4 py-2 border ${MSG_TONE[msg.type]}`}>{msg.text}</p>
       )}
 
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-x-auto">
