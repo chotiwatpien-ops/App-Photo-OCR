@@ -248,10 +248,21 @@ def patch_trip(trip_id: int, fields: dict):
     if MONEY_FIELDS & set(fields):
         import extractor
         new = extractor.arithmetic_check(t)
+        # a mis-paired top adds up by itself, so the arithmetic alone would hand the row back to
+        # 'approve all that pass' on the first keystroke; the reading's own hold is asked again
+        if new == "pass" and pipeline.halves_conflict(t):
+            new = "no_data"
         if new != t.get("check_status"):
             db.update_trip(trip_id, {"check_status": new})
             t = db.get_trip(trip_id)
-    return t
+    return _with_conflict(t)
+
+
+def _with_conflict(row):
+    """The row plus why its two halves look like two trips (None when they do not), worked out
+    from the row as it is now: the note keeps the reading's words even after a person's edit has
+    settled the figures."""
+    return dict(row, halves_conflict=pipeline.halves_conflict(row))
 
 
 @app.post("/api/trips/{trip_id}/not-used")
@@ -1246,7 +1257,7 @@ def trips_view(date_from: str = None, date_to: str = None, driver: str = None,
 
 @app.get("/api/review-queue")
 def review_queue():
-    return {"rows": db.review_queue()}
+    return {"rows": [_with_conflict(r) for r in db.review_queue()]}
 
 
 @app.get("/api/review-queue/count")

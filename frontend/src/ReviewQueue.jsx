@@ -52,6 +52,12 @@ function why(t) {
     return { tone: 'danger', chip: 'อนุมัติไปแล้ว', head: 'เลขจองนี้อนุมัติไปแล้วในสัปดาห์นี้',
              body: 'ถ้าอนุมัติอีก เงินจะถูกนับสองรอบ — ดูรูปแล้วกดไม่ใช้งานนี้ถ้าซ้ำจริง' }
   }
+  // before the status branches: such a row's own top adds up, so by status alone the page would
+  // ask for missing figures, or for a number to be corrected, when the thing to check is the pair
+  if (t.halves_conflict) {
+    return { tone: 'danger', chip: 'สองครึ่งไม่ตรงกัน', head: 'รูปบนกับรูปล่างอาจเป็นคนละเที่ยว',
+             body: `${t.halves_conflict} · ถ้าเป็นเที่ยวเดียวกันให้กดอนุมัติ ถ้าคนละเที่ยวให้กดไม่ใช้งานนี้` }
+  }
   if (t.check_status === 'fail') {
     const m = money(t)
     // the backend re-checks on every edit, but never call a row broken while its own numbers
