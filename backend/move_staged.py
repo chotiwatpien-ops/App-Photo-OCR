@@ -207,6 +207,7 @@ def week_rows(d_from, d_to):
     with db.engine.begin() as c:
         rows = [dict(r) for r in c.execute(
             select(t.id, t.committed, t.file_name, t.service_type, t.trip_date, t.trip_time,
+                   t.booking_code, t.base_fare,
                    t.customer_image, t.note, j.date_from, j.date_to, j.category, j.driver_name)
             .select_from(db.trips.join(db.jobs, j.id == t.job_id))
             .where(j.date_from == d_from, j.date_to == d_to, t.status == "done")).mappings().all()]
@@ -226,29 +227,47 @@ def week_rows(d_from, d_to):
 
 
 def fill_plan(weeks, target):
-    """{(earlier week, later week): [row]} so that no open week is short in a group while a later
-    open week holds work of that group (Fiat 2026-11-23: "งานใน WK ก่อนหน้าต้องครบก่อน").
+    """({(earlier week, later week): [row]}, {(earlier week, later week): rows passed over}) so
+    that no open week is short in a group while a later open week holds work of that group (Fiat
+    2026-11-23: "งานใน WK ก่อนหน้าต้องครบก่อน").
 
     weeks: [(range, have, staged, filed)] of the open weeks, oldest first, with have from
     db.week_group_counts and staged/filed from week_rows. A week's room is the target less what
     it has filed and what waits in its _พร้อมอ่าน. It takes from the next later week first, rows
     still waiting before rows already filed, earliest driven first; a row it takes leaves room in
-    the week it came from, which that week then fills from the weeks after it."""
+    the week it came from, which that week then fills from the weeks after it.
+
+    A row the earlier week already counts (db.trip_key) is passed over and the next one taken: a
+    filed row arrives still approved, so nothing after the move would compare its booking code
+    with the week it lands in. carry_excess closed the same gap on its side on 2026-10-31."""
     room = {rng: {g: target - have.get(g, 0) - sum(r["group"] == g for r in staged) for g in GROUPS}
             for rng, have, staged, _filed in weeks}
-    plan, taken = defaultdict(list), set()
+    plan, taken, repeats = defaultdict(list), set(), Counter()
     for i, (into, *_rest) in enumerate(weeks):
+        if not any(n > 0 for n in room[into].values()):
+            continue
+        later = [r for _came, _have, staged, filed in weeks[i + 1:] for r in staged + filed
+                 if room[into][r["group"]] > 0]
+        # a row an earlier week has just taken out of this one is no longer this week's
+        counted = set(db.committed_twins(later, into, exclude_ids=taken))
         for g in GROUPS:
             for came, _have, staged, filed in weeks[i + 1:]:
                 for r in staged + filed:
                     if room[into][g] <= 0:
                         break
-                    if r["group"] == g and r["id"] not in taken:
-                        taken.add(r["id"])
-                        plan[(into, came)].append(r)
-                        room[into][g] -= 1
-                        room[came][g] += 1
-    return dict(plan)
+                    if r["group"] != g or r["id"] in taken:
+                        continue
+                    key = db.trip_key(r)
+                    if key in counted:
+                        repeats[(into, came)] += 1
+                        continue
+                    if key:
+                        counted.add(key)
+                    taken.add(r["id"])
+                    plan[(into, came)].append(r)
+                    room[into][g] -= 1
+                    room[came][g] += 1
+    return dict(plan), dict(repeats)
 
 
 def fill_earlier(drive, inbox_id, open_weeks, target=None, log=print):
@@ -257,7 +276,7 @@ def fill_earlier(drive, inbox_id, open_weeks, target=None, log=print):
     filing that follows gives them a rider there."""
     target = config.WEEKLY_TARGET_PER_GROUP if target is None else target
     weeks = [(rng, db.week_group_counts(*rng), *week_rows(*rng)) for rng in sorted(open_weeks)]
-    plan = fill_plan(weeks, target)
+    plan, repeats = fill_plan(weeks, target)
     for (into, came), rows in plan.items():
         log(f"⤺ เติมสัปดาห์ {into[0]} ให้ครบก่อน: ดึง "
             + " · ".join(f"{g} {n}" for g, n in sorted(Counter(r["group"] for r in rows).items()))
@@ -265,6 +284,8 @@ def fill_earlier(drive, inbox_id, open_weeks, target=None, log=print):
         done, _jid = bring_back(drive, inbox_id, *into, rows, log=log,
                                 why=f"เพราะสัปดาห์ {into[0]} ยังไม่ครบ ต้องเติมสัปดาห์ก่อนให้เต็มก่อน")
         log("    " + " · ".join(f"{k} {v}" for k, v in done.most_common()))
+    for (into, came), n in repeats.items():
+        log(f"    ข้าม {n} แถวของสัปดาห์ {came[0]}: สัปดาห์ {into[0]} นับรหัสการจองนี้แล้ว ดึงมาจะนับซ้ำ")
     return {w for pair in plan for w in pair}
 
 def main(argv=None):

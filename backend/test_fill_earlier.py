@@ -42,7 +42,7 @@ def row(i, group, day="2026-11-24", staged=False):
 # --- the plan, on its own ----------------------------------------------------------------------
 A, B, C = ("2026-11-09", "2026-11-15"), ("2026-11-16", "2026-11-22"), ("2026-11-23", "2026-11-29")
 car, bike = "4 W Standard", "2 W Saver"
-plan = ms.fill_plan([
+plan, passed = ms.fill_plan([
     (B, {car: 1, bike: 3}, [], []),
     (C, {car: 3, bike: 1}, [row(1, car, staged=True)], [row(2, car), row(3, car), row(4, bike)]),
 ], target=3)
@@ -51,13 +51,13 @@ check("❗ สัปดาห์ก่อนขาดรถยนต์ 2: ด�
 check("แถวที่ยังรอลงที่ถูกดึงก่อนแถวที่ลงแล้ว", plan[(B, C)][0]["id"] == 1)
 check("❗ กลุ่มที่สัปดาห์ก่อนครบแล้วไม่ถูกดึง", all(r["group"] == car for r in plan[(B, C)]))
 
-plan = ms.fill_plan([(B, {car: 3}, [], []), (C, {}, [], [row(2, car)])], target=3)
+plan, passed = ms.fill_plan([(B, {car: 3}, [], []), (C, {}, [], [row(2, car)])], target=3)
 check("สัปดาห์ก่อนครบแล้ว: ไม่ขยับอะไร", plan == {}, plan)
 
-plan = ms.fill_plan([(B, {car: 2}, [row(5, car, staged=True)], []), (C, {}, [], [row(2, car)])], target=3)
+plan, passed = ms.fill_plan([(B, {car: 2}, [row(5, car, staged=True)], []), (C, {}, [], [row(2, car)])], target=3)
 check("❗ แถวที่รอลงที่ในสัปดาห์ก่อนนับเป็นของสัปดาห์นั้นแล้ว ไม่ดึงเกิน", plan == {}, plan)
 
-plan = ms.fill_plan([
+plan, passed = ms.fill_plan([
     (A, {car: 2}, [], []),
     (B, {car: 3}, [], [row(6, car)]),
     (C, {car: 1}, [], [row(7, car)]),
@@ -90,12 +90,12 @@ j48_bike = db.create_job("พัดชา Win", "Trips", *W48, category=bike,
 ids = {}
 
 
-def add(key, job, folder, svc, day, committed, customer=None):
+def add(key, job, folder, svc, day, committed, customer=None, code=None):
     f = folder / f"{key}.jpg"
     f.write_bytes(key.encode())
     with db.engine.begin() as c:
         tid = c.execute(insert(db.trips).values(job_id=job, file_name=f.name, status="done", committed=committed,
-                                                service_type=svc, trip_date=day,
+                                                service_type=svc, trip_date=day, booking_code=code,
                                                 customer_image=customer)).inserted_primary_key[0]
         c.execute(insert(db.ingested_files).values(drive_id=str(f), name=f.name, job_id=job, trip_id=tid,
                                                    ingested_at="2026-11-23 00:00:00"))
@@ -144,6 +144,62 @@ check("❗ รันซ้ำ: W47 ไม่ขาดแล้ว ไม่ย�
                                                              log=lambda *_: None) == set())
 check("สัปดาห์เดียวที่เปิด: ไม่มีอะไรให้ดึง", ms.fill_earlier(drive, str(inbox), [W48], target=10,
                                                             log=lambda *_: None) == set())
+
+# --- a trip the earlier week already counts is not pulled into it a second time -----------------
+# A filed row keeps committed=1 when it moves, so no later check compares its booking code with
+# the week it lands in.
+D, E = ("2026-12-07", "2026-12-13"), ("2026-12-14", "2026-12-20")
+w50, w51 = inbox / "Week 7-13 Dec 2026", inbox / "Week 14-20 Dec 2026"
+for p in (w50 / "_พร้อมอ่าน", w50 / car / "ชัย Taxi", w51 / "_พร้อมอ่าน", w51 / car / "สมหมาย Taxi"):
+    p.mkdir(parents=True)
+d_car = db.create_job("ชัย Taxi", "Trips", *D, category=car, drive_folder_id=str(w50 / car / "ชัย Taxi"))
+db.create_job(far.HOLDING_RIDER, "Trips", *D, drive_folder_id=str(w50 / "_พร้อมอ่าน"))
+e_hold = db.create_job(far.HOLDING_RIDER, "Trips", *E, drive_folder_id=str(w51 / "_พร้อมอ่าน"))
+e_car = db.create_job("สมหมาย Taxi", "Trips", *E, category=car,
+                      drive_folder_id=str(w51 / car / "สมหมาย Taxi"))
+COUNTED, TWICE = "A-FILLCOUNTED001", "A-FILLTWICE00001"
+e_dir = w51 / car / "สมหมาย Taxi"
+add("counted", d_car, w50 / car / "ชัย Taxi", "Standard Car", "2026-12-08", 1, code=COUNTED)
+add("twice_wait", e_hold, w51 / "_พร้อมอ่าน", "Standard Car", "2026-12-14", 0, code=TWICE)
+add("repeat", e_car, e_dir, "Standard Car", "2026-12-14", 1, code=COUNTED.lower())
+add("free1", e_car, e_dir, "Standard Car", "2026-12-15", 1, code="A-FILLFREE000001")
+add("twice_filed", e_car, e_dir, "Standard Car", "2026-12-16", 1, code=TWICE)
+add("free2", e_car, e_dir, "Standard Car", "2026-12-17", 1, code="A-FILLFREE000002")
+add("nocode", e_car, e_dir, "Standard Car", "2026-12-18", 1)
+
+lines = []
+ms.fill_earlier(drive, str(inbox), [D, E], target=4, log=lines.append)
+with db.engine.begin() as c:
+    got = {r["id"]: dict(r) for r in c.execute(select(db.trips)).mappings().all()}
+hold50 = [j["id"] for j in db.jobs_by_week()[D] if j["driver_name"] == far.HOLDING_RIDER][0]
+moved = {k for k in ids if got[ids[k]]["job_id"] == hold50}
+check("❗ แถวที่เลขจองถูกนับในสัปดาห์ก่อนแล้ว อยู่สัปดาห์เดิม ไม่ถูกดึงมานับซ้ำ",
+      got[ids["repeat"]]["job_id"] == e_car, moved)
+check("❗ สองแถวของสัปดาห์หลังที่เลขจองเดียวกัน ดึงมาแถวเดียว",
+      "twice_wait" in moved and got[ids["twice_filed"]]["job_id"] == e_car, moved)
+check("❗ ข้ามแถวซ้ำแล้วดึงแถวถัดไปแทน สัปดาห์ก่อนยังได้ครบ 3 ที่ว่าง",
+      moved == {"twice_wait", "free1", "free2"}, moved)
+check("แถวที่ไม่มีเลขจองไม่ถูกมองว่าซ้ำกับใคร แค่ที่ว่างหมดก่อนถึง", got[ids["nocode"]]["job_id"] == e_car)
+in_d = [db.trip_key(r) for r in got.values()
+        if r["job_id"] in (d_car, hold50) and db.trip_key(r)]
+check("❗ ในสัปดาห์ก่อน เลขจองหนึ่งมีแถวเดียว", len(in_d) == len(set(in_d)) == 4, in_d)
+check("log บอกจำนวนแถวที่ข้ามเพราะซ้ำ", any("ข้าม 2 แถว" in ln for ln in lines), lines)
+
+# A repeat is a repeat inside one week only (customer, 2026-09-14): once the middle week's copy
+# has gone to the first week, the last week's copy is the middle week's own work.
+G, H, I = ("2027-01-04", "2027-01-10"), ("2027-01-11", "2027-01-17"), ("2027-01-18", "2027-01-24")
+LEAVES = "A-FILLLEAVES0001"
+job_of = {rng: db.create_job("ชัย Taxi", "Trips", *rng, category=car) for rng in (G, H, I)}
+with db.engine.begin() as c:
+    one = lambda rng, code=None: c.execute(insert(db.trips).values(               # noqa: E731
+        job_id=job_of[rng], file_name=f"{rng[0]}.jpg", status="done", committed=1,
+        service_type="Standard Car", trip_date=rng[0], booking_code=code)).inserted_primary_key[0]
+    one(G), one(G)
+    mid, _pad, _pad2, last = one(H, LEAVES), one(H), one(H), one(I, LEAVES)
+plan, passed = ms.fill_plan([(rng, db.week_group_counts(*rng), *ms.week_rows(*rng)) for rng in (G, H, I)], target=3)
+check("❗ แถวที่สัปดาห์กลางเพิ่งเสียไปให้สัปดาห์แรก ไม่กันสำเนาของสัปดาห์หลังออกจากสัปดาห์กลาง",
+      {k: [r["id"] for r in v] for k, v in plan.items()} == {(G, H): [mid], (H, I): [last]} and not passed,
+      (plan, passed))
 
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
