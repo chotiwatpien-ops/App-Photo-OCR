@@ -2019,6 +2019,7 @@ def search_trips(date_from=None, date_to=None, driver=None, status="all", q=None
     if q:
         like = f"%{q.strip()}%"
         base = base.where(trips.c.booking_code.ilike(like) | trips.c.file_name.ilike(like)
+                          | trips.c.customer_image.ilike(like)
                           | trips.c.pickup_text.ilike(like) | trips.c.dropoff_text.ilike(like))
     with engine.begin() as c:
         total = c.execute(select(func.count()).select_from(base.subquery())).scalar()
