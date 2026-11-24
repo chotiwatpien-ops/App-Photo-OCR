@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api } from './api.js'
+import { api, PICTURE_NOT_RETURNED } from './api.js'
 import Icon from './Icon.jsx'
 
 // คิวตรวจ — the rows the system was not sure of, one at a time, with the picture beside the
@@ -264,33 +264,35 @@ function DiscardedLog() {
   const [hidden, setHidden] = useState(0)
   const [everything, setEverything] = useState(false)
   const [open, setOpen] = useState(false)
-  const [msg, setMsg] = useState('')
+  const [note, setNote] = useState(null)   // {text, warn}: warn is something the person must act on
 
   const load = useCallback((all = false) => {
     api.discarded(all)
       .then((r) => { setRows(r.rows); setHidden(r.hidden); setEverything(all) })
-      .catch((e) => setMsg(e.message))
+      .catch((e) => setNote({ warn: true, text: e.message }))
   }, [])
   useEffect(() => { load(false) }, [load])
 
   const restore = async (t) => {
     if (!confirm('เอาเที่ยวนี้กลับเข้าคิวตรวจ?')) return
     try {
-      await api.restoreTrip(t.id)
-      setRows(rows.filter((r) => r.id !== t.id))
-      setMsg('กลับเข้าคิวแล้ว — รีเฟรชหน้านี้เพื่อดู')
-    } catch (e) { setMsg(e.message) }
+      const r = await api.restoreTrip(t.id)
+      setRows(rows.filter((x) => x.id !== t.id))
+      setNote(r.picture_returned === false ? { warn: true, text: PICTURE_NOT_RETURNED }
+        : { text: 'กลับเข้าคิวแล้ว — รีเฟรชหน้านี้เพื่อดู' })
+    } catch (e) { setNote({ warn: true, text: e.message }) }
   }
   const clear = async () => {
     if (!confirm(`ซ่อนรายการเก่า ${rows.length} รายการ แล้วเริ่มนับใหม่?\nไม่ได้ลบ — กด "ดูของเก่า" กลับมาดูได้ทุกเมื่อ`)) return
     try {
       const r = await api.clearDiscarded()
-      setMsg(`ซ่อนไว้ ${r.hidden} รายการ — จากนี้จะนับเฉพาะของใหม่`)
+      setNote({ text: `ซ่อนไว้ ${r.hidden} รายการ — จากนี้จะนับเฉพาะของใหม่` })
       load(false)
-    } catch (e) { setMsg(e.message) }
+    } catch (e) { setNote({ warn: true, text: e.message }) }
   }
 
-  if (!rows || (rows.length === 0 && !hidden)) return null
+  // restoring the last row must not take its own note off the screen with it
+  if (!rows || (rows.length === 0 && !hidden && !note)) return null
   return (
     <section className="bg-white rounded-xl border border-line">
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 sm:px-5 py-2">
@@ -311,7 +313,9 @@ function DiscardedLog() {
       </div>
       {open && (
         <div className="px-4 sm:px-5 pb-4 overflow-x-auto">
-          {msg && <p className="text-sm text-ink-soft mb-2">{msg}</p>}
+          {note && (note.warn
+            ? <p role="alert" className="text-sm text-warn-ink bg-warn-bg rounded-lg px-3 py-2 mb-2">{note.text}</p>
+            : <p role="status" className="text-sm text-ink-soft mb-2">{note.text}</p>)}
           <table className="w-full text-sm">
             <thead><tr className="text-left text-muted border-b border-line-soft">
               <th className="py-2 pr-3 font-normal">ไรเดอร์</th><th className="py-2 pr-3 font-normal">วันที่</th>
@@ -420,6 +424,15 @@ export default function ReviewQueue({ onOpenJob, onCount }) {
     return p
   }
 
+  // One line for a bulk approve. A row the server refused (the same trip approved a moment
+  // earlier in the same press, say) is said in the same breath as the count, in the alert colour.
+  const bulkDone = (text, failed) => {
+    if (failed?.length) {
+      setInfo('')
+      setMsg(`${text} · อนุมัติไม่ได้ ${fmt(failed.length)} แถว: ${failed[0].error}`)
+    } else { setMsg(''); setInfo(text) }
+  }
+
   const approveAllPassing = async () => {
     const ok = rows.filter(passing)
     if (!ok.length) return setMsg('ไม่มีแถวที่ตัวเลขผ่านให้อนุมัติ')
@@ -427,7 +440,7 @@ export default function ReviewQueue({ onOpenJob, onCount }) {
     setBusy(true)
     try {
       const res = await api.approvePassing()
-      setInfo(`อนุมัติ ${fmt(res.approved)} แถวแล้ว เหลือรอตรวจ ${fmt(res.skipped)} แถว`)
+      bulkDone(`อนุมัติ ${fmt(res.approved)} แถวแล้ว เหลือรอตรวจ ${fmt(res.skipped + (res.failed?.length || 0))} แถว`, res.failed)
       load()
     } catch (e) { setMsg(e.message) } finally { setBusy(false) }
   }
@@ -443,8 +456,8 @@ export default function ReviewQueue({ onOpenJob, onCount }) {
     try {
       const r = await api.approvePassing(jobId)
       drop(new Set(r.ids || []))
-      setInfo(`อนุมัติ ${fmt(r.approved)} แถวของ ${name} แล้ว` + (r.skipped ? ` · เหลือรอตรวจ ${fmt(r.skipped)} แถว` : ''))
-      setMsg(r.failed?.length ? `อนุมัติไม่ได้ ${r.failed.length} แถว: ${r.failed[0].error}` : '')
+      const left = r.skipped + (r.failed?.length || 0)
+      bulkDone(`อนุมัติ ${fmt(r.approved)} แถวของ ${name} แล้ว` + (left ? ` · เหลือรอตรวจ ${fmt(left)} แถว` : ''), r.failed)
     } catch (e) { setMsg(e.message) } finally { setBusy(false) }
   }
 

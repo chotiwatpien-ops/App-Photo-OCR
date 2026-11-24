@@ -100,6 +100,23 @@ with db.engine.begin() as c:
     c.execute(update(db.ingest_runs).where(db.ingest_runs.c.id == rid).values(started_at="2026-01-01T00:00:00"))
 check("รอบ ingest ที่ค้างเกิน 3 ชม. (ตายไปแล้ว) ไม่ขวาง", cw.preflight(*W39, today=AFTER)["ok"])
 
+# --- a read row no group takes: neither filed nor moved on, so the page has to say so ---------
+W41 = ("2026-10-05", "2026-10-11")
+h41 = db.create_job(far.HOLDING_RIDER, "Trips", *W41, folder_name="Week 5-11 Oct/_พร้อมอ่าน")
+with db.engine.begin() as c:
+    lost = c.execute(insert(db.trips).values(job_id=h41, file_name="n.jpg", status="done", committed=0,
+                                             service_type=None, trip_date="2026-10-06")).inserted_primary_key[0]
+pre41 = cw.preflight(*W41, today="2026-10-13")
+u = block(pre41, "untyped")
+check("❗ แถวในกองพักที่ไม่มี Service Type → เตือน บอกจำนวน และบอกงานที่ต้องเปิด",
+      not u["ok"] and u["level"] == "warn" and "1 แถว" in u["detail"] and u["jobs"] == [h41])
+check("เตือนอย่างเดียว ไม่ห้ามปิด", pre41["ok"])
+db.update_trip(lost, {"service_type": "Standard Bike"})
+pre41 = cw.preflight(*W41, today="2026-10-13")
+check("คนเลือก Service Type ให้แล้ว → คำเตือนหาย แถวกลับไปรอลงโฟลเดอร์ตามปกติ",
+      block(pre41, "untyped")["ok"] and not block(pre41, "staged")["ok"])
+check("สัปดาห์ที่กองพักมีแต่แถวรู้กลุ่ม → ไม่เตือน", block(pre, "untyped")["ok"] and not block(pre, "untyped")["jobs"])
+
 # --- plan: every step report-only -------------------------------------------------------------
 run = db.create_close_run(*W39, "plan")
 rc = cw.Runner(run, *W39, "plan").go()

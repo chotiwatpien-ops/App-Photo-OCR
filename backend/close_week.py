@@ -69,10 +69,16 @@ def preflight(d_from, d_to, today=None):
     card = db.week_scorecard(d_from, d_to)
     today = today or datetime.now(db._TZ_BKK).date().isoformat()
     running = _ingest_running()
+    import file_after_read
     import move_staged
     # read rows in _พร้อมอ่าน the week still has room for: a round files them, and after the
     # close nothing would — they would be read, paid for and never delivered
-    keep = len(move_staged.plan(d_from, d_to)[0])
+    kept, _move, _room, unknown = move_staged.plan(d_from, d_to)
+    keep = len(kept)
+    # read rows whose Service Type no group takes: no round files them and the close leaves them
+    # where they are, so without a line here nobody ever hears of them (W47 held one)
+    untyped = sum(unknown.values())
+    hold_jobs = file_after_read.holding_job_ids(d_from, d_to) if untyped else []
     checks = [
         {"key": "pending", "level": "block", "ok": w["pending"] == 0,
          "label": "รูปที่ยังอ่านไม่เสร็จ (รวมที่รอผล batch)",
@@ -96,6 +102,11 @@ def preflight(d_from, d_to, today=None):
         {"key": "error", "level": "warn", "ok": card["error"] == 0,
          "label": "รูปที่อ่านไม่สำเร็จ",
          "detail": f"{card['error']:,} รูป — จะไม่อยู่ในไฟล์" if card["error"] else "ไม่มี"},
+        {"key": "untyped", "level": "warn", "ok": untyped == 0, "jobs": hold_jobs,
+         "label": "แถวที่อ่านแล้วแต่ไม่มี Service Type",
+         "detail": (f"{untyped:,} แถว — ระบบไม่รู้ว่าเป็นงานกลุ่มไหน จึงไม่ลงโฟลเดอร์ให้ และตอนปิดสัปดาห์ก็ไม่ย้ายไป"
+                    f"สัปดาห์หน้า แถวจะค้างในกองพัก · เปิดงานกองพักแล้วเลือก Service Type ให้แถวนั้น"
+                    if untyped else "ไม่มี")},
     ]
     return {"ok": all(c["ok"] for c in checks if c["level"] == "block"), "checks": checks,
             "card": _card(card)}

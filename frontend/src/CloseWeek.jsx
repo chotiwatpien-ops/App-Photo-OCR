@@ -52,7 +52,7 @@ function Stepper({ steps }) {
   )
 }
 
-function Checks({ pre }) {
+function Checks({ pre, onOpenJob }) {
   return (
     <ul>
       {pre.checks.map((c) => {
@@ -65,6 +65,12 @@ function Checks({ pre }) {
             <div className="min-w-0">
               <p className="text-sm">{c.label}</p>
               <p className={`text-sm ${c.ok ? 'text-muted' : c.level === 'block' ? 'text-danger-ink' : 'text-warn-ink'}`}>{c.detail}</p>
+              {!c.ok && (c.jobs || []).map((id, i) => (
+                <button key={id} type="button" onClick={() => onOpenJob?.(id)}
+                  className="mt-1.5 mr-2 min-h-10 px-3 rounded-lg border border-line bg-white hover:bg-ground text-sm">
+                  เปิดงานกองพัก{c.jobs.length > 1 ? ` ${i + 1}` : ''}
+                </button>
+              ))}
             </div>
           </li>
         )
@@ -154,8 +160,13 @@ function FileCard({ title, sub, actions, muted }) {
   )
 }
 
-export default function CloseWeek() {
-  const [week, setWeek] = useState('')
+// a check can open a job; coming back from it returns to the week that was on screen
+const BACK = 'close.back'
+
+export default function CloseWeek({ onOpenJob }) {
+  const [week, setWeek] = useState(() => {
+    try { const w = sessionStorage.getItem(BACK) || ''; sessionStorage.removeItem(BACK); return w } catch { return '' }
+  })
   const [data, setData] = useState(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -179,6 +190,10 @@ export default function CloseWeek() {
   if (!data.week) return <p className="text-sm text-muted">ยังไม่มีสัปดาห์ให้ปิด</p>
 
   const pre = data.preflight
+  const openJob = (id) => {
+    try { sessionStorage.setItem(BACK, data.week) } catch { /* private window: back opens the default week */ }
+    onOpenJob?.(id)
+  }
   const ready = pre.ok
   const closed = !!data.closed
   const plan = data.runs.find((r) => r.mode === 'plan' && r.status === 'done')
@@ -286,9 +301,9 @@ export default function CloseWeek() {
               <summary className="cursor-pointer min-h-10 flex items-center gap-2 text-sm text-ok-ink">
                 <Icon name="check" size={16} />ผ่านครบทุกข้อ ({pre.checks.length}) · ดูรายการ
               </summary>
-              <Checks pre={pre} />
+              <Checks pre={pre} onOpenJob={openJob} />
             </details>
-          ) : <Checks pre={pre} />}
+          ) : <Checks pre={pre} onOpenJob={openJob} />}
         </Card>
 
         <Card aria-labelledby="plan-h" className="p-4 sm:px-6 sm:py-5 flex flex-col gap-3">

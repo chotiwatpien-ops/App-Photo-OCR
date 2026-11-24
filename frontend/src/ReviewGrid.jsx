@@ -93,6 +93,8 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
   const passCount = done.filter((t) => t.check_status === 'pass' && !t.duplicate_of).length
   const attnCount = done.length - passCount
   const isCommitted = job.status === 'committed'
+  // the week's waiting room: read rows no rider owns yet. The server refuses to approve them here.
+  const isHolding = job.driver_name === '(รออ่าน)'
   const locked = (t) => isCommitted || !!t.committed
 
   const patch = async (tripId, fields) => {
@@ -202,7 +204,8 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
       value={t[field] ?? ''}
       disabled={locked(t)}
       onChange={(e) => patch(t.id, { [field]: e.target.value })}
-      className={`${w} border border-slate-200 rounded px-1.5 py-1 text-sm bg-white disabled:bg-slate-50 disabled:text-slate-400`}
+      className={`${w} border rounded px-1.5 py-1 text-sm bg-white disabled:bg-slate-50 disabled:text-slate-400 ${
+        field === 'service_type' && !t[field] ? 'border-amber-400 bg-amber-50' : 'border-slate-200'}`}
     >
       {!options.includes(t[field]) && <option value={t[field] ?? ''}>{t[field] ?? '—'}</option>}
       {options.map((o) => <option key={o} value={o}>{o}</option>)}
@@ -243,17 +246,28 @@ export default function ReviewGrid({ job, health, onBack, onJobUpdate }) {
             className="border border-emerald-600 text-emerald-700 hover:bg-emerald-50 rounded-lg px-4 py-2.5 text-sm font-medium"
             title="ดาวน์โหลด Excel ของ job นี้ (รวมแถวที่ยังไม่อนุมัติ)"
           >⬇ Excel</a>
-          <button
-            onClick={() => commit()}
-            disabled={committing || isCommitted || pending.length > 0
-              || (appendsToFile ? waiting.length === 0 || missingDates > 0 : passWaiting === 0)}            className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-lg px-5 py-2.5 text-sm font-medium"
-          >
-            {isCommitted ? 'อนุมัติแล้ว ✓'
-              : committing ? 'กำลังบันทึก...'
-              : appendsToFile ? `อนุมัติ + บันทึกลง Excel (${waiting.length})` : `อนุมัติแถวที่ตัวเลขผ่าน (${passWaiting})`}
-          </button>
+          {!isHolding && (
+            <button
+              onClick={() => commit()}
+              disabled={committing || isCommitted || pending.length > 0
+                || (appendsToFile ? waiting.length === 0 || missingDates > 0 : passWaiting === 0)}
+              className="bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-lg px-5 py-2.5 text-sm font-medium"
+            >
+              {isCommitted ? 'อนุมัติแล้ว ✓'
+                : committing ? 'กำลังบันทึก...'
+                : appendsToFile ? `อนุมัติ + บันทึกลง Excel (${waiting.length})` : `อนุมัติแถวที่ตัวเลขผ่าน (${passWaiting})`}
+            </button>
+          )}
         </div>
       </div>
+
+      {isHolding && (
+        <p role="note" className="mb-4 text-sm rounded-lg px-4 py-2 border text-amber-800 bg-amber-50 border-amber-200">
+          งานนี้คือกองพักของสัปดาห์: แถวที่อ่านแล้วแต่ยังไม่ได้ลงโฟลเดอร์ไรเดอร์ อนุมัติจากหน้านี้ไม่ได้
+          {' '}— แถวไหนช่อง Service ยังว่าง (กรอบสีเหลือง) ให้เลือก Service Type ตามรูป แล้วรอบอ่านรูปถัดไปจะลงโฟลเดอร์ให้เอง
+          (ถ้ากลุ่มนั้นเต็มแล้ว ตอนปิดสัปดาห์จะย้ายไปสัปดาห์หน้า)
+        </p>
+      )}
 
       {pending.length > 0 && (
         <div className="mb-4 bg-white border border-slate-200 rounded-xl p-4">

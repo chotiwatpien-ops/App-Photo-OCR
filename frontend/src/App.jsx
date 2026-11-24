@@ -213,7 +213,7 @@ export default function App() {
         ) : view === 'dups' ? (
           <DupAlbums onGo={go} />
         ) : view === 'close' ? (
-          <CloseWeek />
+          <CloseWeek onOpenJob={openJob} />
         ) : (
           <div className="grid gap-6 lg:grid-cols-[420px_1fr]">
             <NewJobForm onCreated={(job) => { setActiveJob(job); refreshJobs() }} />

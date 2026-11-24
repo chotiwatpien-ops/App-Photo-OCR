@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { api } from './api.js'
+import { api, PICTURE_NOT_RETURNED } from './api.js'
 import Icon from './Icon.jsx'
 
 // งานซ้ำ — one week answered top to bottom (Fiat 2026-11-11: "ดูง่ายๆ และตรวจสอบง่าย"):
@@ -268,11 +268,11 @@ export default function DupAlbums({ onGo }) {
   const [error, setError] = useState('')
   const [album, setAlbum] = useState('')
   const [busy, setBusy] = useState(false)
-  const [note, setNote] = useState('')
+  const [note, setNote] = useState(null)   // {text, warn}
 
   const load = useCallback((w) => api.duplicateWeek(w).then((r) => { setD(r); setError('') })
     .catch((e) => setError(e.message)), [])
-  useEffect(() => { setAlbum(''); setNote(''); load(week) }, [week, load])
+  useEffect(() => { setAlbum(''); setNote(null); load(week) }, [week, load])
 
   const toQueue = () => {
     try { sessionStorage.setItem('queue.only', 'dup') } catch { /* private window: the queue opens on every row */ }
@@ -282,8 +282,11 @@ export default function DupAlbums({ onGo }) {
     if (!window.confirm('ไม่ใช่งานซ้ำ เก็บเที่ยวนี้ไว้?\n\nแถวจะกลับเข้าคิวตรวจ ให้คนกดอนุมัติอีกครั้ง')) return
     setBusy(true)
     api.restoreTrip(p.trip_id)
-      .then(() => { setNote('เก็บไว้แล้ว แถวกลับเข้าคิวตรวจ'); load(d.week) })
-      .catch((e) => setNote(`เก็บไม่สำเร็จ: ${e.message}`)).finally(() => setBusy(false))
+      .then((r) => {
+        setNote(r.picture_returned === false ? { warn: true, text: PICTURE_NOT_RETURNED } : { text: 'เก็บไว้แล้ว แถวกลับเข้าคิวตรวจ' })
+        load(d.week)
+      })
+      .catch((e) => setNote({ warn: true, text: `เก็บไม่สำเร็จ: ${e.message}` })).finally(() => setBusy(false))
   }
 
   if (error && !d) return <p className="text-sm text-danger-ink">โหลดไม่ได้: {error}</p>
@@ -351,7 +354,9 @@ export default function DupAlbums({ onGo }) {
           <button onClick={() => setAlbum('')} className="min-h-9 text-accent hover:underline">ดูทุกอัลบั้ม</button>
         </p>
       )}
-      {note && <p className="text-sm text-ok-ink">{note}</p>}
+      {note && (note.warn
+        ? <p role="alert" className="text-sm text-warn-ink bg-warn-bg rounded-lg px-3 py-2">{note.text}</p>
+        : <p role="status" className="text-sm text-ok-ink">{note.text}</p>)}
 
       {decide.length > 0 && (
         <Section title={`รอคนตัดสิน ${fmt(decide.length)} เที่ยว`}
