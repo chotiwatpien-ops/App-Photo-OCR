@@ -160,5 +160,62 @@ check("รอบเก็บตกเติม turbo แล้ว โน้ต�
       (t["note"] or "").startswith("รวม 2 รูป") and "เติม Turbo" in t["note"] and t["note"].endswith("เดิม"),
       t["note"])
 
+# --- 7. a stitched pair whose halves disagree on money waits for a person (W47, 2026-11-24) ---
+# The pool stitched one trip's top to the neighbour's bottom; the top balanced on its own and the
+# row was approved unseen. On a true pair the bottom's fare less Grab's cut is the top's base fare.
+j11 = db.create_job("สมศรี", "Trips", "2026-11-16", "2026-11-22", category="2 W Saver")
+seq = iter(range(1, 99))
+
+
+def stitched(**data):
+    n = next(seq)
+    t = read(j11, f"2W-Win สมศรี = 12_{2 * n}+{2 * n + 1}_฿{data['net_earnings']:g}.jpg",
+             booking_code="A-" + "BCDEFGHJKM"[n] * 14, service_type="Saver Bike", **data)
+    db.update_trip(t["id"], {"trip_date": "2026-11-17"})
+    return t
+
+
+money = ("net_earnings", "base_fare", "bonus", "turbo", "passenger_total", "grab_commission")
+wrong = stitched(net_earnings=105, base_fare=100, turbo=5, passenger_total=130, grab_commission=25)
+check("❗ คู่ที่ครึ่งล่างเป็นของอีกเที่ยว (ค่าโดยสาร − ค่าบริการ Grab = 105 แต่ค่ารอบ 100): ไม่ผ่านเอง",
+      wrong["check_status"] != "pass", wrong["check_status"])
+check("โน้ตบอกเหตุเป็นตัวเลขของแถวเอง และชวนให้ดูว่าเป็นเที่ยวเดียวกันไหม",
+      pipeline.HALVES_DISAGREE in (wrong["note"] or "") and "105" in wrong["note"] and "100" in wrong["note"],
+      wrong["note"])
+check("ไม่มีตัวเลขไหนที่อ่านมาถูกแก้", [wrong[k] for k in money] == [105, 100, 0, 5, 130, 25],
+      [wrong[k] for k in money])
+rounded = stitched(net_earnings=46, base_fare=46, passenger_total=182, grab_commission=137)
+check("❗ คู่ที่ถูก ต่างกัน 1 บาทเพราะ Grab ปัดเศษบนสลิป (182 − 137 พิมพ์เป็น 46): ผ่านตามเดิม",
+      rounded["check_status"] == "pass" and pipeline.HALVES_DISAGREE not in (rounded["note"] or ""),
+      (rounded["check_status"], rounded["note"]))
+turbo_ok = stitched(net_earnings=105, base_fare=100, turbo=5, passenger_total=125, grab_commission=25)
+check("❗ คู่ที่ถูกและมี turbo (ค่าโดยสาร − ค่าบริการ Grab = ค่ารอบ): ผ่านตามเดิม",
+      turbo_ok["check_status"] == "pass", (turbo_ok["check_status"], turbo_ok["note"]))
+no_cut = stitched(net_earnings=105, base_fare=100, turbo=5, passenger_total=130)
+check("ขาดค่าบริการ Grab ไปหนึ่งตัว: ไม่มีอะไรให้เทียบ ผ่านตามเดิม", no_cut["check_status"] == "pass",
+      (no_cut["check_status"], no_cut["note"]))
+whole = read(j11, "S__40010001_0.jpg", net_earnings=105, base_fare=100, turbo=5, passenger_total=130,
+             grab_commission=25, booking_code="A-HALVESWHOLE001", service_type="Saver Bike")
+check("❗ สลิปเต็มใบรูปเดียว ตัวเลขชุดเดียวกัน: ไม่ถูกแตะ",
+      whole["check_status"] == "pass" and pipeline.HALVES_DISAGREE not in (whole["note"] or ""),
+      (whole["check_status"], whole["note"]))
+same_as_base = stitched(net_earnings=105, base_fare=105, turbo=5, passenger_total=130, grab_commission=25)
+check("คุณได้รับเท่ากับค่ารอบทั้งที่มี turbo: ไม่ผ่าน และโน้ตบอกว่าครึ่งล่างอาจเป็นของอีกเที่ยว",
+      same_as_base["check_status"] != "pass" and pipeline.HALVES_DISAGREE in (same_as_base["note"] or ""),
+      (same_as_base["check_status"], same_as_base["note"]))
+hidden = stitched(net_earnings=57, base_fare=48, passenger_total=71, grab_commission=14)
+check("turbo ที่เติมเอง โดยมีแต่ค่าโดยสาร − ค่าบริการ Grab ของครึ่งล่างยืนยัน (57 แต่ค่ารอบ 48): บนรูปที่ต่อมา ไม่ผ่านเอง",
+      hidden["turbo"] == 9 and hidden["check_status"] != "pass"
+      and pipeline.HALVES_DISAGREE in (hidden["note"] or "") and "เติม Turbo" in hidden["note"],
+      (hidden["turbo"], hidden["check_status"], hidden["note"]))
+
+db.auto_approve_job(j11)
+after = {k: db.get_trip(t["id"]) for k, t in (("wrong", wrong), ("rounded", rounded), ("turbo_ok", turbo_ok))}
+check("❗ รอบอนุมัติอัตโนมัติ: คู่ที่ถูกเข้าไฟล์ คู่ที่สองครึ่งไม่ตรงกันรอคน",
+      [after[k]["committed"] for k in ("rounded", "turbo_ok", "wrong")] == [1, 1, 0],
+      {k: v["committed"] for k, v in after.items()})
+check("คนดูรูปแล้วกดอนุมัติแถวนั้นเองได้",
+      "error" not in db.approve_trip(wrong["id"]) and db.get_trip(wrong["id"])["committed"] == 1)
+
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

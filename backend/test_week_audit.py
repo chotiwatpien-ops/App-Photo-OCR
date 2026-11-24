@@ -107,6 +107,36 @@ import close_week                                               # noqa: E402
 # in W37/W38: a re-sent album is work by the customer's rule, so a person decides; no block.
 check("หมวดนี้ให้คนตัดสิน ไม่ขวางการปิดสัปดาห์", "งานซ้ำ-อัลบั้มเดียวกันข้ามสัปดาห์" not in close_week.BLOCKING)
 
+# --- a delivered row whose two halves disagree on money (W47, 2026-11-23) --------------------
+# Nine rows went out with one trip's top on the neighbour's bottom; the net-vs-base sheet above
+# saw seven of them, because a top half balances by itself.
+M = ("2026-11-16", "2026-11-22")
+m = db.create_job("สมศรี", "Trips", *M, category="2 W Saver")
+HALVES = "สองครึ่งเงินไม่ตรงกัน"
+with db.engine.begin() as x:
+    ins = lambda **kw: x.execute(insert(db.trips).values(**{                        # noqa: E731
+        **base, "job_id": m, "service_type": "Saver Bike", "trip_date": "2026-11-17", "passenger_paid": None,
+        "app_fee": None, "other_adj": None, **kw})).inserted_primary_key[0]
+    odd = ins(file_name="2W-Win สมศรี = 12_31+32_฿105.jpg", net_earnings=105.0, base_fare=100.0, turbo=5.0,
+              passenger_total=130.0, grab_commission=25.0, booking_code="A-BBBBBBBBBBBBBB", distance_km=1.1)
+    ins(file_name="2W-Win สมศรี = 12_33+34_฿46.jpg", net_earnings=46.0, base_fare=46.0,
+        passenger_total=182.0, grab_commission=137.0, booking_code="A-CCCCCCCCCCCCCC", distance_km=2.2)
+    ins(file_name="S__40010001_0.jpg", net_earnings=105.0, base_fare=100.0, turbo=5.0,
+        passenger_total=130.0, grab_commission=25.0, booking_code="A-DDDDDDDDDDDDDD", distance_km=3.3)
+    merged = ins(file_name="S__40010002_0.jpg", note="รวม 2 รูป: S__40010002_0.jpg + S__40010003_0.jpg",
+                 net_earnings=60.0, base_fare=60.0, passenger_total=90.0, grab_commission=20.0,
+                 booking_code="A-EEEEEEEEEEEEEE", distance_km=4.4)
+rows_m = wa.week_rows(*M)
+out_m = wa.audit(rows_m)
+check("❗ แถวที่อนุมัติแล้วซึ่งครึ่งล่างบอกรายได้จากรอบขับไม่เท่าค่ารอบ ขึ้นชีตของมันเอง ทั้งรูปที่กองต่อให้และแถวที่รวม 2 รูป",
+      [r["id"] for r in out_m.get(HALVES, [])] == [odd, merged])
+check("ชีตเดิม 'คุณได้รับไม่ตรงค่ารอบ+โบนัส' มองไม่เห็นแถวพวกนี้ เพราะครึ่งบนลงตัวในตัวเอง",
+      out_m["คุณได้รับไม่ตรงค่ารอบ+โบนัส"] == [])
+sheet = load_workbook(io.BytesIO(wa.build_xlsx(rows_m, out_m, M[0])))[HALVES] if HALVES in out_m else None
+check("ชีตบอกเหตุด้วยตัวเลขของแถวนั้น", sheet is not None and "105" in str(sheet.cell(2, sheet.max_column).value)
+      and "100" in str(sheet.cell(2, sheet.max_column).value))
+check("ให้คนเปิดรูปดู ไม่ขวางการปิดสัปดาห์", HALVES not in close_week.BLOCKING)
+
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

@@ -18,6 +18,7 @@ import sys
 from collections import Counter, defaultdict
 
 import db
+import pipeline
 from ingest import week_label
 from reread_passenger import gap
 from week_phase3 import week_rows
@@ -25,6 +26,7 @@ from week_phase3 import week_rows
 GROUP_OF = {"Saver Bike": "2 W Saver", "Standard Bike": "2 W Standard",
             "Standard Car": "4 W Standard", "Saver Car": "4 W Standard"}
 DRIVE_DIR = "_ตรวจสัปดาห์"
+HALVES = "สองครึ่งเงินไม่ตรงกัน"
 COLS = ["id", "ไรเดอร์", "กลุ่ม", "Service Type", "วันที่", "เวลา", "รหัสการจอง", "ค่ารอบ", "โบนัส", "Turbo",
         "ทิป", "ค่าทางด่วนคืน", "คุณได้รับ", "ผู้โดยสารจ่าย", "รวมค่าโดยสาร", "ระยะทาง", "จุดรับ", "จุดส่ง",
         "รูปส่งลูกค้า", "ไฟล์", "ลิงก์รูป"]
@@ -118,6 +120,9 @@ def audit(rows, pictures=None):
         and abs(n(r["net_earnings"]) - (n(r["base_fare"]) + n(r["bonus"]) + n(r["turbo"]))) > 0.01
         and abs(n(r["net_earnings"]) - (n(r["base_fare"]) + n(r["bonus"]) + n(r["turbo"]) + n(r["tolls"]))) > 0.01]
     out["บล็อกผู้โดยสารไม่ลงตัว"] = [r for r in rows if (g := gap(r)) is not None and abs(g) >= 0.51]
+    # 3b. a top half balances by itself, so the net-vs-base sheet saw seven of W47's nine
+    # mis-pairs. For a person to open the picture, never a reason to hold the week.
+    out[HALVES] = [r for r in rows if pipeline.halves_conflict(r)]
     # 4. what the file cannot show
     out["ข้อมูลไม่ครบ"] = [r for r in rows if not (r.get("pickup_text") and r.get("dropoff_text"))
                           or not r.get("distance_km") or not r.get("trip_time") or not r.get("service_type")]
@@ -174,10 +179,11 @@ def build_xlsx(rows, out, d_from):
                 sh.append([g, p])
         else:
             grouped = bool(v) and isinstance(v[0], list)
-            sh.append((["ชุด"] if grouped else []) + COLS)
+            why = name == HALVES
+            sh.append((["ชุด"] if grouped else []) + COLS + (["เหตุที่ให้ดู"] if why else []))
             for i, g in enumerate(v if grouped else [[r] for r in v], 1):
                 for r in g:
-                    sh.append(([i] if grouped else []) + line(r))
+                    sh.append(([i] if grouped else []) + line(r) + ([pipeline.halves_conflict(r)] if why else []))
         for c in sh[1]:
             c.font, c.fill = head, fill
         sh.freeze_panes = "A2"

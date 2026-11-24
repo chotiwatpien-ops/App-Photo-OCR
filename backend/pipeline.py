@@ -486,6 +486,40 @@ def net_witnessed(data, other_net=None) -> bool:
 
 UNWITNESSED_TURBO = "ไม่มีตัวเลขอื่นในรูปยืนยันยอด net — ดูรูปก่อนอนุมัติ"
 HALVES_DISAGREE = "ไม่ตรงกับรูปบน — ดูรูปว่าเป็นเที่ยวเดียวกันไหม"
+# '<album>_<top>+<bottom>_฿<amount>.jpg', the name pool.py gives a picture it stitched
+STITCHED_NAME = re.compile(r"_[0-9A-Za-z]+\+[0-9A-Za-z]+_฿")
+
+
+def two_halves(row) -> bool:
+    """Was this row made from two screenshots: a picture the pool stitched, or two rows
+    pair_fragments merged? A whole screenshot is one trip by construction."""
+    return bool(STITCHED_NAME.search(row.get("file_name") or "")
+                or (row.get("note") or "").startswith("รวม 2 รูป"))
+
+
+def halves_conflict(row):
+    """Why this row's two halves look like two different trips, in the reviewer's words, or None.
+
+    The top half balances by itself (net = base + bonus + turbo), so a top joined to the
+    neighbouring trip's bottom passed the check and went out unseen: nine rows of W47's file
+    (2026-11-23). Two things give such a row away:
+    - The bottom's fare less Grab's cut is its 'รายได้จากรอบขับ', which on a true pair is the base
+      fare. Grab rounds on the slip itself (182 − 137 printed as ฿46), so 1 baht apart is the same
+      figure: 127 of W47's ~4,278 rows. Further apart were the nine, and one true pair with an
+      event fee, which is why this holds a row for a person and decides nothing.
+    - The net equals the base although an incentive was read: the base came from the other trip.
+    Takes any dict with the trips columns, a stored row or a fresh reading with its file name."""
+    if not two_halves(row):
+        return None
+    pt, gc, base, net = (_num(row.get(k)) for k in ("passenger_total", "grab_commission",
+                                                     "base_fare", "net_earnings"))
+    if None not in (pt, gc, base) and abs(pt - gc - base) > 1:
+        return (f"ค่ารอบ {base:g} แต่รูปล่างแสดงรายได้จากรอบขับ {pt - gc:g} "
+                f"(ค่าโดยสาร {pt:g} − ค่าบริการ Grab {gc:g}) {HALVES_DISAGREE}")
+    extra = (_num(row.get("bonus")) or 0) + (_num(row.get("turbo")) or 0)
+    if extra > 0 and None not in (net, base) and abs(net - base) <= 0.01:
+        return f"คุณได้รับ {net:g} เท่ากับค่ารอบ ทั้งที่มีโบนัส+Turbo {extra:g} รูปล่างอาจ{HALVES_DISAGREE}"
+    return None
 
 
 def tip_unsure_note(raw_bonus, tip):
@@ -639,6 +673,12 @@ def apply_extraction(trip_id: int, job_id: int, data: dict) -> str:
         if filled and check == "pass" and not net_witnessed(data):
             check = "no_data"
             turbo_note = f"{turbo_note} | {UNWITNESSED_TURBO}"
+        conflict = halves_conflict({**data, "note": None,
+                                    "file_name": (db.get_trip(trip_id) or {}).get("file_name")})
+        if conflict:
+            if check == "pass":
+                check = "no_data"
+            turbo_note = f"{conflict} | {turbo_note}" if turbo_note else conflict
         note = data.get("confidence_note")
         if turbo_note:
             note = f"{turbo_note} | {note}" if note else turbo_note
