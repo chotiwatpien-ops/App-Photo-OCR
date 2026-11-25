@@ -116,6 +116,7 @@ trips = Table(
     Column("passenger_tolls", Float),      # ค่าทางด่วน on the passenger's side (−)
     Column("fare_refund", Float),
     Column("model", Text),
+    Column("prompt_version", String(10)),  # extractor.ReadRequest.version; NULL = not recorded
     Column("tok_in", Integer),
     Column("tok_out", Integer),
     Column("tok_think", Integer),
@@ -410,8 +411,8 @@ TRIP_EDITABLE = [
     "fare_refund", "note",
 ]
 _SYSTEM_FIELDS = ["status", "error", "booking_code", "check_status", "duplicate_of", "image_hash",
-                  "grab_commission", "model", "tok_in", "tok_out", "tok_think", "kind", "merged_into",
-                  "customer_image"]
+                  "grab_commission", "model", "prompt_version", "tok_in", "tok_out", "tok_think",
+                  "kind", "merged_into", "customer_image"]
 # columns returned to the API (everything except the blob)
 TRIP_COLS = [c for c in trips.c if c.name != "image_blob"]
 
@@ -447,6 +448,7 @@ def init_db():
             c.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS drive_folder_id VARCHAR(64)"))
             c.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS source_album TEXT"))
             c.execute(text("ALTER TABLE name_pool ADD COLUMN IF NOT EXISTS driver_id VARCHAR(8)"))
+            c.execute(text("ALTER TABLE trips ADD COLUMN IF NOT EXISTS prompt_version VARCHAR(10)"))
             for col in ("discount", "insurance_fee", "passenger_tolls"):
                 c.execute(text(f"ALTER TABLE trips ADD COLUMN IF NOT EXISTS {col} DOUBLE PRECISION"))
 

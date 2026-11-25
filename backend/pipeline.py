@@ -738,6 +738,7 @@ def apply_extraction(trip_id: int, job_id: int, data: dict) -> str:
             "passenger_tolls": data.get("passenger_tolls"),
             "fare_refund": data.get("fare_refund"),
             "model": usage.get("model"),
+            "prompt_version": usage.get("prompt_version"),
             "tok_in": usage.get("tok_in"),
             "tok_out": usage.get("tok_out"),
             "tok_think": usage.get("tok_think"),

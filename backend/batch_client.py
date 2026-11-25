@@ -44,21 +44,23 @@ def submit(items, model=None, display_name="ingest", workers=4) -> list:
     """Hand images to the batch queue. items = [(trip_id, image_bytes, mime)].
 
     Returns [{"name": job name, "trips": [trip_id, ...]}] — one entry per chunk. The trip id
-    rides along as request metadata, so results identify themselves on the way back."""
+    rides along as request metadata, so results identify themselves on the way back. The prompt
+    version rides with it: results come back a round later, possibly after a deploy changed the
+    prompt, and the version stamped here is the one that read the picture."""
     from google.genai import types
     model = model or config.GEMINI_MODEL
     cl = _client()
-    cfg = extractor._gen_config(model, config.EXTRACT_DROP_FIELDS)   # same schema as a live read
+    req = extractor.read_request(model, config.EXTRACT_DROP_FIELDS)   # same request as a live read
 
     def one(numbered):
         i, chunk = numbered
         requests = [
             types.InlinedRequest(
                 model=model,
-                contents=[extractor.prompt(),
+                contents=[req.prompt,
                           types.Part.from_bytes(data=img, mime_type=mime)],
-                config=cfg,
-                metadata={"trip_id": str(trip_id)},
+                config=req.config,
+                metadata={"trip_id": str(trip_id), "prompt_version": req.version},
             )
             for trip_id, img, mime in chunk
         ]
@@ -108,7 +110,8 @@ def collect(name):
             errors[tid] = str(getattr(r.error, "message", r.error))[:300]
             continue
         try:
-            data[tid] = _parse(r.response, job.model or config.GEMINI_MODEL)
+            data[tid] = _parse(r.response, job.model or config.GEMINI_MODEL,
+                               _submitted_version(r.metadata))
         except Exception as e:  # noqa: BLE001
             errors[tid] = f"อ่านผลจาก batch ไม่ได้: {str(e)[:200]}"
     if st.endswith("SUCCEEDED") and not responses:
@@ -127,34 +130,41 @@ def collect(name):
                 else:
                     try:
                         data[tid] = _parse_dict(row.get("response") or {},
-                                                job.model or config.GEMINI_MODEL)
+                                                job.model or config.GEMINI_MODEL,
+                                                _submitted_version(row.get("metadata")))
                     except Exception as e:  # noqa: BLE001
                         errors[tid] = f"อ่านผลจาก batch ไม่ได้: {str(e)[:200]}"
     return st, data, errors
 
 
-def _parse(response, model):
+def _submitted_version(metadata):
+    """The prompt version stamped on the request at submit. A batch sent before requests carried
+    one has none, and its rows record none: the prompt in force at collect time may be newer."""
+    return (metadata or {}).get("prompt_version")
+
+
+def _parse(response, model, prompt_version):
     text = response.text
     if not text:
         raise RuntimeError("คำตอบว่าง")
     # the same settling a live read gets (extractor._call_gemini) — batch reads skipped it
     out = extractor.settle_old_receipt(extractor.fix_passenger_total(json.loads(text)))
     u = response.usage_metadata
-    out["_usage"] = {"model": (model or "").split("/")[-1],
+    out["_usage"] = {"model": (model or "").split("/")[-1], "prompt_version": prompt_version,
                      "tok_in": getattr(u, "prompt_token_count", 0) or 0,
                      "tok_out": getattr(u, "candidates_token_count", 0) or 0,
                      "tok_think": getattr(u, "thoughts_token_count", 0) or 0}
     return out
 
 
-def _parse_dict(response: dict, model: str):
+def _parse_dict(response: dict, model: str, prompt_version):
     parts = (response.get("candidates") or [{}])[0].get("content", {}).get("parts") or []
     text = "".join(p.get("text", "") for p in parts)
     if not text:
         raise RuntimeError("คำตอบว่าง")
     out = extractor.settle_old_receipt(extractor.fix_passenger_total(json.loads(text)))
     u = response.get("usageMetadata") or {}
-    out["_usage"] = {"model": (model or "").split("/")[-1],
+    out["_usage"] = {"model": (model or "").split("/")[-1], "prompt_version": prompt_version,
                      "tok_in": u.get("promptTokenCount", 0) or 0,
                      "tok_out": u.get("candidatesTokenCount", 0) or 0,
                      "tok_think": u.get("thoughtsTokenCount", 0) or 0}

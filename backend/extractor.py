@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """Gemini vision extraction for Grab Driver trip screenshots."""
+import hashlib
 import json
 import re
 import time
+from dataclasses import dataclass
 
 from google import genai
 from google.genai import types
@@ -408,15 +410,45 @@ def _gen_config(model: str, drop=(), lines=None) -> types.GenerateContentConfig:
     return types.GenerateContentConfig(**cfg)
 
 
-def _call_gemini(img, model: str = None, drop=(), lines=None) -> dict:
+@dataclass(frozen=True)
+class ReadRequest:
+    """Everything that shapes one read except the picture. The live path and the batch path both
+    send this, so the two cannot drift and a row can say which prompt read it."""
+    model: str
+    prompt: str
+    config: types.GenerateContentConfig
+    version: str
+
+
+def read_request(model: str = None, drop=(), lines=None) -> ReadRequest:
+    """The request a read sends, and its version: 10 hex characters of a hash over the prompt
+    text and the config as sent. The schema, the temperature and the thinking setting are all in
+    the config, so EXTRACT_DROP_FIELDS, PASSENGER_LINES, the thinking level and any edit to the
+    prompt or a field description move the version with nobody remembering to bump it.
+
+    The model id is left out. The row stores it in its own column, so (model, prompt_version)
+    names the reader and one prompt can be compared across two models."""
     model = model or GEMINI_MODEL
+    text, cfg = prompt(lines), _gen_config(model, drop, lines)
+    # Keys are sorted so the SDK reordering its own fields between releases does not pass for a
+    # new prompt. The schema's properties go out in the order written and that order is part of
+    # the request, so it is hashed beside them.
+    sent = {"prompt": text, "config": cfg.model_dump(mode="json", exclude_none=True),
+            "order": list(cfg.response_schema.properties)}
+    digest = hashlib.sha1(json.dumps(sent, sort_keys=True, ensure_ascii=False).encode("utf-8"))
+    return ReadRequest(model, text, cfg, digest.hexdigest()[:10])
+
+
+def _call_gemini(img, model: str = None, drop=(), lines=None) -> dict:
+    req = read_request(model, drop, lines)
     resp = client().models.generate_content(
-        model=model, contents=[prompt(lines), img], config=_gen_config(model, drop, lines),
+        model=req.model, contents=[req.prompt, img], config=req.config,
     )
     data = settle_old_receipt(fix_passenger_total(json.loads(resp.text)))
     u = resp.usage_metadata
     data["_usage"] = {
-        "model": model,
+        "model": req.model,
+        "prompt_version": req.version,
         "tok_in": u.prompt_token_count or 0,
         "tok_out": u.candidates_token_count or 0,
         "tok_think": u.thoughts_token_count or 0,
