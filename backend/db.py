@@ -391,6 +391,15 @@ pool_ocr_cache = Table(
     Column("created_at", String(19), nullable=False),
 )
 
+# Approved trips with the same route, distance and fare that a person looked at and found to be
+# different trips (a regular commute). `ids` is the group's trip ids, sorted, comma-joined: a group
+# that gains a row is a new question and shows again.
+checked_pairs = Table(
+    "checked_pairs", meta,
+    Column("ids", Text, primary_key=True),
+    Column("checked_at", String(19), nullable=False),
+)
+
 TRIP_EDITABLE = [
     "trip_date", "trip_time", "service_type", "payment_method",
     "pickup_code", "dropoff_code", "pickup_text", "dropoff_text",
@@ -579,6 +588,23 @@ def closed_weeks():
     with engine.begin() as c:
         return {r["date_from"]: dict(r) for r in
                 c.execute(select(week_locks)).mappings().all()}
+
+
+def group_key(ids) -> str:
+    return ",".join(str(i) for i in sorted(set(ids)))
+
+
+def checked_groups() -> set:
+    with engine.begin() as c:
+        return set(c.execute(select(checked_pairs.c.ids)).scalars())
+
+
+def mark_checked(ids):
+    key = group_key(ids)
+    with engine.begin() as c:
+        if not c.execute(select(checked_pairs.c.ids).where(checked_pairs.c.ids == key)).first():
+            c.execute(insert(checked_pairs).values(ids=key, checked_at=_now()))
+    return key
 
 
 def log_action(**fields) -> int:

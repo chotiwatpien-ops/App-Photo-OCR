@@ -636,13 +636,58 @@ def duplicate_week(week: str = ""):
     return {
         "week": w, "label": week_label(w), "as_of": d["as_of"],
         "weeks": [{"date_from": x, "label": week_label(x), "closed": x in shut} for x in weeks_],
-        "approved": d["approved"], "twice": d["twice"], "suspect": d["suspect"],
+        "approved": d["approved"], "twice": d["twice"], "suspect": _suspect_rows(d["suspect"]),
         "decide": [_dup_pair(c) for c in d["undecided"]],
         "removed": [_dup_pair(c) for c in d["cases"]],
         "copies": [{"album": p.get("ไรเดอร์ผู้ส่ง"), "file": p.get("ไฟล์ที่ซ้ำ"), "same_as": p.get("ซ้ำกับไฟล์"),
                     "kind": p.get("ประเภทการซ้ำ"), "link": p.get("ลิงก์รูป")} for p in d["pre"]],
         "albums": [dict(zip(DUP_ALBUM_KEYS, r)) for r in d["albums"]],
     }
+
+
+def _suspect_rows(groups):
+    """Each same-route group as the rows a person compares: who, when, code, fare, the picture."""
+    from sqlalchemy import select
+    t, j = db.trips.c, db.jobs.c
+    ids = [i for g in groups for i in g]
+    if not ids:
+        return []
+    with db.engine.begin() as c:
+        rows = {r["id"]: r for r in c.execute(
+            select(t.id, j.driver_name, t.trip_date, t.booking_code, t.base_fare, t.bonus, t.turbo,
+                   t.distance_km, t.pickup_text, t.dropoff_text, t.source_album, t.source_url)
+            .select_from(db.trips.join(db.jobs, j.id == t.job_id))
+            .where(t.id.in_(ids))).mappings()}
+    out = []
+    for g in groups:
+        out.append([{"trip_id": i, "rider": r["driver_name"], "date": r["trip_date"], "code": r["booking_code"],
+                     "net": round((r["base_fare"] or 0) + (r["bonus"] or 0) + (r["turbo"] or 0), 2),
+                     "km": r["distance_km"], "pickup": r["pickup_text"], "dropoff": r["dropoff_text"],
+                     "album": r["source_album"], "url": r["source_url"]}
+                    for i in g if (r := rows.get(i))])
+    return out
+
+
+@app.post("/api/duplicates/checked")
+def duplicate_checked(body: dict):
+    """A person looked at a same-route group on the งานซ้ำ page and found different trips: the
+    group stops showing there. A group that later gains a row shows again."""
+    try:
+        ids = sorted({int(i) for i in body.get("ids") or []})
+    except (TypeError, ValueError):
+        raise HTTPException(400, "รหัสเที่ยวไม่ถูกต้อง")
+    if len(ids) < 2:
+        raise HTTPException(400, "ต้องมีอย่างน้อย 2 เที่ยว")
+    from sqlalchemy import func, select
+    with db.engine.begin() as c:
+        n = c.execute(select(func.count()).select_from(db.trips)
+                      .where(db.trips.c.id.in_(ids), db.trips.c.committed == 1)).scalar()
+    if n != len(ids):
+        raise HTTPException(409, "มีเที่ยวในชุดนี้ที่ไม่ได้อนุมัติแล้ว โหลดหน้าใหม่แล้วดูอีกครั้ง")
+    key = db.mark_checked(ids)
+    _note("dup.checked", f"trips:{key}")
+    _dup_cache.clear()
+    return {"ids": ids}
 
 
 @app.get("/api/duplicates/report.xlsx")

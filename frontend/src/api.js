@@ -108,6 +108,9 @@ export const api = {
     fetch(`/api/review-queue/discarded?everything=${everything}`).then(handle),
   clearDiscarded: () =>
     fetch('/api/review-queue/discarded/clear', { method: 'POST' }).then(handle),
+  markChecked: (ids) => fetch('/api/duplicates/checked', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
+  }).then(handle),
   restoreTrip: (id) => fetch(`/api/trips/${id}/restore`, { method: 'POST' }).then(handle),
   commit: (id, force = false) =>
     fetch(`/api/jobs/${id}/commit${force ? '?force=true' : ''}`, { method: 'POST' }).then(handle),

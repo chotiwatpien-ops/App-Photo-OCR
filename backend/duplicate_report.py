@@ -343,7 +343,8 @@ def counted_twice(d_from, d_to):
     The customer's file is the approved rows, so an empty second list is the proof that no trip
     in it is paid twice. Counted twice = the same db.trip_key, or same_trip's CODE evidence (a
     code misread by a letter or two at the line break, W46). The third list is same_trip's ROUTE
-    evidence: same route, distance and fare, which a person has to look at."""
+    evidence: same route, distance and fare, which a person has to look at; a group a person
+    marked as different trips (db.mark_checked) is left out."""
     import same_trip
     t, j = db.trips.c, db.jobs.c
     with db.engine.begin() as c:
@@ -359,11 +360,15 @@ def counted_twice(d_from, d_to):
     twice = [sorted(ids) for ids in by.values() if len(ids) > 1]
     exact = {i for g in twice for i in g}
     suspect = []
+    checked = db.checked_groups()
     for k, g in same_trip.groups(rows):
         ids = [r["id"] for r in g]
         if set(ids) <= exact:
             continue
-        (twice if k == same_trip.CODE else suspect).append(ids)
+        if k == same_trip.CODE:
+            twice.append(ids)
+        elif db.group_key(ids) not in checked:
+            suspect.append(ids)
     return len(rows), twice, suspect
 
 

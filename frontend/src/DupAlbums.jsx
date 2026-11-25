@@ -81,6 +81,35 @@ function PairCard({ p, children }) {
   )
 }
 
+/** Approved trips with the same route, distance and fare: a regular commute, or one trip counted
+ *  twice under two codes. Only a person looking at the slips can tell. */
+function SameRoute({ group, busy, onChecked }) {
+  const first = group[0] || {}
+  return (
+    <li className="border border-line rounded-xl p-3 flex flex-col gap-2.5">
+      <div className={`grid gap-2 ${group.length > 2 ? 'grid-cols-3' : 'grid-cols-2'}`}>
+        {group.map((r) => <Thumb key={r.trip_id} tripId={r.trip_id} drive={r.url} label={`#${r.trip_id}`} />)}
+      </div>
+      <p className="text-sm text-ink-soft break-words">
+        {first.pickup} → {first.dropoff} · {first.km} km · {baht(first.net)}
+      </p>
+      <ul className="text-sm flex flex-col gap-1">
+        {group.map((r) => (
+          <li key={r.trip_id} className="flex flex-wrap gap-x-2">
+            <span className="text-muted">#{r.trip_id}</span>
+            <span>{[r.rider, day(r.date)].filter(Boolean).join(' · ')}</span>
+            <span className="font-mono break-all">{r.code || 'ไม่มีเลขจอง'}</span>
+          </li>
+        ))}
+      </ul>
+      <button onClick={() => onChecked(group)} disabled={busy}
+        className="self-start min-h-10 px-3 rounded-lg border border-line hover:bg-ground text-sm disabled:opacity-50">
+        ดูแล้ว ไม่ซ้ำ
+      </button>
+    </li>
+  )
+}
+
 function Verdict({ d, onQueue }) {
   const twice = d.twice.length, decide = d.decide.length, suspect = (d.suspect || []).length
   const waiting = d.albums.reduce((s, a) => s + (a.waiting || 0), 0)
@@ -294,6 +323,17 @@ export default function DupAlbums({ onGo }) {
       .catch((e) => setNote({ warn: true, text: `เก็บไม่สำเร็จ: ${e.message}` })).finally(() => setBusy(false))
   }
 
+  const checked = async (group) => {
+    if (!(await ask({
+      text: `ดูรูปแล้ว ${group.length} เที่ยวนี้เป็นคนละเที่ยวกัน?\n\nชุดนี้จะไม่ขึ้นในหน้านี้อีก ทุกเที่ยวยังนับในไฟล์ลูกค้าเหมือนเดิม`,
+      confirm: 'ดูแล้ว ไม่ซ้ำ',
+    }))) return
+    setBusy(true)
+    api.markChecked(group.map((r) => r.trip_id))
+      .then(() => { setNote({ text: 'บันทึกแล้ว ชุดนี้ไม่ซ้ำ' }); load(d.week) })
+      .catch((e) => setNote({ warn: true, text: `บันทึกไม่สำเร็จ: ${e.message}` })).finally(() => setBusy(false))
+  }
+
   if (error && !d) return <p className="text-sm text-danger-ink">โหลดไม่ได้: {error}</p>
   if (!d) return <p className="text-sm text-muted">กำลังโหลด…</p>
   if (!d.week) return <p className="text-sm text-muted">ยังไม่มีสัปดาห์ให้ดู</p>
@@ -371,6 +411,17 @@ export default function DupAlbums({ onGo }) {
               <PairCard key={p.trip_id} p={p}>
                 <button onClick={toQueue} className="self-start min-h-10 px-3 rounded-lg border border-line hover:bg-ground text-sm">ตัดสินในคิวตรวจ</button>
               </PairCard>
+            ))}
+          </ul>
+        </Section>
+      )}
+
+      {d.suspect.length > 0 && (
+        <Section title={`เส้นทาง ระยะ ยอดตรงกัน ${fmt(d.suspect.length)} ชุด`}
+          sub="ทุกเที่ยวในชุดอนุมัติแล้วและนับในไฟล์ลูกค้า มักเป็นคนนั่งเส้นทางประจำ ดูรูปแล้วถ้าเลขจองต่างกันเป็นคนละเที่ยว กด “ดูแล้ว ไม่ซ้ำ” ถ้าเป็นเที่ยวเดียวกัน แจ้งผู้ดูแลระบบ">
+          <ul className="grid gap-3 md:grid-cols-2">
+            {d.suspect.map((g) => (
+              <SameRoute key={g.map((r) => r.trip_id).join(',')} group={g} busy={busy} onChecked={checked} />
             ))}
           </ul>
         </Section>
