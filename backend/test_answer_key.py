@@ -102,6 +102,9 @@ ids = list(range(1, 2001))
 order = sorted(ids, key=key.rank)
 check("ลำดับการตรวจไม่ใช่ลำดับเลขแถว", order[:50] != ids[:50] and sorted(order) == ids)
 check("ลำดับเดิมทุกครั้งที่ถาม", order == sorted(ids, key=key.rank))
+check("❗ สูตรลำดับห้ามเปลี่ยน: ใบที่ตรวจไปแล้วต้องยังเป็นหัวแถวของลำดับเดิม",
+      (key.rank(1), key.rank(2), key.rank(51234)) == (2654435761, 1013904226, 1517318530),
+      (key.rank(1), key.rank(2), key.rank(51234)))
 late = sorted(ids + [5000, 5001], key=key.rank)
 check("แถวที่มาทีหลัง ไม่เปลี่ยนลำดับของแถวเดิม", [i for i in late if i <= 2000] == order)
 first = order[:200]
