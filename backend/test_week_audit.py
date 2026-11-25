@@ -137,6 +137,18 @@ check("ชีตบอกเหตุด้วยตัวเลขของแ�
       and "100" in str(sheet.cell(2, sheet.max_column).value))
 check("ให้คนเปิดรูปดู ไม่ขวางการปิดสัปดาห์", HALVES not in close_week.BLOCKING)
 
+# Pictures moved aside on purpose (_แทนที่แล้ว, _ซ้ำ, _ไม่อยู่ในไฟล์) are no stray in the customer folder
+from drive_client import LocalDrive                             # noqa: E402
+from ingest import week_label                                   # noqa: E402
+exports = os.path.join(WORK, "exports")
+wk_dir = os.path.join(exports, week_label(M[0]))
+for folder, name in (("2 W Saver", "kept.jpg"), ("_แทนที่แล้ว", "old.jpg"), ("2 W Saver/_ไม่อยู่ในไฟล์", "out.jpg")):
+    os.makedirs(os.path.join(wk_dir, folder), exist_ok=True)
+    open(os.path.join(wk_dir, folder, name), "wb").write(b"x")
+pics = wa.pictures_on_drive(LocalDrive(exports), exports, M[0])
+print("   ได้:", pics)
+check("❗ รูปในโฟลเดอร์ที่ขึ้นต้นด้วย _ ไม่ถูกนับเป็นรูปของกลุ่มงาน", pics == {"2 W Saver": {"kept.jpg"}})
+
 shutil.rmtree(WORK, ignore_errors=True)
 print("\nสรุป:", "ผ่านทั้งหมด ✅" if ok else "มีข้อที่ไม่ผ่าน ✗")
 sys.exit(0 if ok else 1)

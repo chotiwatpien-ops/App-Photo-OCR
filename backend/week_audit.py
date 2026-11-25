@@ -147,7 +147,10 @@ def pictures_on_drive(drive, exports_id, d_from):
     wk = next((f["id"] for f in drive.list_folders(exports_id) if f["name"] == week_label(d_from)), None)
     if not wk:
         return None
-    return {g["name"].strip(): {i["name"] for i in drive.list_images(g["id"])} for g in drive.list_folders(wk)}
+    # a '_' folder holds pictures moved out of the customer's sight on purpose (_แทนที่แล้ว, _ซ้ำ):
+    # counted as a group, every one of them read as a stray
+    return {g["name"].strip(): {i["name"] for i in drive.list_images(g["id"])}
+            for g in drive.list_folders(wk) if not g["name"].startswith("_")}
 
 
 def summary(rows, out):
