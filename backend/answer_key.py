@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
+from statistics import median
 from typing import Callable, Iterable, Mapping, Optional, Union
 
 from sqlalchemy import BigInteger, and_, cast, func, insert, literal_column, or_, select, update
@@ -123,7 +124,8 @@ class Tally:
         centre = p + _Z * _Z / (2 * n)
         spread = _Z * math.sqrt(p * (1 - p) / n + _Z * _Z / (4 * n * n))
         scale = 1 + _Z * _Z / n
-        return max(0.0, (centre - spread) / scale), min(1.0, (centre + spread) / scale)
+        # the interval holds the rate by construction; rounding at 0% and 100% must not undo that
+        return max(0.0, min(p, (centre - spread) / scale)), min(1.0, max(p, (centre + spread) / scale))
 
     def public(self) -> dict:
         low, high = self.interval() or (None, None)
@@ -132,19 +134,23 @@ class Tally:
                 "rate": self.rate, "low": low, "high": high}
 
 
+def verdict(truth: Optional[str], value: Optional[str]) -> str:
+    """right | wrong | absent_blank | absent_filled: the one place a truth meets a value. Both are
+    canonical text or None. An empty value against a printed truth is wrong."""
+    if truth is None:
+        return "absent_blank" if value is None else "absent_filled"
+    return "right" if truth == value else "wrong"
+
+
 def tally(pairs: Iterable) -> dict:
     """Pairs of (KeyFact, value) -> {field key: Tally}, every field of FIELDS present. `value` is
     the canonical text the reader produced for that fact, or None for empty."""
     count = {f.key: dict(right=0, wrong=0, missed=0, absent_blank=0, absent_filled=0) for f in FIELDS}
     for fact, value in pairs:
-        c = count[fact.field]
-        if fact.truth is None:
-            c["absent_blank" if value is None else "absent_filled"] += 1
-        elif fact.truth == value:
-            c["right"] += 1
-        else:
-            c["wrong"] += 1
-            c["missed"] += value is None
+        said = verdict(fact.truth, value)
+        count[fact.field][said] += 1
+        if said == "wrong" and value is None:
+            count[fact.field]["missed"] += 1
     return {key: Tally(**c) for key, c in count.items()}
 
 
@@ -408,3 +414,54 @@ def _progress(week: str) -> Progress:
             .select_from(_TRIPS.join(db.key_slips, s.trip_id == db.trips.c.id))
             .where(_eligible(week), s.outcome.isnot(None)).group_by(s.outcome)).tuples().all())
     return Progress(eligible, done.get("checked", 0), done.get("no_picture", 0))
+
+
+_MISSES = 200
+
+
+def report(week: str = "") -> dict:
+    """How far the check of one week got and how often each field was read right. week '' is the
+    newest week, 'all' is every week together. Raises LookupError for a week with no job.
+
+    A slip is grouped under the reader its key_slips row names, not the one the trip row names
+    today. Facts of a field no longer in FIELDS stay stored and are left out."""
+    listing = weeks()
+    known = {w["date_from"]: w for w in listing}
+    week = week or (listing[0]["date_from"] if listing else ALL)
+    if week != ALL and week not in known:
+        raise LookupError(week)
+    s, k, t = db.key_slips.c, db.key_facts.c, db.trips.c
+    checked = (db.key_facts.join(db.key_slips, and_(s.trip_id == k.trip_id, s.outcome == "checked"))
+               .join(db.trips, t.id == k.trip_id).join(db.jobs, db.jobs.c.id == t.job_id))
+    with db.engine.begin() as c:
+        rows = c.execute(
+            select(k.trip_id, k.field, k.truth, k.row_value, s.model, s.prompt_version, s.seconds,
+                   s.finished_at, t.source_url)
+            .select_from(checked).where(*([] if week == ALL else [db.jobs.c.date_from == week]))).all()
+    rows = [r for r in rows if r.field in FIELD]
+    slips = {r.trip_id: r for r in rows}
+    wrong = [r for r in rows if verdict(r.truth, r.row_value) == "wrong"]
+    readers = {}
+    for r in rows:
+        readers.setdefault((r.model, r.prompt_version), []).append(r)
+    seconds = [r.seconds for r in slips.values() if r.seconds is not None]
+    return {
+        "week": week, "label": known[week]["label"] if week in known else "ทุกสัปดาห์",
+        "closed": week in known and known[week]["closed"], "weeks": listing,
+        "progress": asdict(_progress(week)),
+        "fields": [f.public() for f in FIELDS],
+        "total": {"slips": len(slips), "all_right": len(slips) - len({r.trip_id for r in wrong}),
+                  "seconds_per_slip": median(seconds) if seconds else None, "fields": _counted(rows)},
+        "by_reader": sorted(
+            ({"model": model, "prompt_version": version, "slips": len({r.trip_id for r in read}),
+              "fields": _counted(read)} for (model, version), read in readers.items()),
+            key=lambda g: (-g["slips"], g["model"] or "", g["prompt_version"] or "")),
+        "misses": [{"trip_id": r.trip_id, "field": r.field, "row": r.row_value, "truth": r.truth,
+                    "open": _picture(r.trip_id, 1, r.source_url).open}
+                   for r in sorted(wrong, key=lambda r: (r.finished_at or "", r.trip_id), reverse=True)[:_MISSES]],
+    }
+
+
+def _counted(rows) -> dict:
+    return {key: count.public()
+            for key, count in tally((KeyFact(r.trip_id, r.field, r.truth), r.row_value) for r in rows).items()}

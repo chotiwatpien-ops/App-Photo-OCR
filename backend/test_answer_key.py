@@ -89,7 +89,7 @@ check("ช่องที่ยังไม่ได้ตรวจ ไม่ม
 low, high = key.Tally(right=104, wrong=4).interval()
 check("ช่วง 95% ของ 104 จาก 108 คือ 90.9–98.6", abs(low - 0.9086) < 0.001 and abs(high - 0.9855) < 0.001, (low, high))
 low, high = key.Tally(right=120).interval()
-check("❗ ถูก 120 จาก 120 ไม่ได้แปลว่า 100%: ปลายล่างราว 96.9%", abs(low - 0.969) < 0.001 and high > 0.9999, (low, high))
+check("❗ ถูก 120 จาก 120 ไม่ได้แปลว่า 100%: ปลายล่างราว 96.9%", abs(low - 0.969) < 0.001 and high == 1.0, (low, high))
 low, high = key.Tally(wrong=5).interval()
 check("ผิดหมด ปลายล่างเป็น 0", low == 0.0 and 0.4 < high < 0.5, (low, high))
 shown = key.Tally(right=3, wrong=1, missed=1, absent_filled=2).public()
@@ -133,6 +133,11 @@ for p in others:
     if re.search(r"key_facts|key_slips", code_only):
         touch.append(p.name)
 check("❗ มีแต่ answer_key.py ที่อ่านเขียนตารางชุดเฉลย", touch == [] and len(others) > 20, touch)
+
+r = web.get("/api/answer-key/report")
+check("ยังไม่มีงานสักสัปดาห์ หน้ารายงานยังเปิดได้",
+      r.status_code == 200 and r.json()["weeks"] == [] and r.json()["total"]["slips"] == 0
+      and r.json()["progress"] == {"eligible": 0, "checked": 0, "no_picture": 0}, r.text)
 
 W47, W48 = ("2026-11-16", "2026-11-22"), ("2026-11-23", "2026-11-29")
 home = db.create_job("ก Home", "Trips", *W47, category="2 W Saver")
@@ -324,6 +329,128 @@ check("บันทึกการกระทำเก็บคำตอบท�
       and sum(a["target"] == f"trip:{order[0]}" and a["status"] == 200 for a in log) == 2, one)
 gone = next(a for a in log if a["target"] == f"trip:{third['trip_id']}")
 check("บันทึกการกระทำบอกว่าใบไหนดูรูปไม่ได้", gone["detail"].get("no_picture") is True, gone)
+
+
+def report(week=""):
+    r = web.get(f"/api/answer-key/report?week={week}")
+    return r.json() if r.status_code == 200 else r.status_code
+
+
+def counts(rep, field):
+    return tuple(rep["fields"][field][k] for k in ("right", "wrong", "missed", "absent_blank", "absent_filled"))
+
+
+done47 = report(W47[0])
+check("รายงานบอกสัปดาห์ ว่าปิดแล้วหรือยัง และตรวจไปถึงไหน",
+      (done47["week"], done47["label"], done47["closed"]) == (W47[0], "2026-W47", True)
+      and done47["progress"] == {"eligible": 12, "checked": 11, "no_picture": 1}, done47["progress"])
+check("ยืนยันตรงทุกช่อง 11 ใบ = ถูกทุกช่อง 11 ใบ ใบที่ดูรูปไม่ได้ไม่อยู่ในผลนับ",
+      (done47["total"]["slips"], done47["total"]["all_right"]) == (11, 11)
+      and all(counts(done47["total"], f.key) == (11, 0, 0, 0, 0) for f in key.FIELDS), done47["total"])
+check("❗ ถูกหมด 11 ใบ บอกได้แค่ว่าไม่ต่ำกว่าราว 74%",
+      all(v["rate"] == 1.0 and abs(v["low"] - 0.741) < 0.002 for v in done47["total"]["fields"].values()),
+      done47["total"]["fields"]["turbo"])
+check("❗ รายการช่องของหน้าเว็บมาจากรายการเดียวกับที่ใช้นับ",
+      done47["fields"] == [f.public() for f in key.FIELDS] and list(done47["total"]["fields"]) == list(key.FIELD))
+check("ไม่มีช่องไหนผิด รายการใบที่อ่านผิดว่าง", done47["misses"] == [])
+
+W46 = ("2026-11-09", "2026-11-15")
+old = db.create_job("ค Taxi", "Trips", *W46, category="4 W Standard")
+plain = trip(old)
+cut_tail = trip(old, booking_code="A-TESTKEY9002")
+no_clock = trip(old, trip_time=None, prompt_version="bbbbbbbbbb")
+folded = trip(old, trip_time=None, booking_code="A-TESTKEY9004", prompt_version=None)
+dark = trip(old, prompt_version=None)
+before = all_trips()
+answers = {
+    plain: lambda s: confirm(s, seconds=10),
+    cut_tail: lambda s: confirm(s, seconds=20, booking_code="a-testkey 9002av"),
+    no_clock: lambda s: confirm(s, seconds=30, trip_time="8:05"),
+    folded: lambda s: confirm(s, absent=("trip_time", "booking_code"), seconds=700, turbo="0"),
+    dark: lambda s: {"trip_id": s["trip_id"], "no_picture": True},
+}
+slip = ask("phone-a", week=W46[0]).json()["slip"]
+while slip:
+    if slip["trip_id"] == no_clock:
+        blank = ask("phone-a", confirm(slip), week=W46[0])
+    slip = ask("phone-a", answers[slip["trip_id"]](slip), week=W46[0]).json()["slip"]
+check("❗ ช่องที่แถวว่าง กดยืนยันว่าตรงไม่ได้ ต้องพิมพ์ค่าที่เห็นหรือบอกว่าไม่มีในรูป",
+      blank.status_code == 400 and "เวลาบนแถบสถานะ" in blank.json()["detail"], blank.text)
+
+got = report(W46[0])
+total = got["total"]
+check("ตรวจ 4 ใบ ดูรูปไม่ได้ 1 ใบ ถูกทุกช่อง 1 ใบ",
+      got["progress"] == {"eligible": 5, "checked": 4, "no_picture": 1}
+      and (total["slips"], total["all_right"]) == (4, 1), (got["progress"], total["slips"], total["all_right"]))
+check("❗ แถวว่างทั้งที่รูปมีเวลา = ผิด และนับว่า AI เว้นว่าง · ไม่มีแถบสถานะและแถวว่าง = ไม่อยู่ในตัวหาร",
+      counts(total, "trip_time") == (2, 1, 1, 1, 0) and abs(total["fields"]["trip_time"]["rate"] - 2 / 3) < 1e-9,
+      total["fields"]["trip_time"])
+check("❗ รหัสขาดท้าย = ผิด · รหัสถูกจอตัดแต่แถวมีค่า = ไม่มีในรูป แถวมีค่า ไม่ลากความแม่นยำลง",
+      counts(total, "booking_code") == (2, 1, 0, 0, 1) and abs(total["fields"]["booking_code"]["rate"] - 2 / 3) < 1e-9,
+      total["fields"]["booking_code"])
+check("การ์ดกางแต่ไม่มีบรรทัด Turbo ความจริงคือ 0: แถวที่ใส่ 5 นับเป็นผิด",
+      counts(total, "turbo") == (3, 1, 0, 0, 0) and total["fields"]["turbo"]["rate"] == 0.75, total["fields"]["turbo"])
+check("ช่องที่เหลือถูกครบ 4 ใบ",
+      all(counts(total, f) == (4, 0, 0, 0, 0)
+          for f in ("distance_km", "service_type", "payment_method", "net_earnings", "base_fare")))
+check("ช่วงที่น่าจะเป็นคร่อมค่าความแม่นยำ",
+      all(v["low"] <= v["rate"] <= v["high"] for v in total["fields"].values()))
+check("เวลาต่อใบเป็นค่ากลาง และใบที่ค้างนานนับไม่เกิน 10 นาที", total["seconds_per_slip"] == 25, total["seconds_per_slip"])
+readers = [(g["model"], g["prompt_version"], g["slips"]) for g in got["by_reader"]]
+check("❗ แยกตามตัวอ่าน: prompt สองรุ่น และแถวที่ไม่ได้บันทึกรุ่นเป็นกลุ่มของตัวเอง",
+      readers == [("reader-a", "aaaaaaaaaa", 2), ("reader-a", None, 1), ("reader-a", "bbbbbbbbbb", 1)], readers)
+check("ผลนับของแต่ละตัวอ่านเป็นของใบที่ตัวอ่านนั้นอ่าน",
+      counts(got["by_reader"][0], "booking_code") == (1, 1, 0, 0, 0)
+      and counts(got["by_reader"][1], "turbo") == (0, 1, 0, 0, 0)
+      and counts(got["by_reader"][1], "booking_code") == (0, 0, 0, 0, 1)
+      and counts(got["by_reader"][2], "trip_time") == (0, 1, 1, 0, 0), got["by_reader"])
+misses = {(m["trip_id"], m["field"], m["row"], m["truth"]) for m in got["misses"]}
+check("❗ รายการช่องที่อ่านผิด บอกค่าบนแถวและค่าบนรูป ช่องที่ไม่มีในรูปไม่อยู่ในรายการ",
+      misses == {(cut_tail, "booking_code", "A-TESTKEY9002", "A-TESTKEY9002AV"),
+                 (no_clock, "trip_time", None, "08:05"), (folded, "turbo", "5.00", "0.00")}
+      and len(got["misses"]) == 3, got["misses"])
+check("แต่ละรายการมีลิงก์เปิดรูปบน Drive",
+      all(re.fullmatch(r"https://drive\.google\.com/file/d/FILE\d{4}/view", m["open"]) for m in got["misses"]))
+
+check("❗ ตรงทุกช่อง แก้ค่า ไม่มีในรูป ดูรูปไม่ได้: แถวงานทุกแถวเหมือนเดิมทุกไบต์", all_trips() == before and len(before) == 25)
+
+with db.engine.begin() as c:
+    c.execute(update(db.trips).where(db.trips.c.id == cut_tail)
+              .values(model="reader-b", prompt_version="cccccccccc", booking_code="A-TESTKEY9002AV"))
+check("❗ แถวถูกอ่านใหม่หลังตรวจ: รายงานยังเป็นของตัวอ่านและค่าที่คนเห็นตอนตรวจ", report(W46[0]) == got)
+
+r = ask("phone-a", confirm(SEEN[no_clock], absent=("trip_time",), seconds=5), week=W46[0])
+again = report(W46[0])
+check("ย้อนไปแก้คำตอบของใบก่อน: รายงานใช้คำตอบล่าสุด ไม่นับใบซ้ำ",
+      r.json()["slip"] is None and counts(again["total"], "trip_time") == (2, 0, 0, 2, 0)
+      and again["total"]["slips"] == 4 and len(again["misses"]) == 2, again["total"]["fields"]["trip_time"])
+sent = [a["detail"]["facts"].get("trip_time")
+        for a in db.list_actions(action="answer.check", target=f"trip:{no_clock}")]
+check("❗ คำตอบที่ถูกแทนยังอยู่ในบันทึกการกระทำ", sent == [None, "08:05"], sent)
+
+with db.engine.begin() as c:
+    c.execute(insert(db.key_facts).values(trip_id=plain, field="retired_field", truth="1.00", row_value="2.00",
+                                          checked_at=db._now()))
+check("ช่องที่เลิกตรวจแล้วยังเก็บอยู่ แต่ไม่อยู่ในรายงาน", report(W46[0]) == again)
+
+every = report("all")
+check("ทุกสัปดาห์รวมกัน",
+      (every["week"], every["label"], every["closed"]) == ("all", "ทุกสัปดาห์", False)
+      and every["progress"] == {"eligible": 21, "checked": 16, "no_picture": 2}
+      and every["total"]["slips"] == 16 and every["total"]["all_right"] == 14, (every["progress"], every["total"]["slips"]))
+newest = report()
+check("ไม่ระบุสัปดาห์ ได้สัปดาห์ล่าสุด พร้อมรายการสัปดาห์ให้เลือก",
+      newest["week"] == W48[0] and newest["total"]["slips"] == 1
+      and newest["weeks"] == [{"date_from": W48[0], "label": "2026-W48", "closed": False},
+                              {"date_from": W47[0], "label": "2026-W47", "closed": True},
+                              {"date_from": W46[0], "label": "2026-W46", "closed": False}], newest["weeks"])
+check("สัปดาห์ที่ไม่มีงาน ตอบ 404", report("2020-01-06") == 404)
+size = stored()
+report(W46[0])
+report("all")
+now = all_trips()
+check("❗ เปิดรายงานไม่เขียนอะไร และแถวงานที่ชุดเฉลยไม่ได้แตะยังเหมือนเดิมทุกไบต์",
+      stored() == size and all(now[i] == before[i] for i in before if i != cut_tail))
 
 print("\nผ่านทั้งหมด ✅" if ok else "\n✗ มีข้อที่ไม่ผ่าน")
 sys.exit(0 if ok else 1)

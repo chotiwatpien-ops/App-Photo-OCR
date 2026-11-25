@@ -704,6 +704,17 @@ def duplicate_report_xlsx(week: str):
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
 
 
+@app.get("/api/answer-key/report")
+def answer_key_report(week: str = ""):
+    """ชุดเฉลย of one week: how far the check got and how often each field was read right.
+    week '' is the newest week, 'all' is every week together."""
+    import answer_key
+    try:
+        return answer_key.report(week)
+    except LookupError:
+        raise HTTPException(404, "ไม่พบสัปดาห์นี้")
+
+
 @app.post("/api/answer-key/check")
 def answer_key_check(body: dict):
     """One turn of the ชุดเฉลย check loop: the answer to the slip this phone holds comes in, if
