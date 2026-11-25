@@ -111,6 +111,10 @@ export const api = {
   markChecked: (ids) => fetch('/api/duplicates/checked', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }),
   }).then(handle),
+  // ชุดเฉลย: the report of a week, and one turn of the check loop (answer in, next slip out)
+  answerKeyReport: (week = '') => fetch(`/api/answer-key/report?week=${week}`).then(handle),
+  answerKeyCheck: (week, checker, answer) =>
+    fetch('/api/answer-key/check', json('POST', { week, checker, answer })).then(handle),
   restoreTrip: (id) => fetch(`/api/trips/${id}/restore`, { method: 'POST' }).then(handle),
   commit: (id, force = false) =>
     fetch(`/api/jobs/${id}/commit${force ? '?force=true' : ''}`, { method: 'POST' }).then(handle),

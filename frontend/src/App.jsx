@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { api, exportUrl } from './api.js'
+import AnswerKey from './AnswerKey.jsx'
 import Dashboard from './Dashboard.jsx'
 import Home from './Home.jsx'
 import Icon from './Icon.jsx'
@@ -58,7 +59,7 @@ function ExportBar() {
   )
 }
 
-const TABS = ['overview', 'queue', 'dups', 'data', 'close', 'tools', 'home', 'dashboard']
+const TABS = ['overview', 'queue', 'dups', 'data', 'close', 'tools', 'key', 'home', 'dashboard']
 
 export default function App() {
   const [auth, setAuth] = useState(null) // {auth_required, logged_in}
@@ -107,7 +108,7 @@ export default function App() {
   }, [activeJob])
 
   useEffect(() => {
-    const names = { overview: 'ภาพรวม', queue: 'คิวตรวจ', dups: 'งานซ้ำ', data: 'ข้อมูล', close: 'ปิดสัปดาห์', tools: 'เครื่องมือเพิ่มเติม' }
+    const names = { overview: 'ภาพรวม', queue: 'คิวตรวจ', dups: 'งานซ้ำ', data: 'ข้อมูล', close: 'ปิดสัปดาห์', tools: 'เครื่องมือเพิ่มเติม', key: 'ชุดเฉลย' }
     const here = window.location.hash === '#support' ? 'Support' : activeJob ? activeJob.driver_name : names[view]
     document.title = here ? `${here} · Rider Photo OCR` : 'Rider Photo OCR'
   }, [view, activeJob])
@@ -124,7 +125,7 @@ export default function App() {
     ['data', 'ข้อมูล', 'data'], ['close', 'ปิดสัปดาห์', 'close'],
   ]
   // what is needed now and then lives behind the gear, off the five tabs
-  const MORE = [['tools', 'เครื่องมือเพิ่มเติม'], ['home', 'หน้าจอเดิม: การอ่านรูป'], ['dashboard', 'หน้าจอเดิม: Dashboard']]
+  const MORE = [['key', 'ชุดเฉลย: วัดความแม่นยำ AI'], ['tools', 'เครื่องมือเพิ่มเติม'], ['home', 'หน้าจอเดิม: การอ่านรูป'], ['dashboard', 'หน้าจอเดิม: Dashboard']]
   const go = (k) => {
     setActiveJob(null); setView(k); window.scrollTo(0, 0)
     try { window.history.replaceState(null, '', `#${k}`) } catch { /* sandboxed */ }
@@ -214,6 +215,8 @@ export default function App() {
           <DupAlbums onGo={go} />
         ) : view === 'close' ? (
           <CloseWeek onOpenJob={openJob} />
+        ) : view === 'key' ? (
+          <AnswerKey />
         ) : (
           <div className="grid gap-6 lg:grid-cols-[420px_1fr]">
             <NewJobForm onCreated={(job) => { setActiveJob(job); refreshJobs() }} />
