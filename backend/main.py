@@ -704,6 +704,38 @@ def duplicate_report_xlsx(week: str):
                     headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"})
 
 
+@app.post("/api/answer-key/check")
+def answer_key_check(body: dict):
+    """One turn of the ชุดเฉลย check loop: the answer to the slip this phone holds comes in, if
+    there is one, and the slip to check now goes out. Body {week, checker, answer?}."""
+    from dataclasses import asdict
+
+    import answer_key
+    week, checker = str(body.get("week") or ""), str(body.get("checker") or "")[:32]
+    if not checker:
+        raise HTTPException(400, "ไม่รู้ว่าเครื่องไหนกำลังตรวจ โหลดหน้าใหม่แล้วลองอีกครั้ง")
+    answer = None
+    if body.get("answer") is not None:
+        try:
+            answer = answer_key.parse_answer(body["answer"])
+        except answer_key.BadAnswer as e:
+            raise HTTPException(400, str(e))
+        # the facts ride in the log because a slip answered again keeps only its last answer
+        if isinstance(answer, answer_key.Checked):
+            _note("answer.check", f"trip:{answer.trip_id}", week=week, checker=checker, seconds=answer.seconds,
+                  facts={f.field: f.truth for f in answer.facts if f.truth is not None},
+                  absent=[f.field for f in answer.facts if f.truth is None])
+        else:
+            _note("answer.check", f"trip:{answer.trip_id}", week=week, checker=checker, no_picture=True)
+    try:
+        t = answer_key.turn(week, checker, answer)
+    except answer_key.NotHandedOut:
+        raise HTTPException(409, "ใบนี้ไม่ได้อยู่ในชุดที่ระบบสุ่มให้ตรวจ")
+    except LookupError:
+        raise HTTPException(404, "ไม่พบสัปดาห์นี้")
+    return {"progress": asdict(t.progress), "slip": asdict(t.slip) if t.slip else None}
+
+
 @app.get("/api/accounting/albums")
 def accounting_albums(week: str):
     """Per album: sent, usable, repeated, still waiting. Kept with the week's cached view, so the
