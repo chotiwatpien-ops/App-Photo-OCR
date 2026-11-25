@@ -2183,8 +2183,9 @@ def review_queue_count() -> int:
 def approve_trip(trip_id) -> dict:
     """Approve a single row (after a person looked at it) and sync its job's status."""
     with engine.begin() as c:
-        t = c.execute(select(trips.c.job_id, trips.c.status, trips.c.trip_date,
-                             trips.c.booking_code, trips.c.base_fare, trips.c.trip_time)
+        t = c.execute(select(trips.c.id, trips.c.job_id, trips.c.status, trips.c.trip_date,
+                             trips.c.booking_code, trips.c.base_fare, trips.c.trip_time,
+                             trips.c.distance_km, trips.c.pickup_text, trips.c.dropoff_text)
                       .where(trips.c.id == trip_id)).mappings().first()
         if not t:
             return {"error": "not found"}
@@ -2212,6 +2213,17 @@ def approve_trip(trip_id) -> dict:
             if twin:
                 return {"error": f"เที่ยวนี้อนุมัติไปแล้วในสัปดาห์เดียวกัน ({twin}) — "
                                  f"ถ้าเป็นรูปซ้ำให้กดลบแทน"}
+            # The same trip under a code read a letter or two differently at Grab's line break:
+            # the round holds it (_hold_suspects), and a person's press let it through. W48 counted
+            # four trips twice that way (2026-11-24). Only the strong evidence refuses; a regular
+            # commute repeats a route, never a code.
+            import same_trip
+            if t["base_fare"] is not None:
+                near, kind = same_trip.find_twin(
+                    dict(t), _approved_at_fares(c, (jm["date_from"], jm["date_to"]), [t["base_fare"]]))
+                if near is not None and kind == same_trip.CODE:
+                    return {"error": f"เที่ยวนี้น่าจะอนุมัติไปแล้วในสัปดาห์เดียวกัน ({near['file_name']}): "
+                                     f"{same_trip.REASON[kind]} — ดูรูปคู่กัน ถ้าเที่ยวเดียวกันให้กดไม่ใช้งานนี้"}
         c.execute(update(trips).where(trips.c.id == trip_id)
                   .values(committed=1, auto_approved=0, image_blob=None))
         c.execute(update(trips).where(trips.c.merged_into == trip_id).values(image_blob=None))
