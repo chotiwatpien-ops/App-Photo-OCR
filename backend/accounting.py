@@ -43,8 +43,8 @@ WHEEL = re.compile(r"^\s*(?:\d\s*W)\s*[-_ ]*(?:(?:win|home|taxi)\b\s*[-_ ]*)?", 
 # Part of an album Ops uploaded under another name. W46: 1,728 + these 20 = the 1,748 in the name
 # of the album they came from (Fiat 2026-11-18: count them as one).
 ALBUM_INTO = {"2W Karnjana ทดสอบ": "2W Karnjana 1748 งาน"}
-# One Admin whose albums Ops name two ways (Fiat 2026-11-25: รวม Parichart กับ Parichat)
-ADMIN_AS = {"Parichart": "Parichat"}
+# One Admin whose albums Ops name two ways (Fiat 2026-11-25: Parichart = Parichat, Karnjana = Kanchana)
+ADMIN_AS = {"Parichart": "Parichat", "Karnjana": "Kanchana"}
 
 
 def canon(album):

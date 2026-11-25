@@ -84,7 +84,7 @@ a = next(x for x in d["albums"] if x["album"] == A)
 b = next(x for x in d["albums"] if x["album"] == B)
 check("❗ อัลบั้มที่วางครั้งแรกสัปดาห์ก่อน ไม่ถูกนับซ้ำในรายงานนี้", all(x["album"] != OLD for x in d["albums"]),
       [x["album"] for x in d["albums"]])
-check("ชื่อ Admin อ่านจากชื่ออัลบั้ม", (a["admin"], b["admin"]) == ("Karnjana", "Ploy"))
+check("ชื่อ Admin อ่านจากชื่ออัลบั้ม", (a["admin"], b["admin"]) == ("Kanchana", "Ploy"))
 check("❗ งานที่ใช้ได้ = ลงไฟล์นี้ 4 + ไปลง W47 2 + ยังรอ 1",
       (a["usable"], a["used_here"], a["used_later"], a["waiting"]) == (7, 4, 2, 1), a)
 check("ลงไฟล์แยกตาม Service Type (Saver Car นับเป็น Standard Car)",
@@ -97,7 +97,7 @@ check("สำเนาที่หาต้นฉบับไม่เจอ น
 check("❗ รูปที่ส่งมา = เต็ม + ครึ่ง + ไม่ทราบ", a["pictures"] == a["full"] + a["half"] + a["unknown"] == 23, a)
 check("❗ รูปเต็ม: แคปยาว 3 + ที่ถูกลบ 1 (อัลบั้มรู้จาก job) + สำเนาของรูปยาว 1",
       (b["full"], b["half"], b[accounting.DELETED], b[accounting.COPY]) == (5, 0, 1, 1), b)
-k = next(x for x in d["admins"] if x["admin"] == "Karnjana")
+k = next(x for x in d["admins"] if x["admin"] == "Kanchana")
 check("สรุปต่อ Admin รวมจากทุกอัลบั้มของคนนั้น", k["pictures"] == a["pictures"] and k["albums"] == 1)
 whys = {(i["album"], i["why"]) for i in d["items"]}
 check("รายการที่ใช้ไม่ได้มีครบทุกเหตุผล พร้อมลิงก์ของรูปซ้ำเป๊ะ",
@@ -126,7 +126,7 @@ check("งานของอัลบั้มสัปดาห์ก่อน�
 s = list(wb["สรุป"].iter_rows(values_only=True))
 names = [r[0] for r in s]
 check("❗ หน้าสรุปของสัปดาห์ที่ยังไม่ปิดขึ้นว่ายอดชั่วคราว", "ยอดชั่วคราว" in s[0][0], s[0][0])
-check("แถว Admin มีอัลบั้มอยู่ใต้ และปิดท้ายด้วยแถวรวม", names.index("Karnjana") + 1 == names.index(A)
+check("แถว Admin มีอัลบั้มอยู่ใต้ และปิดท้ายด้วยแถวรวม", names.index("Kanchana") + 1 == names.index(A)
       and "รวมทุก Admin" in names, names)
 check("แถวอัลบั้มพับเก็บได้", wb["สรุป"].row_dimensions[names.index(A) + 1].outlineLevel == 1)
 check("หน้าสรุปบอกงานจากอัลบั้มสัปดาห์ก่อน", any(str(n).startswith("งานจากอัลบั้มของสัปดาห์ก่อน") for n in names), names)
@@ -161,7 +161,7 @@ check("สัปดาห์ที่ปิดแล้วเรียกรู�
       any(i["why"] == accounting.UNPAIRED for i in closed["items"]))
 
 for name, want in (("2W Parichart2  473 งาน", "Parichat"), ("2W Parichat 71งาน 23Nov", "Parichat"), ("4 W Ploy 357งาน 11Nov 2", "Ploy"),
-                   ("2W Tae รวมงาน 295 16Nov", "Tae"), ("2W-Win Karnjana = 140", "Karnjana"),
+                   ("2W Tae รวมงาน 295 16Nov", "Tae"), ("2W-Win Karnjana = 140", "Kanchana"),
                    ("2W-Home สแตน = 39", "สแตน"), ("4W Loli 105 งาน 16Nov", "Loli")):
     check(f"Admin ของ {name!r} = {want}", accounting.admin_of(name) == want, accounting.admin_of(name))
 
