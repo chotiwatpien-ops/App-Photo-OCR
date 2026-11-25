@@ -1149,8 +1149,13 @@ def set_not_used(trip_id):
         why = f"{NOT_USED}: ซ้ำกับ {twin['file_name']}" if twin else f"{NOT_USED}: ไม่ใช่งาน"
         c.execute(update(trips).where(trips.c.id == trip_id)
                   .values(status=status, note=f"{why} | {r['note']}" if r["note"] else why))
-        _release_dup_flags(c, [trip_id])
-        _release_parked_copies(c, [trip_id])
+        # Only a row that is no trip at all frees what was held against it. A repeat leaves its
+        # twin counting the trip, and releasing 'parked copies of its code' released the row
+        # itself whenever the twin's code was read a letter differently: W48 lost four rows
+        # back to the queue that way, and 'approve all that pass' counted them twice.
+        if status == "voided":
+            _release_dup_flags(c, [trip_id])
+            _release_parked_copies(c, [trip_id])
         return status
 
 
