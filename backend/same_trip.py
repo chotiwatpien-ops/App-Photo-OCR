@@ -24,6 +24,10 @@ _FOLD = str.maketrans({"O": "0", "Q": "0", "I": "1", "L": "1"})
 # is only unlikely when the codes are that long: short ones (cut off by the reader, or made-up test
 # codes like A-VRF00019 / A-VRF00020) are not compared this way.
 MIN_CODE = 12
+# The reader sometimes stops at that line break: 'A-AWBF7H4W' or 'A-AW6NO6QV...' (W46 had 24, W47
+# 54). Such a cut code is the full code it starts, when at least this much of it survived and the
+# fare and a distance on both rows agree.
+MIN_CUT = 8
 
 
 def fold(code) -> str:
@@ -62,6 +66,9 @@ def kind(a, b):
     ca, cb = fold(a.get("booking_code")), fold(b.get("booking_code"))
     if (len(ca) >= MIN_CODE and len(cb) >= MIN_CODE and _close(ca, cb)
             and (ka is None or kb is None or _eq(ka, kb))):
+        return CODE
+    cut, whole = sorted((ca, cb), key=len)
+    if MIN_CUT <= len(cut) < MIN_CODE <= len(whole) and whole.startswith(cut) and _eq(ka, kb):
         return CODE
     ta, tb = a.get("trip_time"), b.get("trip_time")
     pa, da = _place(a.get("pickup_text")), _place(a.get("dropoff_text"))
