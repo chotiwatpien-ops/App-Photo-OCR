@@ -113,14 +113,20 @@ last = [c.value for c in list(wb["สรุปต่อ Admin"].iter_rows())[-1]
 check("แถวรวมท้ายชีตสรุปต่อ Admin", last[0] == "รวม" and last[2] == sum(x["pictures"] for x in d["admins"]), last)
 
 # --- the first sheet: pictures → trips → read → final, with the reasons -------------------------
-check("❗ เทียบงาน = Final 6 + ซ้ำ 2 (สำเนา 1 + เลขจอง 1) + อื่นๆ 2 (ลบเดิม 1 + อ่านไม่ได้ 1) + ค้าง 2",
-      (a["jobs"], a["final"], a["dup"], a[accounting.DELETED], a["other"], a["pending"]) == (12, 6, 2, 1, 2, 2), a)
+check("❗ เทียบงาน = Final 6 + ซ้ำ 2 (สำเนา 1 + เลขจอง 1) + อื่นๆ 1 (ลบเดิม) + รอดำเนินการ 1 (รอคนตรวจ) "
+      "+ ติดปัญหารูป 2 (อ่านไม่ได้ 1 + รูปครึ่งไม่มีคู่ 1)",
+      (a["jobs"], a["final"], a["dup"], a[accounting.DELETED], a["other"], a["in_progress"], a["problem"])
+      == (12, 6, 2, 1, 1, 1, 2), a)
 check("อ่านได้ = Final + รอคนตรวจ + เลขจองซ้ำ + ลบ (อ่านไม่ได้ไม่นับ)", a["read"] == 6 + 1 + 1 + 1, a)
-check("❗ ค้างแยกเหตุผล: รอคนตรวจ 1 · รูปครึ่งรอคู่ 1 รูป",
+check("❗ แยกเหตุผล: รอคนตรวจ 1 · รูปครึ่งไม่มีคู่ 1 รูป",
       (a[accounting.REVIEW], a[accounting.READING], a[accounting.FILING], a[accounting.UNPAIRED]) == (1, 0, 0, 1), a)
 check("ยอด Ops เทียบกับเทียบงาน", (a["ops"], a["ops_gap"], b["ops"], b["jobs"], b["ops_gap"]) == (10, -2, 5, 5, 0), (a, b))
 check("❗ แถวรวมต้องบวกกลับได้", d["total"]["jobs"] == d["total"]["final"] + d["total"]["dup"]
-      + d["total"]["other"] + d["total"]["pending"], d["total"])
+      + d["total"]["other"] + d["total"]["in_progress"] + d["total"]["problem"], d["total"])
+heads = list(wb["สรุป"].iter_rows(values_only=True))[1]
+check("❗ หน้าสรุปแยกรอดำเนินการกับติดปัญหารูป ไม่มีช่องค้างรวม",
+      {"รอดำเนินการ", "ติดปัญหารูป", "ติดปัญหารูป · อ่านไม่ได้"} <= set(heads) and "ค้าง" not in heads, heads)
+check("สัปดาห์ที่ยังไม่ปิด รูปครึ่งเรียกว่ายังไม่เจอคู่", "ติดปัญหารูป · รูปครึ่งยังไม่เจอคู่ (รูป)" in heads, heads)
 check("หน้าสรุปไม่มีคอลัมน์ลบแล้ว", "ลบ" not in list(wb["สรุป"].iter_rows(values_only=True))[1])
 check("งานของอัลบั้มสัปดาห์ก่อนที่ลงไฟล์สัปดาห์นี้ แยกบอก ไม่นับซ้ำ", d["from_earlier"] == {OLD: 1}, d["from_earlier"])
 s = list(wb["สรุป"].iter_rows(values_only=True))
@@ -146,10 +152,12 @@ db.record_pool_run("move", "Week 23-29 Nov", {}, "", {"started_at": "2026-11-24 
 d48 = accounting.build(*W48)
 by = {x["album"]: x for x in d48["albums"]}
 check("❗ อัลบั้มทดสอบรวมเข้าชุด 1748 เป็นแถวเดียว", PART not in by and by[MAIN]["final"] == 2, sorted(by))
-check("❗ แยกงานค้าง: รออ่าน 1 · รอลงไฟล์ 1",
-      (by[MAIN][accounting.READING], by[MAIN][accounting.FILING], by[MAIN]["pending"]) == (1, 1, 2), by[MAIN])
+check("❗ รอดำเนินการ = รออ่าน 1 + รอลงไฟล์ 1 ไม่นับเป็นติดปัญหา",
+      (by[MAIN][accounting.READING], by[MAIN][accounting.FILING], by[MAIN]["in_progress"], by[MAIN]["problem"])
+      == (1, 1, 2, 0), by[MAIN])
 check("❗ อัลบั้มที่ยังไม่มีงานเข้าระบบก็ขึ้นในรายงาน โดยนับรูปครึ่งที่รอคู่",
-      EMPTY in by and (by[EMPTY]["half"], by[EMPTY]["pending"], by[EMPTY]["final"]) == (3, 2, 0), sorted(by))
+      EMPTY in by and (by[EMPTY]["half"], by[EMPTY]["problem"], by[EMPTY]["in_progress"], by[EMPTY]["final"])
+      == (3, 2, 0, 0), sorted(by))
 check("อัลบั้มที่เริ่มสัปดาห์ก่อนไม่โผล่ซ้ำจากรูปที่ค้างในกอง", A not in by, sorted(by))
 
 db.close_week(*W46)
@@ -213,12 +221,14 @@ main._dup_cache.clear()
 rep = client.get(f"/api/accounting/albums?week={W42[0]}").json()
 kanchana = next(g for g in rep["admins"] if g["admin"] == "Kanchana")["albums"][0]
 check("❗ รายงานหน้าเว็บ: อัลบั้มอยู่ใต้ Admin ส่งมา 7 = ได้งาน 3 + ซ้ำ 2 + ใช้ไม่ได้ 2",
-      (kanchana["album"], kanchana["sent"], kanchana["final"], kanchana["dup"], kanchana["other"], kanchana["pending"])
+      (kanchana["album"], kanchana["sent"], kanchana["final"], kanchana["dup"], kanchana["other"],
+       kanchana["in_progress"] + kanchana["problem"])
       == (KAN, 7, 3, 2, 2, 0), kanchana)
 check("❗ บอกจำนวนรูปในอัลบั้ม แยกรูปเต็มกับรูปครึ่ง",
       (kanchana["pictures"], kanchana["full"], kanchana["half"], kanchana["unknown"]) == (11, 3, 8, 0), kanchana)
 check("❗ ทุกอัลบั้มบวกกลับเป็นยอดส่งมา และแถวรวมตรงกับผลรวม",
-      all(x["sent"] == x["final"] + x["dup"] + x["other"] + x["pending"] for g in rep["admins"] for x in g["albums"])
+      all(x["sent"] == x["final"] + x["dup"] + x["other"] + x["in_progress"] + x["problem"]
+          for g in rep["admins"] for x in g["albums"])
       and rep["total"]["sent"] == sum(x["sent"] for g in rep["admins"] for x in g["albums"]), rep)
 check("บอกว่าสัปดาห์ปิดแล้วหรือยัง", client.get(f"/api/accounting/albums?week={W46[0]}").json()["closed"] is True
       and rep["closed"] is False)

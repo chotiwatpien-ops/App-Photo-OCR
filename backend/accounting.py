@@ -36,7 +36,7 @@ DELETED = "ลบในคิวตรวจ"
 DELETED_REPEAT = "ซ้ำ (คนกดลบ)"
 COPY ="รูปซ้ำเป๊ะ (ไฟล์เดียวกัน)"
 UNPAIRED = "รูปครึ่งที่หาคู่ไม่ได้"
-WAITING_PAIR = "รูปครึ่งรอคู่"                  # the same pictures while the week is open
+WAITING_PAIR = "รูปครึ่งยังไม่เจอคู่"                # the same pictures while the week is open
 READING, REVIEW, FILING = "รออ่าน", "รอคนตรวจ", "รอลงไฟล์"
 TAG = re.compile(r"_(\d+)\+(\d+)_฿")
 WHEEL = re.compile(r"^\s*(?:\d\s*W)\s*[-_ ]*(?:(?:win|home|taxi)\b\s*[-_ ]*)?", re.I)
@@ -338,9 +338,10 @@ def build(d_from, d_to):
         # in trips: a full picture is one, two halves are one, a lone half is still one trip short
         dup_copy = v["copy_full"] + math.ceil((v["copy_half"] + v["unknown"]) / 2)
         dup_read = bad[REPEAT] + bad[DELETED_REPEAT]
-        other = bad[DELETED] + bad[UNREADABLE] + bad[VOIDED] + bad[SET_ASIDE]
-        pending = waiting + math.ceil(lone / 2)
-        jobs = final + dup_copy + dup_read + other + pending
+        # Fiat 2026-11-25: work still moving through our steps apart from pictures that cannot become a trip
+        other = bad[DELETED] + bad[VOIDED] + bad[SET_ASIDE]
+        problem = math.ceil(lone / 2) + bad[UNREADABLE]
+        jobs = final + dup_copy + dup_read + other + waiting + problem
         ops = dr.ops_count(a)
         albums.append({
             "album": a, "admin": admin_of(a), "pictures": v["full"] + v["half"] + v["unknown"],
@@ -351,7 +352,7 @@ def build(d_from, d_to):
             "unusable": sum(v["bad"].values()), **bad,
             **{k: v["bad_pictures"].get(k, 0) for k in BAD_PICTURES},
             "jobs": jobs, "final": final, "dup": dup_copy + dup_read, "dup_copy": dup_copy,
-            "other": other, "pending": pending,
+            "other": other, "in_progress": waiting, "problem": problem,
             "read": final + v["waiting"][REVIEW] + v["waiting"][FILING] + dup_read + bad[DELETED]
                     + bad[VOIDED] + bad[SET_ASIDE],
             READING: v["waiting"][READING], REVIEW: v["waiting"][REVIEW], FILING: v["waiting"][FILING],
@@ -373,7 +374,8 @@ def album_report(data):
     def counts(x):
         return {"pictures": x["pictures"], "full": x["full"], "half": x["half"], "unknown": x["unknown"],
                 "sent": x["jobs"], "ops": x["ops"], "final": x["final"], "dup": x["dup"],
-                "other": x["other"], "pending": x["pending"]}
+                "other": x["other"], "in_progress": x["in_progress"], "problem": x["problem"],
+                "unreadable": x[UNREADABLE], "unpaired": x[UNPAIRED]}
     return {"week": data["week"], "d_from": data["d_from"], "d_to": data["d_to"], "closed": data["closed"],
             "made_at": data["made_at"], "total": counts(data["total"]),
             "admins": [{"admin": a["admin"], "albums": [{"album": x["album"], **counts(x)} for x in data["albums"]
@@ -392,18 +394,19 @@ BAD_TRIPS = (REPEAT, DELETED_REPEAT, DELETED, UNREADABLE, VOIDED, SET_ASIDE)
 BAD_PICTURES = (COPY, UNPAIRED)
 SUM_KEYS = ("pictures", "full", "half", "unknown", "usable", "used_here", *SERVICES, "used_later",
             "waiting", "unusable", *BAD_TRIPS, *BAD_PICTURES, "jobs", "final", "dup", "dup_copy",
-            "other", "pending", "read", READING, REVIEW, FILING)
+            "other", "in_progress", "problem", "read", READING, REVIEW, FILING)
 # the first sheet: one line per Admin with its albums under it
 SUMMARY = [("full", "รูปเต็ม"), ("half", "รูปครึ่ง"), ("jobs", "เทียบงาน"), ("ops", "Ops จด"),
            ("ops_gap", "Ops มากกว่า (+) / น้อยกว่า (-)"), ("read", "อ่านได้"), ("final", "Final"),
            ("used_here", "Final · ลงไฟล์สัปดาห์นี้"), ("used_later", "Final · ไปลงสัปดาห์ถัดไป"),
-           ("dup", "ซ้ำ"), ("other", "ใช้ไม่ได้อื่นๆ"), ("pending", "ค้าง"),
+           ("dup", "ซ้ำ"), ("other", "ใช้ไม่ได้อื่นๆ"), ("in_progress", "รอดำเนินการ"), ("problem", "ติดปัญหารูป"),
            ("dup_copy", "ซ้ำ · รูปซ้ำเป๊ะ (งาน)"), (REPEAT, "ซ้ำ · เลขจองซ้ำ"),
            (DELETED_REPEAT, "ซ้ำ · คนกดลบ (ก่อนเลิกปุ่มลบ)"),
-           (UNREADABLE, "อื่นๆ · อ่านไม่ได้"), (VOIDED, "อื่นๆ · ยกเลิก"), (SET_ASIDE, "อื่นๆ · พักไว้"),
+           (VOIDED, "อื่นๆ · ยกเลิก"), (SET_ASIDE, "อื่นๆ · พักไว้"),
            (DELETED, "อื่นๆ · คนกดลบ (ก่อนเลิกปุ่มลบ)"),
-           (READING, f"ค้าง · {READING}"), (REVIEW, f"ค้าง · {REVIEW}"), (FILING, f"ค้าง · {FILING}"),
-           (UNPAIRED, f"ค้าง · {WAITING_PAIR} (รูป)")]
+           (READING, f"รอดำเนินการ · {READING}"), (REVIEW, f"รอดำเนินการ · {REVIEW}"),
+           (FILING, f"รอดำเนินการ · {FILING}"),
+           (UNREADABLE, f"ติดปัญหารูป · {UNREADABLE}"), (UNPAIRED, f"ติดปัญหารูป · {UNPAIRED} (รูป)")]
 COLUMNS = [("pictures", "รูปที่ส่งมา"), ("full", "รูปเต็ม"), ("half", "รูปครึ่ง"), ("unknown", "รูปไม่ทราบชนิด"),
            ("usable", "งานที่ใช้ได้"), ("used_here", "ลงไฟล์สัปดาห์นี้"),
            *[(s, f"ลงไฟล์ · {s}") for s in SERVICES],
@@ -425,7 +428,7 @@ def build_xlsx(data) -> bytes:
     ws.append([f"รายงานบัญชี {data['week']} ({data['d_from']} ถึง {data['d_to']}) · {state} · "
                f"ออกเมื่อ {data['made_at'].replace('T', ' ')}"])
     ws["A1"].font = Font(bold=True, size=13, color="000000" if data["closed"] else "B45309")
-    ws.append(["Admin / อัลบั้ม"] + [h for _k, h in SUMMARY])
+    ws.append(["Admin / อัลบั้ม"] + [h if data["closed"] else h.replace(UNPAIRED, WAITING_PAIR) for _k, h in SUMMARY])
     for c in ws[2]:
         c.font, c.fill = head, fill
         c.alignment = Alignment(wrap_text=True, vertical="center", horizontal="center")
@@ -485,7 +488,10 @@ def build_xlsx(data) -> bytes:
     ws = wb.create_sheet("อ่านก่อน")
     for text in (f"รายงานบัญชี {data['week']} ({data['d_from']} ถึง {data['d_to']}) · {state}",
                  "นับทุกอัลบั้มที่วางในโฟลเดอร์ของสัปดาห์นี้ อัลบั้มนับในสัปดาห์ที่วางครั้งแรก",
-                 "เทียบงาน = Final + ซ้ำ + ใช้ไม่ได้อื่นๆ + ค้าง",
+                 "เทียบงาน = Final + ซ้ำ + ใช้ไม่ได้อื่นๆ + รอดำเนินการ + ติดปัญหารูป",
+                 "รอดำเนินการ = งานที่ยังอยู่ในขั้นตอน (รออ่าน · รอคนตรวจ · อ่านแล้วรอลงไฟล์) ไม่ต้องทำอะไรเพิ่ม",
+                 "ติดปัญหารูป = รูปที่เป็นงานไม่ได้เพราะตัวรูป (อ่านไม่ได้ · รูปครึ่งหาคู่ไม่ได้) แจ้ง Admin ส่งใหม่ได้ "
+                 "· สัปดาห์ที่ยังไม่ปิด รูปครึ่งยังได้คู่ได้",
                  "งานที่คนกดไม่ใช้ยังอยู่ในระบบ: ถ้าตรงกับงานที่นับแล้วในสัปดาห์เดียวกันนับเป็นซ้ำ ถ้าไม่ตรงนับเป็นยกเลิก",
                  "งานที่คนกดลบก่อนเลิกปุ่มลบ: ถ้าเลขจองตรงกับงานที่นับแล้วในสัปดาห์เดียวกัน "
                  "(หรือต่างกันไม่เกิน 2 ตัวและค่ารอบตรงกัน) นับเป็นซ้ำ ถ้าไม่ตรงนับในใช้ไม่ได้อื่นๆ",

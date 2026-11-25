@@ -180,7 +180,11 @@ function AlbumReport({ week }) {
   const allPictures = { full: sum('full'), half: sum('half'), unknown: sum('unknown') }
   const tiles = [[`รูปในอัลบั้ม · ${pictureKinds(allPictures) || 'ไม่มีรูป'}`, fmt(sum('pictures')), 'text-ink'],
     ['ส่งมา (งาน)', fmt(sent), 'text-ink'], ['ได้งาน', fmt(sum('final')), 'text-ok-ink'],
-    [`ซ้ำ · ${pct(dup, sent)}`, fmt(dup), 'text-warn-ink'], ['ค้าง', fmt(sum('pending')), 'text-ink']]
+    [`ซ้ำ · ${pct(dup, sent)}`, fmt(dup), 'text-warn-ink'], ['รอดำเนินการ', fmt(sum('in_progress')), 'text-ink'],
+    ['ติดปัญหารูป', fmt(sum('problem')), sum('problem') ? 'text-danger-ink' : 'text-ink']]
+  const halves = r.closed ? 'รูปครึ่งหาคู่ไม่ได้' : 'รูปครึ่งยังไม่เจอคู่'
+  const problemWhy = (x) => [x.unpaired && `${halves} ${fmt(x.unpaired)} รูป`, x.unreadable && `อ่านไม่ได้ ${fmt(x.unreadable)} งาน`]
+    .filter(Boolean).join(' · ')
 
   return (
     <section aria-label="รายงานรายอัลบั้ม" className="flex flex-col gap-3">
@@ -197,15 +201,19 @@ function AlbumReport({ week }) {
           <button key={a.admin} onClick={() => setAdmin(a.admin)} aria-pressed={admin === a.admin} className={chip(admin === a.admin)}>{a.admin}</button>
         ))}
       </div>
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-px bg-line-soft border border-line rounded-xl overflow-hidden">
-        {tiles.map(([label, v, tone], i) => (
-          <div key={label} className={`bg-white px-4 py-3 ${i === 0 ? 'col-span-2 sm:col-span-1' : ''}`}>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-px bg-line-soft border border-line rounded-xl overflow-hidden">
+        {tiles.map(([label, v, tone]) => (
+          <div key={label} className="bg-white px-4 py-3">
             <p className={`text-[22px] sm:text-[26px] leading-tight font-semibold tabular-nums ${tone}`}>{v}</p>
             <p className="text-sm text-muted">{label}</p>
           </div>
         ))}
       </div>
-      {other > 0 && <p className="text-sm text-ink-soft">มีงานที่ใช้ไม่ได้ด้วยเหตุผลอื่น {fmt(other)} งาน (อ่านไม่ได้ หรือกดไม่ใช้) จึงไม่อยู่ในช่องด้านบน</p>}
+      <p className="text-sm text-ink-soft">
+        รอดำเนินการ คืองานที่ยังอยู่ในขั้นตอน (รออ่าน · รอคนตรวจ · อ่านแล้วรอลงไฟล์) ไม่ต้องทำอะไรเพิ่ม ·
+        ติดปัญหารูป คือรูปที่เป็นงานไม่ได้เพราะตัวรูป ({halves} · อ่านไม่ได้) แจ้ง Admin ส่งใหม่ได้
+      </p>
+      {other > 0 && <p className="text-sm text-ink-soft">มีงานที่คนกดไม่ใช้หรือพักไว้ {fmt(other)} งาน จึงไม่อยู่ในช่องด้านบน</p>}
       <div className="bg-white border border-line rounded-xl overflow-x-auto">
         <table className="w-full text-sm tabular-nums">
           <thead>
@@ -216,12 +224,13 @@ function AlbumReport({ week }) {
               <th className="font-normal text-right py-2 px-2 sm:px-4">ได้งาน</th>
               <th className="font-normal text-right py-2 px-2 sm:px-4">ซ้ำ</th>
               <th className="hidden sm:table-cell font-normal text-right py-2 px-4">% ซ้ำ</th>
-              <th className="hidden sm:table-cell font-normal text-right py-2 px-4">ค้าง</th>
+              <th className="hidden sm:table-cell font-normal text-right py-2 px-4">รอดำเนินการ</th>
+              <th className="hidden sm:table-cell font-normal text-right py-2 px-4">ติดปัญหารูป</th>
             </tr>
           </thead>
           {shown.map((g) => (
             <tbody key={g.admin}>
-              {!admin && <tr className="border-b border-line-soft"><th colSpan={7} className="text-left font-semibold pt-3 pb-1.5 px-4">{g.admin}</th></tr>}
+              {!admin && <tr className="border-b border-line-soft"><th colSpan={8} className="text-left font-semibold pt-3 pb-1.5 px-4">{g.admin}</th></tr>}
               {g.albums.map((a) => {
                 const high = a.sent > 0 && a.dup / a.sent >= 0.1
                 return (
@@ -230,7 +239,9 @@ function AlbumReport({ week }) {
                       {a.album}
                       <span className="sm:hidden block text-xs text-muted">{fmt(a.pictures)} รูป · {pictureKinds(a)}</span>
                       {a.ops != null && a.ops !== a.sent &&<span className="block text-xs text-warn-ink">ชื่ออัลบั้มระบุ {fmt(a.ops)} งาน นับจากรูปได้ {fmt(a.sent)}</span>}
-                      {a.other > 0 && <span className="block text-xs text-muted">ใช้ไม่ได้ด้วยเหตุผลอื่น {fmt(a.other)} งาน</span>}
+                      {a.problem > 0 && <span className="block text-xs text-danger-ink">ติดปัญหารูป {fmt(a.problem)} งาน · {problemWhy(a)}</span>}
+                      {a.in_progress > 0 && <span className="sm:hidden block text-xs text-muted">รอดำเนินการ {fmt(a.in_progress)} งาน</span>}
+                      {a.other > 0 && <span className="block text-xs text-muted">กดไม่ใช้หรือพักไว้ {fmt(a.other)} งาน</span>}
                     </td>
                     <td className="hidden sm:table-cell py-2.5 px-4 text-right whitespace-nowrap">
                       {fmt(a.pictures)}
@@ -242,7 +253,8 @@ function AlbumReport({ week }) {
                     <td className="hidden sm:table-cell py-2.5 px-4 text-right">
                       {a.dup ? <span className={high ? 'inline-block rounded-full px-2 py-0.5 bg-warn-bg text-warn-ink font-medium' : ''}>{pct(a.dup, a.sent)}</span> : '–'}
                     </td>
-                    <td className="hidden sm:table-cell py-2.5 px-4 text-right">{dash(a.pending)}</td>
+                    <td className="hidden sm:table-cell py-2.5 px-4 text-right">{dash(a.in_progress)}</td>
+                    <td className={`hidden sm:table-cell py-2.5 px-4 text-right ${a.problem ? 'text-danger-ink font-medium' : ''}`}>{dash(a.problem)}</td>
                   </tr>
                 )
               })}
