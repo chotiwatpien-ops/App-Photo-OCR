@@ -401,6 +401,38 @@ checked_pairs = Table(
     Column("checked_at", String(19), nullable=False),
 )
 
+# The answer key (ชุดเฉลย): a person looked at the slip picture of an auto-approved trip and said,
+# field by field, what the picture prints. It never changes the trip. Approved rows are frozen and
+# delivered weeks are closed, so the truth cannot live on `trips`. Only answer_key.py reads or
+# writes these two tables.
+#
+# key_slips: one row per trip handed to a person. It exists from the moment the trip is handed
+# out, so it is also the claim that keeps two people off one slip. `model` and `prompt_version`
+# are the reader as the trip row named it when the slip was answered: a later re-read must not
+# move a checked slip to another reader.
+key_slips = Table(
+    "key_slips", meta,
+    Column("trip_id", Integer, primary_key=True, autoincrement=False),
+    Column("checker", String(32), nullable=False),   # a device token, not a person
+    Column("claimed_at", String(19), nullable=False),
+    Column("outcome", String(12)),                   # NULL = handed out, not answered | checked | no_picture
+    Column("finished_at", String(19)),
+    Column("model", Text),
+    Column("prompt_version", String(10)),
+    Column("seconds", Integer),                      # picture loaded -> answer sent
+)
+
+# key_facts: one row per (trip, field) a person answered. `truth IS NULL` means the fact is not on
+# the picture. Right or wrong is truth == row_value, worked out on every read and never stored.
+key_facts = Table(
+    "key_facts", meta,
+    Column("trip_id", Integer, primary_key=True, autoincrement=False),
+    Column("field", String(32), primary_key=True),   # an answer_key.KeyField.key
+    Column("truth", Text),                           # what the picture prints, canonical text
+    Column("row_value", Text),                       # what the trip row held when the person looked
+    Column("checked_at", String(19), nullable=False),
+)
+
 TRIP_EDITABLE = [
     "trip_date", "trip_time", "service_type", "payment_method",
     "pickup_code", "dropoff_code", "pickup_text", "dropoff_text",
