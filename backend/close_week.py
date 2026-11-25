@@ -10,9 +10,10 @@ for the page to show.
     plan   every step report-only, then the audit from the database: what pressing would do
     apply  the steps for real; the week is locked (week_locks) only if the audit finds nothing
            that would put a wrong row or a missing picture in front of the customer
-    recheck  after an apply the audit stopped, and the problem was fixed by hand: the audit
-           again and the lock, nothing moved or remade. It used to take a new plan and a whole
-           second apply, two Actions runs, to lock a week whose rows were already right.
+    recheck  after an apply the audit stopped, and the problem was fixed by hand: the week's
+           pictures brought in line with its rows, then the audit again and the lock; no row is
+           moved or carried. It used to take a new plan and a whole second apply, two Actions
+           runs, to lock a week whose rows were already right.
 
 Not included: the chip audit. It reads the chip on every picture with OCR (sharded, ~an hour)
 and since 2026-09-09 the reader lets the chip decide the tier as it reads.
@@ -241,8 +242,19 @@ class Runner:
         target = ["--target", str(config.WEEKLY_TARGET_PER_GROUP)]     # the tools default to 1470
         try:
             if recheck:
-                for key in ("rehome", "carry", "carry_back", "staged", "pictures", "phase3"):
+                for key in ("rehome", "carry", "carry_back", "staged", "phase3"):
                     self.skip(key, "ทำไปแล้วตอนปิดจริงครั้งก่อน — รอบนี้ตรวจซ้ำแล้วติดป้ายอย่างเดียว")
+                # the rows were fixed by hand since the apply: a row approved has no picture yet,
+                # a row taken out still has one, and the audit below counts both
+                import ingest
+                import week_files
+
+                def pictures():
+                    made = ingest.export_only(drive, config.DRIVE_EXPORTS_FOLDER_ID,
+                                              weeks={ingest.week_label(d_from)}, with_xlsx=False)
+                    week_files.tidy(drive, config.DRIVE_EXPORTS_FOLDER_ID, d_from, d_to)
+                    return made
+                self.run_step("pictures", pictures)
                 return self._audit_and_lock(drive, d_from, d_to, n_from, n_to, apply)
             self.run_step("rehome", lambda: rehome_by_service.main(rng + ["--week", name] + flag))
             self.run_step("carry", lambda: carry_excess.main(rng + ["--week", name] + target + flag))

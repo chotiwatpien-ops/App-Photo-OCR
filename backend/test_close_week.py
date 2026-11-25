@@ -316,15 +316,23 @@ roster._drive = lambda: FakeDrive()
 cw.week_folder = lambda *a: "Week 21-27 Sep"
 week_audit.audit = lambda rows, pics: dict(clean)
 week_audit.pictures_on_drive = lambda *a: {}
+import week_files                                               # noqa: E402
+real_export, real_tidy = ingest.export_only, week_files.tidy
+ingest.export_only = lambda *a, **k: (calls.append(("pictures", (k.get("weeks"), k.get("with_xlsx")))), (0, []))[1]
+week_files.tidy = lambda drive, exports, d_from, d_to, log=print: (calls.append(("tidy", (d_from, d_to))), (0, 0))[1]
 calls.clear()
 rid = db.create_close_run(*W39, "recheck")
 cw.Runner(rid, *W39, "recheck").go()
 cw.preflight = real_pre
+ingest.export_only, week_files.tidy = real_export, real_tidy
 rr = db.get_close_run(rid)
 st = {s["key"]: s["status"] for s in rr["steps"]}
-check("ตรวจซ้ำแล้วติดป้าย: ไม่ย้าย ไม่ยกงาน ไม่สร้างรูป ไม่ออกไฟล์ — ตรวจอย่างเดียว",
-      all(st[k] == "skipped" for k in ("rehome", "carry", "carry_back", "staged", "pictures", "phase3"))
-      and st["audit"] == "done" and rr["status"] == "done" and not calls)
+check("ตรวจซ้ำแล้วติดป้าย: ไม่ย้ายแถว ไม่ยกงาน ไม่ออกไฟล์",
+      all(st[k] == "skipped" for k in ("rehome", "carry", "carry_back", "staged", "phase3"))
+      and st["audit"] == "done" and rr["status"] == "done")
+check("❗ ตรวจซ้ำ: ทำรูปที่ยังขาดของสัปดาห์นี้สัปดาห์เดียว และจัดโฟลเดอร์รูปก่อนตรวจ (แถวที่แก้มือหลังปิดจริง)",
+      st["pictures"] == "done" and [n for n, _ in calls] == ["pictures", "tidy"]
+      and dict(calls)["pictures"] == ({"2026-W39"}, False) and dict(calls)["tidy"] == W39)
 check("ตรวจซ้ำผ่าน → ติดป้ายปิด", st["lock"] == "done" and db.week_closed(W39[0]))
 
 print("\nผ่านทั้งหมด" if ok else "\n✗ มีข้อที่ไม่ผ่าน")
