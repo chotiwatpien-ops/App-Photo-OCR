@@ -85,6 +85,12 @@ check("ชิป 'Standard | SUV - 4 Seaters' → Standard Car", ns("Standard | 
 check("ชิป 'Standard SUV - 4 Seaters' → Standard Car", ns("Standard SUV - 4 Seaters", None)[0] == "Standard Car")
 check("❗ คำที่มี suv อยู่ข้างในไม่นับ", pipeline.car_is_standard("Pursuvit") == "Pursuvit")
 
+# --- Standard Taxi นับเป็น Standard Car (2026-11-25) ----------------------------------------------
+# W48 มี 1 แถว Service Type 'Standard Taxi' ค้างในกองพัก _พร้อมอ่าน เพราะไม่มีกลุ่มไหนรับ
+check("'Standard Taxi' → Standard Car", pipeline.car_is_standard("Standard Taxi") == "Standard Car")
+check("ชิป 'GrabTaxi' ในโฟลเดอร์รถยนต์ → Standard Car", ns("Standard | GrabTaxi", "4 W Standard")[0] == "Standard Car")
+check("❗ มอเตอร์ไซค์ที่มีคำ Taxi ไม่ถูกเปลี่ยนเป็นรถยนต์", pipeline.car_is_standard("Taxi Bike") == "Taxi Bike")
+
 D2_FROM, D2_TO = "2026-09-14", "2026-09-20"
 j_hold = db.create_job("(รออ่าน)", "Trips", D2_FROM, D2_TO)
 with db.engine.begin() as c:

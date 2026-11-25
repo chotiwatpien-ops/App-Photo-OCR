@@ -39,6 +39,7 @@ UNPAIRED = "รูปครึ่งที่หาคู่ไม่ได้"
 WAITING_PAIR = "รูปครึ่งยังไม่เจอคู่"                # the same pictures while the week is open
 READING, REVIEW, FILING = "รออ่าน", "รอคนตรวจ", "รอลงไฟล์"
 TAG = re.compile(r"_(\d+)\+(\d+)_฿")
+PHASE = re.compile(r"^phase\s*\d*\s*", re.I)    # '4W Phase3 Aun 88งาน': Phase3 is the batch, Aun the Admin
 WHEEL = re.compile(r"^\s*(?:\d\s*W)\s*[-_ ]*(?:(?:win|home|taxi)\b\s*[-_ ]*)?", re.I)
 # Part of an album Ops uploaded under another name. W46: 1,728 + these 20 = the 1,748 in the name
 # of the album they came from (Fiat 2026-11-18: count them as one).
@@ -62,7 +63,7 @@ def admin_of(album):
 
     A best reading of names Ops type by hand; the sheet shows it beside the album so a wrong
     one is seen."""
-    rest = WHEEL.sub("", album or "")
+    rest = PHASE.sub("", WHEEL.sub("", album or ""))
     m = re.match(r"([A-Za-z฀-๿]+)", rest)
     if not m:
         return album or "ไม่รู้อัลบั้ม"
