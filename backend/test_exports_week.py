@@ -64,6 +64,8 @@ def make(week_from, week_to, rider, n, seed, date):
     tid = db.create_trip(jid, f"{rider}{n}.jpg", jpeg(seed), "image/jpeg")
     db.update_trip(tid, {"status": "done", "kind": "full", "net_earnings": 10.0 + seed,
                          "base_fare": 10.0 + seed, "check_status": "pass", "trip_date": date})
+    with db.engine.begin() as c:     # only an approved row is pictured
+        c.execute(db.trips.update().where(db.trips.c.id == tid).values(committed=1))
     return jid
 
 

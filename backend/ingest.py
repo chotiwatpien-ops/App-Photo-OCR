@@ -381,7 +381,7 @@ def make_customer_images(drive, folder, job_id, display, **kw) -> int:
     same trip twice. Old names no row of the week uses any more are moved into _ชื่อเดิม beside
     them: out of the customer's folder, not deleted."""
     before = {r["id"]: r.get("customer_image") for r in db.trips_with_images(job_id)}
-    imgs = list(pipeline.customer_images(job_id, display, fetch=drive.download, **kw))
+    imgs = list(pipeline.customer_images(job_id, display, fetch=drive.download, approved_only=True, **kw))
     with ThreadPoolExecutor(max_workers=max(1, min(DRIVE_PARALLEL, len(imgs)))) as ex:
         list(ex.map(lambda nd: drive.upload_file(folder, nd[0], nd[1], "image/jpeg"), imgs))
     n = len(imgs)
@@ -625,7 +625,8 @@ def export_only(drive, exports_id, only_job_ids=None, with_xlsx=True, force=Fals
                                      only_missing=not force)
             # a finished row still without a picture name was skipped for want of its bytes —
             # say so, rather than leave a blank in the workbook for someone else to find
-            bare_rows = [r for r in db.trips_with_images(t["job"]["id"]) if not r.get("customer_image")]
+            bare_rows = [r for r in db.trips_with_images(t["job"]["id"], approved_only=True)
+                         if not r.get("customer_image")]
             return t["job"]["id"], n, None, len(bare_rows)
         except Exception as e:  # noqa: BLE001
             return t["job"]["id"], 0, e, 0
@@ -1173,8 +1174,12 @@ def _run(drive, inbox_id, exports_id, run_id, dry_run=False, limit=None, only=No
             processed_images += len(group)
             continue
 
+        fresh_round.update(trip_ids)
+        stats = db.auto_approve_job(job_id, fresh_ids=fresh_round)
+
         # customer images: Exports/<week>/<vehicle type>/ — all riders' images in one folder,
-        # named '<rider><n>.jpg' ('<rider>-<admin><n>.jpg' when two riders share a name in the group)
+        # named '<rider><n>.jpg' ('<rider>-<admin><n>.jpg' when two riders share a name in the group).
+        # After the approval: only approved rows are pictured, and these from the bytes in hand.
         try:
             wk = week_label(d_from)
             week_dir = drive.ensure_folder(exports_id, wk)
@@ -1189,8 +1194,6 @@ def _run(drive, inbox_id, exports_id, run_id, dry_run=False, limit=None, only=No
             issues.append((f"images:{job_id}", "images", f"อัพโหลดรูปส่งลูกค้าของ {rider} ไม่สำเร็จ: {e}"))
             errors += 1
 
-        fresh_round.update(trip_ids)
-        stats = db.auto_approve_job(job_id, fresh_ids=fresh_round)
         keep_images_for_waiting(job_id, among=trip_ids, memory=images)
         approved += stats["approved"]
         flagged += stats["flagged"]
@@ -1252,6 +1255,19 @@ def _run(drive, inbox_id, exports_id, run_id, dry_run=False, limit=None, only=No
         errs_st, _failed = export_only(drive, exports_id, only_job_ids=staged_jobs, with_xlsx=False)
         errors += errs_st
 
+
+    # A row approved anywhere but a reading path (the อนุมัติ button, the review sweep above) has
+    # no picture yet: only approved rows are pictured, so this is where its picture is made.
+    import free_dup_seats as _fds_pic
+    shut_pic = set(db.closed_weeks())
+    unpictured = db.jobs_missing_pictures(
+        wf for wf, wt in db.jobs_by_week() if _fds_pic.week_is_open(wf, wt, closed=shut_pic))
+    if unpictured:
+        log(f"🖼 สร้างรูปส่งลูกค้าให้แถวที่อนุมัติแล้วแต่ยังไม่มีรูป {len(unpictured)} job")
+        errs_pic, failed_pic = export_only(drive, exports_id, only_job_ids=set(unpictured), with_xlsx=False)
+        errors += errs_pic
+        for jid in failed_pic:
+            issues.append((f"images:{jid}", "images", f"อัพโหลดรูปส่งลูกค้า job #{jid} ไม่สำเร็จ"))
 
     # Each open week's own customer file, rewritten only when its rows changed (week_files.py).
     # The three files that held every week stopped at W45 (Fiat 2026-11-10).

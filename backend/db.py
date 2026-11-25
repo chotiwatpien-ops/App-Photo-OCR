@@ -1434,6 +1434,21 @@ def jobs_missing_dates():
                    trips.c.trip_date.is_(None))).all()]
 
 
+def jobs_missing_pictures(week_froms):
+    """Job ids holding an approved row with no customer picture, in the weeks starting week_froms.
+    A row a person approves in the web gets its picture from the next round through this."""
+    week_froms = list(week_froms)
+    if not week_froms:
+        return []
+    with engine.begin() as c:
+        return [r[0] for r in c.execute(
+            select(func.distinct(trips.c.job_id))
+            .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
+            .where(trips.c.status == "done", trips.c.committed == 1, trips.c.customer_image.is_(None),
+                   jobs.c.driver_name != HOLDING_RIDER,
+                   jobs.c.date_from.in_(week_froms))).all()]
+
+
 def open_image_issue_jobs():
     """Job ids whose customer-image upload failed and was never retried successfully."""
     with engine.begin() as c:
@@ -2429,13 +2444,18 @@ def done_trips_for_dating(job_id, only_missing=True):
         return [dict(r) for r in c.execute(q).mappings().all()]
 
 
-def trips_with_images(job_id):
+def trips_with_images(job_id, approved_only=False):
     """Done trips of a job with their image blobs — the merged bottom half's blob attached as
-    `bottom_blob`. Only useful while blobs exist (before approval clears them)."""
+    `bottom_blob`. Only useful while blobs exist (before approval clears them).
+
+    approved_only: the rows the customer's file holds, the only ones that get a delivered picture."""
+    q = select(trips.c.id, trips.c.file_name, trips.c.trip_date, trips.c.trip_time,
+               trips.c.customer_image, trips.c.image_blob, trips.c.source_url
+               ).where(trips.c.job_id == job_id, trips.c.status == "done")
+    if approved_only:
+        q = q.where(trips.c.committed == 1)
     with engine.begin() as c:
-        rows = c.execute(select(trips.c.id, trips.c.file_name, trips.c.trip_date, trips.c.trip_time,
-                                trips.c.customer_image, trips.c.image_blob, trips.c.source_url)
-                         .where(trips.c.job_id == job_id, trips.c.status == "done")).mappings().all()
+        rows = c.execute(q).mappings().all()
         bottoms = {r["merged_into"]: (r["id"], r["image_blob"], r["source_url"]) for r in c.execute(
             select(trips.c.id, trips.c.merged_into, trips.c.image_blob, trips.c.source_url)
             .where(trips.c.job_id == job_id, trips.c.status == "merged")).mappings().all()}
@@ -2563,7 +2583,7 @@ def week_scorecard(date_from, date_to, target=None):
     t = trips.c
     with engine.begin() as c:
         rows = [dict(r) for r in c.execute(
-            select(t.id, t.status, t.service_type, t.customer_image, t.net_earnings,
+            select(t.id, t.status, t.committed, t.service_type, t.customer_image, t.net_earnings,
                    t.base_fare, t.bonus, t.turbo, t.tolls, jobs.c.category, jobs.c.driver_name)
             .select_from(trips.join(jobs, jobs.c.id == trips.c.job_id))
             .where(jobs.c.date_from == date_from, jobs.c.date_to == date_to)).mappings().all()]
@@ -2589,10 +2609,10 @@ def week_scorecard(date_from, date_to, target=None):
             continue
         out["by_service"][svc] = out["by_service"].get(svc, 0) + 1
         pic = r["customer_image"]
-        if not pic:
-            out["no_picture"] += 1
-        else:
+        if pic:
             seen_pic[pic] = seen_pic.get(pic, 0) + 1
+        elif r["committed"]:            # a row still waiting is not pictured until it is approved
+            out["no_picture"] += 1
         ride = n(r["base_fare"]) + n(r["bonus"]) + n(r["turbo"])
         green = n(r["net_earnings"])
         if abs(green - ride) > 0.01 and abs(green - ride - n(r["tolls"])) > 0.01:

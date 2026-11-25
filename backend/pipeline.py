@@ -271,7 +271,7 @@ def _number_in(name, rider, wk):
     return k if stitch.customer_name(rider, k, wk) == name else None
 
 
-def customer_images(job_id, rider, fetch=None, cache=None, only_missing=True):
+def customer_images(job_id, rider, fetch=None, cache=None, only_missing=True, approved_only=False):
     """Yield (file_name, jpeg_bytes) for every trip in customer order: '<rider>1.jpg', '<rider>2.jpg', ...
 
     Photos are not kept in the database any more, so the bytes come from `cache` — what the
@@ -289,7 +289,10 @@ def customer_images(job_id, rider, fetch=None, cache=None, only_missing=True):
     rebuilt and re-uploaded the lot: run #141 spent forty minutes remaking 1,200 files whose
     contents had not changed. New work takes the numbers after the highest one in use, so the
     numbers no longer run strictly in date order — set CUSTOMER_IMAGE_NUMBERING=bydate to go
-    back to renumbering."""
+    back to renumbering.
+
+    approved_only=True pictures only the rows the customer's file holds: the delivered folder must
+    hold nothing else (ingest.make_customer_images). The web's zip and local commit pass nothing."""
     import stitch
     from datetime import date as _date
     job = db.get_job_meta(job_id)
@@ -297,7 +300,7 @@ def customer_images(job_id, rider, fetch=None, cache=None, only_missing=True):
     if job and job.get("date_from"):
         _, w, _ = _date.fromisoformat(job["date_from"]).isocalendar()
         wk = f"WK{w:02d}"
-    rows = db.trips_with_images(job_id)
+    rows = db.trips_with_images(job_id, approved_only=approved_only)
     rows.sort(key=lambda r: (r["trip_date"] or "9999", _natural_key(r["file_name"])))
     cache = cache or {}
     # From ORDER_ID_FROM the picture is named by its Order ID (order_id.py), when the rider has a
