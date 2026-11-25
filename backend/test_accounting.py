@@ -160,7 +160,7 @@ check("ชื่อไฟล์สัปดาห์ที่ปิดแล้�
 check("สัปดาห์ที่ปิดแล้วเรียกรูปค้างว่าหาคู่ไม่ได้",
       any(i["why"] == accounting.UNPAIRED for i in closed["items"]))
 
-for name, want in (("2W Parichart2  473 งาน", "Parichart"), ("4 W Ploy 357งาน 11Nov 2", "Ploy"),
+for name, want in (("2W Parichart2  473 งาน", "Parichat"), ("2W Parichat 71งาน 23Nov", "Parichat"), ("4 W Ploy 357งาน 11Nov 2", "Ploy"),
                    ("2W Tae รวมงาน 295 16Nov", "Tae"), ("2W-Win Karnjana = 140", "Karnjana"),
                    ("2W-Home สแตน = 39", "สแตน"), ("4W Loli 105 งาน 16Nov", "Loli")):
     check(f"Admin ของ {name!r} = {want}", accounting.admin_of(name) == want, accounting.admin_of(name))

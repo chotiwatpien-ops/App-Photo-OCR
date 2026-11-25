@@ -43,6 +43,8 @@ WHEEL = re.compile(r"^\s*(?:\d\s*W)\s*[-_ ]*(?:(?:win|home|taxi)\b\s*[-_ ]*)?", 
 # Part of an album Ops uploaded under another name. W46: 1,728 + these 20 = the 1,748 in the name
 # of the album they came from (Fiat 2026-11-18: count them as one).
 ALBUM_INTO = {"2W Karnjana ทดสอบ": "2W Karnjana 1748 งาน"}
+# One Admin whose albums Ops name two ways (Fiat 2026-11-25: รวม Parichart กับ Parichat)
+ADMIN_AS = {"Parichart": "Parichat"}
 
 
 def canon(album):
@@ -55,7 +57,7 @@ def _raw_names(albums):
 
 
 def admin_of(album):
-    """The Admin named in an album's name: '2W Parichart2  473 งาน' → 'Parichart'.
+    """The Admin named in an album's name: '2W Parichart2  473 งาน' → 'Parichat' (ADMIN_AS).
 
     A best reading of names Ops type by hand; the sheet shows it beside the album so a wrong
     one is seen."""
@@ -64,7 +66,8 @@ def admin_of(album):
     if not m:
         return album or "ไม่รู้อัลบั้ม"
     name = re.sub(r"(งาน|รวม)+$", "", m.group(1)) or m.group(1)
-    return name[:1].upper() + name[1:] if name.isascii() else name
+    name = name[:1].upper() + name[1:] if name.isascii() else name
+    return ADMIN_AS.get(name, name)
 
 
 def _pictures(file_name, kind=None, status=None):
