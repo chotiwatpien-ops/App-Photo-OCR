@@ -436,8 +436,14 @@ with db.engine.begin() as c:
                                           checked_at=db._now()))
 check("ช่องที่เลิกตรวจแล้วยังเก็บอยู่ แต่ไม่อยู่ในรายงาน", report(W46[0]) == again)
 
+W45 = ("2026-11-02", "2026-11-08")
+before_floor = db.create_job("ค Taxi", "Trips", *W45, category="4 W Standard")
+trip(before_floor, trip_date="2026-11-04")
+check("สัปดาห์ก่อน W46 ไม่ขึ้นให้เลือก และเปิดตรวจไม่ได้",
+      W45[0] not in [w["date_from"] for w in report()["weeks"]]
+      and report(W45[0]) == 404 and ask("phone-a", week=W45[0]).status_code == 404, report()["weeks"])
 every = report("all")
-check("ทุกสัปดาห์รวมกัน",
+check("ทุกสัปดาห์รวมกัน (ไม่นับสัปดาห์ก่อน W46)",
       (every["week"], every["label"], every["closed"]) == ("all", "ทุกสัปดาห์", False)
       and every["progress"] == {"eligible": 21, "checked": 16, "no_picture": 2}
       and every["total"]["slips"] == 16 and every["total"]["all_right"] == 14, (every["progress"], every["total"]["slips"]))

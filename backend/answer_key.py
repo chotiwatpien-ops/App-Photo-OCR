@@ -280,21 +280,27 @@ _TRIPS = db.trips.join(db.jobs, db.jobs.c.id == db.trips.c.job_id)
 _DRIVE_ID = re.compile(r"/d/([\w-]+)|[?&]id=([\w-]+)")
 
 
+# W46, the first week after the project restarted (Fiat 2026-11-27). Older weeks' pictures may
+# have left Drive, so they are neither listed nor counted in "all".
+FIRST_WEEK = "2026-11-09"
+
+
 def _eligible(week: str):
     """The population the key samples: rows the ingest round approved with nobody looking."""
     t = db.trips.c
-    rows = [t.status == "done", t.committed == 1, t.auto_approved == 1]
+    rows = [t.status == "done", t.committed == 1, t.auto_approved == 1, db.jobs.c.date_from >= FIRST_WEEK]
     if week != ALL:
         rows.append(db.jobs.c.date_from == week)
     return and_(*rows)
 
 
 def weeks() -> list:
-    """[{date_from, label, closed}] newest first: every week that has a job. A closed week is
-    listed like any other, because checking writes nothing to the week."""
+    """[{date_from, label, closed}] newest first: every week from FIRST_WEEK that has a job. A
+    closed week is listed like any other, because checking writes nothing to the week."""
     from ingest import week_label
     with db.engine.begin() as c:
-        found = c.execute(select(func.distinct(db.jobs.c.date_from))).scalars().all()
+        found = c.execute(select(func.distinct(db.jobs.c.date_from))
+                          .where(db.jobs.c.date_from >= FIRST_WEEK)).scalars().all()
     shut = db.closed_weeks()
     return [{"date_from": w, "label": week_label(w), "closed": w in shut}
             for w in sorted({w for w in found if w}, reverse=True)]
@@ -437,7 +443,8 @@ def report(week: str = "") -> dict:
         rows = c.execute(
             select(k.trip_id, k.field, k.truth, k.row_value, s.model, s.prompt_version, s.seconds,
                    s.finished_at, t.source_url)
-            .select_from(checked).where(*([] if week == ALL else [db.jobs.c.date_from == week]))).all()
+            .select_from(checked).where(db.jobs.c.date_from >= FIRST_WEEK,
+                                        *([] if week == ALL else [db.jobs.c.date_from == week]))).all()
     rows = [r for r in rows if r.field in FIELD]
     slips = {r.trip_id: r for r in rows}
     wrong = [r for r in rows if verdict(r.truth, r.row_value) == "wrong"]
